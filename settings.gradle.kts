@@ -1,4 +1,7 @@
 pluginManagement {
+    plugins {
+        id("com.android.application") version "8.0.0"
+    }
     repositories {
         maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
         maven { url = uri("https://maven.aliyun.com/repository/google") }
