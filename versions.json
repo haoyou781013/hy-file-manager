@@ -1,0 +1,14 @@
+{
+  "updatedAt": "2026-10-25",
+  "repo": "haoyou781013/HY_FileManager",
+  "versions": [
+    {
+      "ver": "0.1.0-dev",
+      "versionCode": 1,
+      "prerelease": true,
+      "publishedAt": "2026-10-25",
+      "body": "## 0.1.0-dev\n\n项目初始化。\n\n### 范围\n- 本地文件管理\n- 双栏浏览\n- 压缩包内部浏览（zip:// 虚拟路径）\n- 多选批量操作\n\n### 状态\n- 仅骨架，未实测\n- 不联网，不发布到 Play"
+    }
+  ],
+  "count": 1
+}
