@@ -1269,6 +1269,13 @@ public class FileManagerModule extends HyVqModule {
                 }
             }
         });
+        // 轻点窗格任意位置（含空白）即切焦点 —— 同步键高亮依赖 active
+        rv.setOnTouchListener((v, ev) -> {
+            if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN && active != p) {
+                setActive(p);
+            }
+            return false;   // 不消费，正常传递给条目点击/滚动
+        });
         return rv;
     }
 
@@ -1374,7 +1381,7 @@ public class FileManagerModule extends HyVqModule {
         // ④ 同步路径：蓝色包裹的 ← → 组合
         syncBtn = buildSyncButton();
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
-                dp(28), ViewGroup.LayoutParams.WRAP_CONTENT);
+                dp(44), ViewGroup.LayoutParams.WRAP_CONTENT);
         bottomNav.addView(syncBtn, slp);
 
         // ⑤ 新建 +
@@ -1384,7 +1391,7 @@ public class FileManagerModule extends HyVqModule {
 
         bottomNav.setAlpha(0f);
         bottomNav.setTranslationY(dp(10));
-        bottomNav.animate().alpha(1f).translationY(0f).setDuration(220).start();
+        bottomNav.animate().alpha(1f).translationY(0f).setDuration(150).start();
         refreshNavButtons();
         return bottomNav;
     }
@@ -1459,7 +1466,7 @@ public class FileManagerModule extends HyVqModule {
                 v.animate().scaleX(1f).scaleY(1f).setDuration(150).setInterpolator(new android.view.animation.OvershootInterpolator(3f)).start();
             return false;
         });
-        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(dp(22), dp(15));
+        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(dp(32), dp(16));
         llp.gravity = Gravity.START;          // 左对齐 → 形成交错
         box.addView(syncLeftIv, llp);
 
@@ -1476,7 +1483,7 @@ public class FileManagerModule extends HyVqModule {
                 v.animate().scaleX(1f).scaleY(1f).setDuration(150).setInterpolator(new android.view.animation.OvershootInterpolator(3f)).start();
             return false;
         });
-        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(22), dp(15));
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(32), dp(16));
         rlp.gravity = Gravity.END;            // 右对齐 → 形成交错
         box.addView(syncRightIv, rlp);
 
@@ -1518,6 +1525,7 @@ public class FileManagerModule extends HyVqModule {
     /** 底部栏已改为导航按钮组，不再有标签高亮；保留方法供旧调用点使用 */
     private void updateBottomNav() {
         refreshNavButtons();
+        refreshSyncButton();
     }
 
     /** 分类 Tab：弹出分类选择对话框（图片/视频/音频/文档/APK/压缩包 → cat:// 虚拟视图） */
@@ -1588,11 +1596,12 @@ public class FileManagerModule extends HyVqModule {
 
     /** 切换活跃窗格：顶部路径栏/状态栏/底部导航跟随（MT 实测联动行为） */
     private void setActive(Pane p) {
+        if (p == null || active == p) return;
         active = p;
         if (pathText != null) {
             pathText.setText(displayPath(p.path));
-            updateBottomNav();
         }
+        updateBottomNav();      // 内部会调 refreshNavButtons → refreshSyncButton
     }
 
     /** 每个窗格独立 listener（闭包捕获所属窗格，点击/长按先激活再处理） */
