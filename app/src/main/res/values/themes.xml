@@ -4,4 +4,10 @@
         <item name="colorPrimary">@color/blue_600</item>
         <item name="colorOnPrimary">@color/white</item>
     </style>
+
+    <!-- PopupWindow 入场/退场动画 -->
+    <style name="AnimPopup" parent="@android:style/Animation">
+        <item name="android:windowEnterAnimation">@anim/popup_in</item>
+        <item name="android:windowExitAnimation">@anim/popup_out</item>
+    </style>
 </resources>

@@ -529,7 +529,7 @@ public final class UiKit {
 
     // ── 内部工具 ──
 
-    private static int dp(Context context, int value) {
+    public static int dp(Context context, int value) {
         return Math.round(context.getResources().getDisplayMetrics().density * value);
     }
 

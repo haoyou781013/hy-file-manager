@@ -1,5 +1,7 @@
 R_DEF: Internal format may change without notice
 local
+anim popup_in
+anim popup_out
 color bg_pathbar
 color bg_toolbar
 color bg_window
@@ -53,4 +55,5 @@ drawable ic_undo
 drawable ic_video
 mipmap ic_launcher
 string app_name
+style AnimPopup
 style Theme.HYFileManager

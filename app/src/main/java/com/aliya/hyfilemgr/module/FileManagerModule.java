@@ -1130,6 +1130,8 @@ public class FileManagerModule extends HyVqModule {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true);
         popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
         popup.setElevation(dp(8));
+        // 入场/退场动画：从右下角轻微放大淡入，避免「啪」地出现
+        popup.setAnimationStyle(R.style.AnimPopup);
 
         for (int i = 0; i < SORT_LABELS.length; i++) {
             final int mode = i;
@@ -1250,6 +1252,14 @@ public class FileManagerModule extends HyVqModule {
         p.list = rv;
         p.adapter = new FileListAdapter(ctx, p.entries, p.selected, makeListener(p));
         rv.setAdapter(p.adapter);
+        // 列表项动画：淡入淡出 + 位移，比默认更柔和
+        androidx.recyclerview.widget.DefaultItemAnimator ia =
+                new androidx.recyclerview.widget.DefaultItemAnimator();
+        ia.setAddDuration(180);
+        ia.setRemoveDuration(160);
+        ia.setMoveDuration(180);
+        ia.setChangeDuration(160);
+        rv.setItemAnimator(ia);
         rv.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
             public void onScrollStateChanged(RecyclerView rv, int state) {
@@ -1388,6 +1398,17 @@ public class FileManagerModule extends HyVqModule {
         iv.setClickable(true);
         iv.setFocusable(true);
         iv.setOnClickListener(onClick);
+        // 按压回弹（Material 触感）
+        iv.setOnTouchListener((v, ev) -> {
+            if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN) {
+                v.animate().scaleX(0.85f).scaleY(0.85f).setDuration(80).start();
+            } else if (ev.getAction() == android.view.MotionEvent.ACTION_UP
+                    || ev.getAction() == android.view.MotionEvent.ACTION_CANCEL) {
+                v.animate().scaleX(1f).scaleY(1f).setDuration(160)
+                        .setInterpolator(new android.view.animation.OvershootInterpolator(3f)).start();
+            }
+            return false;
+        });
         return iv;
     }
 
@@ -1432,6 +1453,12 @@ public class FileManagerModule extends HyVqModule {
         syncLeftIv.setPadding(dp(3), dp(1), dp(3), dp(1));
         syncLeftIv.setClickable(true);
         syncLeftIv.setOnClickListener(v -> syncPath(false));
+        syncLeftIv.setOnTouchListener((v, ev) -> {
+            if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN) v.animate().scaleX(0.8f).scaleY(0.8f).setDuration(80).start();
+            else if (ev.getAction() == android.view.MotionEvent.ACTION_UP || ev.getAction() == android.view.MotionEvent.ACTION_CANCEL)
+                v.animate().scaleX(1f).scaleY(1f).setDuration(150).setInterpolator(new android.view.animation.OvershootInterpolator(3f)).start();
+            return false;
+        });
         LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(dp(22), dp(15));
         llp.gravity = Gravity.START;          // 左对齐 → 形成交错
         box.addView(syncLeftIv, llp);
@@ -1443,6 +1470,12 @@ public class FileManagerModule extends HyVqModule {
         syncRightIv.setPadding(dp(3), dp(1), dp(3), dp(1));
         syncRightIv.setClickable(true);
         syncRightIv.setOnClickListener(v -> syncPath(true));
+        syncRightIv.setOnTouchListener((v, ev) -> {
+            if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN) v.animate().scaleX(0.8f).scaleY(0.8f).setDuration(80).start();
+            else if (ev.getAction() == android.view.MotionEvent.ACTION_UP || ev.getAction() == android.view.MotionEvent.ACTION_CANCEL)
+                v.animate().scaleX(1f).scaleY(1f).setDuration(150).setInterpolator(new android.view.animation.OvershootInterpolator(3f)).start();
+            return false;
+        });
         LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(22), dp(15));
         rlp.gravity = Gravity.END;            // 右对齐 → 形成交错
         box.addView(syncRightIv, rlp);
@@ -2482,7 +2515,20 @@ public class FileManagerModule extends HyVqModule {
         row.setPadding(p, p, p, p);
         // 禁用态：不可点击 + 整行半透明灰（保留可见性，提示"功能存在但当前场景不可用"）
         row.setClickable(enabled);
-        if (enabled) row.setOnClickListener(onClick);
+        if (enabled) {
+            row.setOnClickListener(onClick);
+            // 按压回弹
+            row.setOnTouchListener((v, ev) -> {
+                if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN) {
+                    v.animate().scaleX(0.97f).scaleY(0.97f).setDuration(90).start();
+                } else if (ev.getAction() == android.view.MotionEvent.ACTION_UP
+                        || ev.getAction() == android.view.MotionEvent.ACTION_CANCEL) {
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(140)
+                            .setInterpolator(new android.view.animation.OvershootInterpolator(2f)).start();
+                }
+                return false;
+            });
+        }
         row.setAlpha(enabled ? 1f : 0.38f);
 
         ImageView icon = new ImageView(ctx);
