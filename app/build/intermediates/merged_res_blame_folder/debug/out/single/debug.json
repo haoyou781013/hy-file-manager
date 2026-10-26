@@ -1,0 +1,46 @@
+[
+    {
+        "merged": "com.aliya.hyfilemgr.app-merged_res-32:/mipmap-mdpi_ic_launcher.png.flat",
+        "source": "com.aliya.hyfilemgr.app-main-34:/mipmap-mdpi/ic_launcher.png"
+    },
+    {
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-32:/drawable_ic_folder.xml.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-34:/drawable/ic_folder.xml"
+    },
+    {
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-32:/mipmap-hdpi_ic_launcher.png.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-34:/mipmap-hdpi/ic_launcher.png"
+    },
+    {
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-32:/mipmap-xxhdpi_ic_launcher.png.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-34:/mipmap-xxhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.aliya.hyfilemgr.app-merged_res-32:/mipmap-xhdpi_ic_launcher.png.flat",
+        "source": "com.aliya.hyfilemgr.app-main-34:/mipmap-xhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-32:/mipmap-mdpi_ic_launcher.png.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-34:/mipmap-mdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.aliya.hyfilemgr.app-merged_res-32:/mipmap-hdpi_ic_launcher.png.flat",
+        "source": "com.aliya.hyfilemgr.app-main-34:/mipmap-hdpi/ic_launcher.png"
+    },
+    {
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-32:/drawable_ic_file.xml.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-34:/drawable/ic_file.xml"
+    },
+    {
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-32:/mipmap-xhdpi_ic_launcher.png.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-34:/mipmap-xhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.aliya.hyfilemgr.app-merged_res-32:/mipmap-xxhdpi_ic_launcher.png.flat",
+        "source": "com.aliya.hyfilemgr.app-main-34:/mipmap-xxhdpi/ic_launcher.png"
+    },
+    {
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-32:/mipmap-xxxhdpi_ic_launcher.png.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-34:/mipmap-xxxhdpi/ic_launcher.png"
+    }
+]
