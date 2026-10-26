@@ -350,9 +350,13 @@ public class FileManagerModule extends HyVqModule {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         body.addView(buildTopBar());
+        bodyRoot = body;
         // 未授权"所有文件访问"时显示非拦截提示条：虚拟视图仍可浏览，读写受限
+        permissionBar = buildPermissionBar();
         if (!checkPermission()) {
-            body.addView(buildPermissionBar());
+            body.addView(permissionBar, 1);
+        } else {
+            permissionBar.setVisibility(View.GONE);
         }
         body.addView(buildContent(), new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -1149,6 +1153,11 @@ public class FileManagerModule extends HyVqModule {
         popup.showAsDropDown(anchor, -dp(80), dp(2));
     }
 
+    /** 权限提示条引用（授权返回后动态刷新，避免提示条残留） */
+    private View permissionBar;
+    /** 权限条父容器（用于动态添加/移除） */
+    private LinearLayout bodyRoot;
+
     /** 权限提示条（非拦截）：点击跳转系统授权页 */
     private View buildPermissionBar() {
         TextView bar = new TextView(ctx);
@@ -1165,6 +1174,34 @@ public class FileManagerModule extends HyVqModule {
         bar.setPadding(pad, dp(6), pad, dp(6));
         bar.setOnClickListener(v -> requestAllFilesAccess());
         return bar;
+    }
+
+    /**
+     * 刷新权限提示条：授权后从系统设置返回时调用。
+     *
+     * <p>修复：原先只在 createMainView 时判断一次，用户去系统设置授权后返回，
+     * 提示条仍在（功能已可用但提示不消失）。</p>
+     */
+    private void refreshPermissionBar() {
+        if (permissionBar == null || bodyRoot == null) return;
+        boolean granted = checkPermission();
+        if (granted) {
+            if (permissionBar.getParent() != null) {
+                bodyRoot.removeView(permissionBar);
+            }
+            permissionBar.setVisibility(View.GONE);
+        } else {
+            if (permissionBar.getParent() == null) {
+                // 重新插到顶栏下（index 1）
+                bodyRoot.addView(permissionBar, Math.min(1, bodyRoot.getChildCount()));
+            }
+            permissionBar.setVisibility(View.VISIBLE);
+        }
+    }
+
+    @Override
+    public void onResume() {
+        refreshPermissionBar();
     }
 
     private void requestAllFilesAccess() {
