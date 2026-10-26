@@ -1460,7 +1460,7 @@ public class FileManagerModule extends HyVqModule {
         syncLeftIv.setPadding(dp(3), dp(1), dp(3), dp(1));
         syncLeftIv.setClickable(true);
         syncLeftIv.setBackgroundResource(R.drawable.bg_ripple_round);
-        syncLeftIv.setOnClickListener(v -> syncPath(false));
+        syncLeftIv.setOnClickListener(v -> syncByFocus());
         syncLeftIv.setOnTouchListener((v, ev) -> {
             if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN) v.animate().scaleX(0.8f).scaleY(0.8f).setDuration(80).start();
             else if (ev.getAction() == android.view.MotionEvent.ACTION_UP || ev.getAction() == android.view.MotionEvent.ACTION_CANCEL)
@@ -1478,7 +1478,7 @@ public class FileManagerModule extends HyVqModule {
         syncRightIv.setPadding(dp(3), dp(1), dp(3), dp(1));
         syncRightIv.setClickable(true);
         syncRightIv.setBackgroundResource(R.drawable.bg_ripple_round);
-        syncRightIv.setOnClickListener(v -> syncPath(true));
+        syncRightIv.setOnClickListener(v -> syncByFocus());
         syncRightIv.setOnTouchListener((v, ev) -> {
             if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN) v.animate().scaleX(0.8f).scaleY(0.8f).setDuration(80).start();
             else if (ev.getAction() == android.view.MotionEvent.ACTION_UP || ev.getAction() == android.view.MotionEvent.ACTION_CANCEL)
@@ -1507,6 +1507,19 @@ public class FileManagerModule extends HyVqModule {
      *
      * @param leftToRight true = 左目录 → 右栏；false = 右目录 → 左栏
      */
+    /**
+     * 按当前焦点同步：焦点在左栏 → 左到右；焦点在右栏 → 右到左。
+     *
+     * <p>不再依赖点的是哪个箭头 —— 上下两个箭头都触发同一逻辑，
+     * 由 active 决定方向。箭头高亮只做视觉提示。</p>
+     */
+    private void syncByFocus() {
+        boolean leftToRight = (active == paneL);
+        android.util.Log.d("HYFM", "syncByFocus: active=" + (leftToRight ? "LEFT" : "RIGHT")
+                + " → " + (leftToRight ? "左→右" : "右→左"));
+        syncPath(leftToRight);
+    }
+
     private void syncPath(boolean leftToRight) {
         Pane src = leftToRight ? paneL : paneR;
         Pane dst = leftToRight ? paneR : paneL;
@@ -1598,8 +1611,11 @@ public class FileManagerModule extends HyVqModule {
 
     /** 切换活跃窗格：顶部路径栏/状态栏/底部导航跟随（MT 实测联动行为） */
     private void setActive(Pane p) {
-        if (p == null || active == p) return;
+        if (p == null) return;
+        if (active == p) { refreshSyncButton(); return; }   // 已是焦点也要刷新高亮
         active = p;
+        android.util.Log.d("HYFM", "setActive: " + (p == paneL ? "LEFT" : "RIGHT")
+                + "  path=" + p.path);
         if (pathText != null) {
             pathText.setText(displayPath(p.path));
         }
