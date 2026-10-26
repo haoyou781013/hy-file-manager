@@ -56,6 +56,10 @@
         "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_preview.xml"
     },
     {
+        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_arrow_forward.xml.flat",
+        "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_arrow_forward.xml"
+    },
+    {
         "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_skip_next.xml.flat",
         "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_skip_next.xml"
     },
@@ -104,8 +108,16 @@
         "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_undo.xml"
     },
     {
+        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_arrow_up.xml.flat",
+        "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_arrow_up.xml"
+    },
+    {
         "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_star.xml.flat",
         "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_star.xml"
+    },
+    {
+        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_chevron_left.xml.flat",
+        "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_chevron_left.xml"
     },
     {
         "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_settings.xml.flat",
@@ -148,12 +160,20 @@
         "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_encode.xml"
     },
     {
+        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_arrow_back.xml.flat",
+        "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_arrow_back.xml"
+    },
+    {
         "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_archive.xml.flat",
         "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_archive.xml"
     },
     {
         "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_redo.xml.flat",
         "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_redo.xml"
+    },
+    {
+        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_chevron_right.xml.flat",
+        "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_chevron_right.xml"
     },
     {
         "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_refresh.xml.flat",

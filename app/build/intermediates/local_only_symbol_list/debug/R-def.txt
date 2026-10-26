@@ -14,8 +14,13 @@ color white
 drawable ic_add
 drawable ic_apk
 drawable ic_archive
+drawable ic_arrow_back
+drawable ic_arrow_forward
+drawable ic_arrow_up
 drawable ic_audio
 drawable ic_category
+drawable ic_chevron_left
+drawable ic_chevron_right
 drawable ic_copy
 drawable ic_cut
 drawable ic_doc

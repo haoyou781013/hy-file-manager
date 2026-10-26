@@ -219,6 +219,11 @@ public class FileManagerModule extends HyVqModule {
          *  切换回未变化目录直接复用快照，避免重复 listFiles（大目录性能提升明显）。 */
         final Map<String, DirSnapshot> dirCache = new HashMap<>();
 
+        /** ⭐ 底部栏：后退历史栈（点击目录/输入路径时压栈，后退时弹出） */
+        final java.util.Deque<String> backStack = new java.util.ArrayDeque<>();
+        /** ⭐ 底部栏：前进历史栈（后退时把当前路径压到这里，前进时弹回） */
+        final java.util.Deque<String> fwdStack = new java.util.ArrayDeque<>();
+
         Pane(String path) {
             this.path = path;
         }
@@ -1317,6 +1322,11 @@ public class FileManagerModule extends HyVqModule {
 
     /** 底部导航容器（5 Tab 横排） */
     private LinearLayout bottomNav;
+    /** 底部栏按钮引用（用于前进/后退灰显刷新） */
+    private ImageView navBackBtn, navFwdBtn;
+    /** 同步路径按钮容器 + 左右箭头 */
+    private LinearLayout syncBtn;
+    private ImageView syncLeftIv, syncRightIv;
     /** 底部导航 Tab 视图列表（更新选中高亮用） */
     private final List<View> navTabs = new ArrayList<>();
     /** FAB 悬浮新建按钮 */
@@ -1327,7 +1337,7 @@ public class FileManagerModule extends HyVqModule {
         bottomNav = new LinearLayout(ctx);
         bottomNav.setOrientation(LinearLayout.HORIZONTAL);
         bottomNav.setGravity(Gravity.CENTER);
-        int bg = UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainer);
+        int bg = UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow);
         bottomNav.setBackground(UiKit.rounded(ctx, 14, bg, 0));
         int pad = dp(4);
         bottomNav.setPadding(pad, dp(3), pad, dp(3));
@@ -1336,102 +1346,139 @@ public class FileManagerModule extends HyVqModule {
         lp.topMargin = dp(6);
         bottomNav.setLayoutParams(lp);
 
-        addNavTab("文件", R.drawable.ic_folder, v -> {
-            // 文件 Tab：切回内部存储根（Amaze 首页语义）
-            active.path = Environment.getExternalStorageDirectory().getAbsolutePath();
-            reload(active);
-        });
-        addNavTab("分类", R.drawable.ic_category, v -> showCategoryPicker());
-        addNavTab("回收站", R.drawable.ic_trash, v -> {
-            active.path = PREFIX_TRASH;
-            reload(active);
-        });
-        addNavTab("更多", R.drawable.ic_more_vert, v -> showMoreMenu(v));
-        addNewButtonToNav();
-        // 底部栏整体淡入 + 轻微上移（平滑过渡，避免生硬出现）
+        // ① 后退 <
+        navBackBtn = navButton(dp(26), v -> navBack(active));
+        navBackBtn.setImageResource(R.drawable.ic_chevron_left);
+        addNavBtnWrap(navBackBtn);
+
+        // ② 前进 >
+        navFwdBtn = navButton(dp(26), v -> navForward(active));
+        navFwdBtn.setImageResource(R.drawable.ic_chevron_right);
+        addNavBtnWrap(navFwdBtn);
+
+        // ③ 上级 ↑
+        ImageView upBtn = navButton(dp(26), v -> navUp(active));
+        upBtn.setImageResource(R.drawable.ic_arrow_up);
+        addNavBtnWrap(upBtn);
+
+        // ④ 同步路径：蓝色包裹的 ← → 组合
+        syncBtn = buildSyncButton();
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f);
+        bottomNav.addView(syncBtn, slp);
+
+        // ⑤ 新建 +
+        ImageView addBtn = navButton(dp(26), v -> showNewMenu(bottomNav));
+        addBtn.setImageResource(R.drawable.ic_add);
+        addNavBtnWrap(addBtn);
+
         bottomNav.setAlpha(0f);
         bottomNav.setTranslationY(dp(10));
         bottomNav.animate().alpha(1f).translationY(0f).setDuration(220).start();
+        refreshNavButtons();
         return bottomNav;
     }
 
-    /** 底部栏内置的「新建」按钮：圆形主题色图标，替代原右下角悬浮 FAB（那个会挡剪贴板） */
-    private void addNewButtonToNav() {
-        if (bottomNav == null) return;
-        ImageView add = new ImageView(ctx);
-        add.setImageResource(R.drawable.ic_add);
-        android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable();
-        gd.setShape(android.graphics.drawable.GradientDrawable.OVAL);
-        gd.setColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorPrimaryContainer));
-        add.setBackground(gd);
-        int sz = dp(34);
-        add.setPadding(dp(8), dp(8), dp(8), dp(8));
-        add.setColorFilter(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnPrimaryContainer));
-        add.setContentDescription("新建");
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(sz, sz);
-        lp.leftMargin = dp(4);
-        add.setOnClickListener(v -> animatePress(add, () -> {
-            // 以自身为锚点弹出新建菜单（底部栏内按钮同样以底部栏为参照弹出）
-            showNewMenu(bottomNav != null ? bottomNav : add);
-        }));
-        bottomNav.addView(add, lp);
+    /** 底部栏图标按钮（统一样式） */
+    private ImageView navButton(int size, View.OnClickListener onClick) {
+        ImageView iv = new ImageView(ctx);
+        iv.setColorFilter(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
+        iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        iv.setPadding(dp(5), dp(5), dp(5), dp(5));
+        iv.setClickable(true);
+        iv.setFocusable(true);
+        iv.setOnClickListener(onClick);
+        return iv;
     }
 
-    /** 添加一个导航 Tab：图标 + 文字（垂直排列，点击回调）；navTabs 记录引用供高亮切换 */
-    private void addNavTab(String text, int iconRes, View.OnClickListener onClick) {
-        LinearLayout tab = new LinearLayout(ctx);
-        tab.setOrientation(LinearLayout.VERTICAL);
-        tab.setGravity(Gravity.CENTER);
-        tab.setClickable(true);
-        tab.setOnClickListener(onClick);
-        int s = dp(24);
-        tab.setPadding(dp(8), dp(3), dp(8), dp(3));
+    /** 把图标按钮包进等分布局（weight=1） */
+    private void addNavBtnWrap(ImageView iv) {
+        LinearLayout wrap = new LinearLayout(ctx);
+        wrap.setGravity(Gravity.CENTER);
+        wrap.setClickable(true);
+        wrap.setFocusable(true);
+        wrap.setBackgroundResource(android.R.drawable.list_selector_background);
+        wrap.addView(iv, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        wrap.setOnClickListener(v -> iv.performClick());
+        bottomNav.addView(wrap, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+    }
 
-        ImageView icon = new ImageView(ctx);
-        icon.setImageResource(iconRes);
-        icon.setColorFilter(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
-        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(s, s);
-        tab.addView(icon, iconLp);
+    /**
+     * 同步路径按钮：蓝色圆角包裹的「← →」组合。
+     *
+     * <p>语义：焦点在左窗格时 → 高亮（点击把左目录同步到右）；焦点在右窗格时 ← 高亮
+     * （点击把右目录同步到左）。整块用蓝色描边包裹以示「这是一组联动操作」。</p>
+     */
+    private LinearLayout buildSyncButton() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setGravity(Gravity.CENTER);
+        // 蓝色包裹：圆角 + 蓝色描边
+        int stroke = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
+        int fill = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimaryContainer);
+        android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable();
+        gd.setCornerRadius(dp(10));
+        gd.setColor((fill & 0x00FFFFFF) | 0x33000000);
+        gd.setStroke(Math.round(dp(1) * 1.5f), stroke);
+        box.setBackground(gd);
+        box.setPadding(dp(2), dp(2), dp(2), dp(2));
 
-        TextView label = new TextView(ctx);
-        label.setText(text);
-        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-        label.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
-        LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        labelLp.topMargin = dp(1);
-        tab.addView(label, labelLp);
+        syncLeftIv = new ImageView(ctx);
+        syncLeftIv.setImageResource(R.drawable.ic_arrow_back);
+        syncLeftIv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        syncLeftIv.setPadding(dp(5), dp(5), dp(5), dp(5));
+        syncLeftIv.setClickable(true);
+        syncLeftIv.setOnClickListener(v -> syncPath(false));   // ← 同步 右→左
+        box.addView(syncLeftIv, new LinearLayout.LayoutParams(0, dp(30), 1f));
 
-        tab.setTag(new Object[]{icon, label});
-        bottomNav.addView(tab, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        navTabs.add(tab);
+        syncRightIv = new ImageView(ctx);
+        syncRightIv.setImageResource(R.drawable.ic_arrow_forward);
+        syncRightIv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        syncRightIv.setPadding(dp(5), dp(5), dp(5), dp(5));
+        syncRightIv.setClickable(true);
+        syncRightIv.setOnClickListener(v -> syncPath(true));   // → 同步 左→右
+        box.addView(syncRightIv, new LinearLayout.LayoutParams(0, dp(30), 1f));
+
+        return box;
+    }
+
+    /** 刷新同步按钮的高亮：左焦点→右箭头亮；右焦点→左箭头亮 */
+    private void refreshSyncButton() {
+        if (syncLeftIv == null || syncRightIv == null) return;
+        int on = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
+        int off = UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant);
+        boolean leftActive = (active == paneL);
+        syncLeftIv.setColorFilter(leftActive ? off : on);    // 右栏焦点时 ← 亮
+        syncRightIv.setColorFilter(leftActive ? on : off);   // 左栏焦点时 → 亮
+    }
+
+    /**
+     * 同步路径。
+     *
+     * @param leftToRight true = 左目录 → 右栏；false = 右目录 → 左栏
+     */
+    private void syncPath(boolean leftToRight) {
+        Pane src = leftToRight ? paneL : paneR;
+        Pane dst = leftToRight ? paneR : paneL;
+        if (src == null || dst == null) return;
+        if (src.path == null || src.path.equals(dst.path)) {
+            UiKit.toast(ctx, "两边已经是同一目录");
+            return;
+        }
+        dst.backStack.push(dst.path);
+        dst.fwdStack.clear();
+        dst.path = src.path;
+        reload(dst);
+        refreshNavButtons();
+        UiKit.toast(ctx, (leftToRight ? "左 → 右" : "右 → 左") + " 已同步");
     }
 
     /** 更新底部导航高亮：文件=真实路径，分类=cat://，回收站=trash://，更多不常驻高亮 */
+    /** 底部栏已改为导航按钮组，不再有标签高亮；保留方法供旧调用点使用 */
     private void updateBottomNav() {
-        if (bottomNav == null) return;
-        String p = active == null ? "" : active.path;
-        int sel = 0; // 默认文件
-        if (p.startsWith(PREFIX_CAT)) sel = 1;
-        else if (p.startsWith(PREFIX_TRASH)) sel = 2;
-        else sel = 0;
-        for (int i = 0; i < navTabs.size(); i++) {
-            View tab = navTabs.get(i);
-            Object[] tg = (Object[]) tab.getTag();
-            ImageView icon = (ImageView) tg[0];
-            TextView label = (TextView) tg[1];
-            boolean on = i == sel;
-            icon.setColorFilter(UiKit.color(ctx, on
-                    ? com.google.android.material.R.attr.colorPrimary
-                    : com.google.android.material.R.attr.colorOnSurfaceVariant));
-            label.setTextColor(UiKit.color(ctx, on
-                    ? com.google.android.material.R.attr.colorPrimary
-                    : com.google.android.material.R.attr.colorOnSurfaceVariant));
-            label.setTypeface(null, on ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL);
-        }
+        refreshNavButtons();
     }
 
     /** 分类 Tab：弹出分类选择对话框（图片/视频/音频/文档/APK/压缩包 → cat:// 虚拟视图） */
@@ -1583,11 +1630,95 @@ public class FileManagerModule extends HyVqModule {
         return zipName + "/" + parts[1];
     }
 
+    // ══════ 底部栏导航：历史栈 ══════
+
+    /** 跳转到新路径并记录历史（进入目录 / 跳转路径都走这里） */
+    private void navigateTo(Pane p, String newPath) {
+        if (p == null || newPath == null || newPath.equals(p.path)) return;
+        p.backStack.push(p.path);
+        p.fwdStack.clear();          // 新分支，清空前进栈
+        p.path = newPath;
+        reload(p);
+        refreshNavButtons();
+    }
+
+    /** 后退：上一级历史 */
+    private void navBack(Pane p) {
+        if (p == null || p.backStack.isEmpty()) {
+            UiKit.toast(ctx, "没有上一步了");
+            return;
+        }
+        p.fwdStack.push(p.path);
+        p.path = p.backStack.pop();
+        reload(p);
+        refreshNavButtons();
+    }
+
+    /** 前进：下一步历史 */
+    private void navForward(Pane p) {
+        if (p == null || p.fwdStack.isEmpty()) {
+            UiKit.toast(ctx, "没有下一步了");
+            return;
+        }
+        p.backStack.push(p.path);
+        p.path = p.fwdStack.pop();
+        reload(p);
+        refreshNavButtons();
+    }
+
+    /** 上一级目录 */
+    private void navUp(Pane p) {
+        if (p == null) return;
+        String cur = p.path;
+        if (cur == null) return;
+        // 虚拟路径：退回收站/分类的上一层就是根目录
+        if (cur.startsWith(PREFIX_CAT) || cur.startsWith(PREFIX_TRASH)) {
+            navigateTo(p, Environment.getExternalStorageDirectory().getAbsolutePath());
+            return;
+        }
+        // zip 内：退到包内上一级，或退出 zip
+        if (cur.startsWith(PREFIX_ZIP)) {
+            String[] parts = splitZipPath(cur);
+            String inner = parts[1];
+            if (inner == null || inner.isEmpty()) {
+                String zipPath = parts[0];
+                int i = zipPath.lastIndexOf('/');
+                navigateTo(p, i > 0 ? zipPath.substring(0, i)
+                        : Environment.getExternalStorageDirectory().getAbsolutePath());
+            } else {
+                String trimmed = inner.endsWith("/")
+                        ? inner.substring(0, inner.length() - 1) : inner;
+                int i = trimmed.lastIndexOf('/');
+                String parentInner = i >= 0 ? trimmed.substring(0, i + 1) : "";
+                navigateTo(p, PREFIX_ZIP + parts[0] + "/" + parentInner);
+            }
+            return;
+        }
+        int i = cur.lastIndexOf('/');
+        if (i <= 0) {
+            UiKit.toast(ctx, "已在根目录");
+            return;
+        }
+        navigateTo(p, cur.substring(0, i));
+    }
+
+    /** 底部栏按钮可用性刷新（前进/后退灰显） */
+    private void refreshNavButtons() {
+        if (navBackBtn != null) {
+            boolean can = active != null && !active.backStack.isEmpty();
+            navBackBtn.setAlpha(can ? 1f : 0.3f);
+        }
+        if (navFwdBtn != null) {
+            boolean can = active != null && !active.fwdStack.isEmpty();
+            navFwdBtn.setAlpha(can ? 1f : 0.3f);
+        }
+        if (syncBtn != null) refreshSyncButton();
+    }
+
     /** 进入目录（虚拟目录可能为空列表，对齐 MT 静默空行为） */
     private void enterDir(Pane p, FileEntry e) {
         if (e == null || !e.isDir()) return;
-        p.path = e.path;
-        reload(p);
+        navigateTo(p, e.path);
     }
 
     /** 符号链接：跟随进入（目录）或打开（文件） */
