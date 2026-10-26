@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.aliya.hyfilemgr.app-mergeDebugResources-30:/values-v23/values-v23.xml",
+            "outputFile": "com.aliya.hyfilemgr.app-mergeDebugResources-33:/values-v23/values-v23.xml",
             "map": [
                 {
                     "source": "/opt/toolchain/gradle-home/caches/transforms-3/e3d8e4b1f90d6af1caeed74e90cbdb50/transformed/cardview-1.0.0/res/values-v23/values-v23.xml",

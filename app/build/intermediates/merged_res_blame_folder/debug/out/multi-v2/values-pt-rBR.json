@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.aliya.hyfilemgr.app-mergeDebugResources-30:/values-pt-rBR/values-pt-rBR.xml",
+            "outputFile": "com.aliya.hyfilemgr.app-mergeDebugResources-33:/values-pt-rBR/values-pt-rBR.xml",
             "map": [
                 {
                     "source": "/opt/toolchain/gradle-home/caches/transforms-3/a6c4c081a78c7687adb6938b551c24c3/transformed/appcompat-1.6.1/res/values-pt-rBR/values-pt-rBR.xml",

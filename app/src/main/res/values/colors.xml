@@ -11,4 +11,8 @@
     <color name="divider">#D6E3F0</color>
     <color name="text_primary">#1B2A38</color>
     <color name="text_secondary">#5C7186</color>
+
+    <!-- 从 HY_VQ 剥离：玻璃质感 -->
+    <color name="glass_light_75">#BFFEFCFC</color>       <!-- 75% 不透，用于侧边栏 -->
+    <color name="glass_border_light">#40FFFFFF</color>    <!-- 半透明白边，仿玻璃边缘高光 -->
 </resources>

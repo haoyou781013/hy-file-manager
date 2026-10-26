@@ -42,4 +42,11 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.activity:activity:1.8.2")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+
+    // 文件管理内置播放器（从 HY_VQ 剥离）
+    implementation("androidx.media3:media3-exoplayer:1.1.1")
+    implementation("androidx.media3:media3-ui:1.1.1")
+
+    // ZIP 加密解出（从 HY_VQ 剥离）
+    implementation("net.lingala.zip4j:zip4j:2.11.5")
 }

@@ -8,6 +8,14 @@ MERGED from [com.google.android.material:material:1.11.0] /opt/toolchain/gradle-
 MERGED from [androidx.appcompat:appcompat-resources:1.6.1] /opt/toolchain/gradle-home/caches/transforms-3/3aa8c848966e0970300f7694454336bf/transformed/appcompat-resources-1.6.1/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /opt/toolchain/gradle-home/caches/transforms-3/91f644df77635db83c7b48fbd7f1f940/transformed/constraintlayout-2.0.1/AndroidManifest.xml:2:1-11:12
 MERGED from [androidx.appcompat:appcompat:1.6.1] /opt/toolchain/gradle-home/caches/transforms-3/a6c4c081a78c7687adb6938b551c24c3/transformed/appcompat-1.6.1/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.media3:media3-exoplayer:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/6f126228fb1f5144a7f5c6b2668690aa/transformed/media3-exoplayer-1.1.1/AndroidManifest.xml:17:1-26:12
+MERGED from [androidx.media3:media3-extractor:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/12e8897b9009297177a58c0fa0cc8a33/transformed/media3-extractor-1.1.1/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.media3:media3-container:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/167dc5e07b3258d6e8e93fa6771b0bde/transformed/media3-container-1.1.1/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.media3:media3-datasource:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/84c4c05640b39f768f9ceb5492417377/transformed/media3-datasource-1.1.1/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.media3:media3-decoder:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/5816c04c3ac1e4e5caed2e615e3fd58f/transformed/media3-decoder-1.1.1/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.media3:media3-database:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/6039969611de34a1e140208259462526/transformed/media3-database-1.1.1/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.media3:media3-common:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/3197943448ef456cc9e890dc1bad9031/transformed/media3-common-1.1.1/AndroidManifest.xml:17:1-26:12
+MERGED from [androidx.media3:media3-ui:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/f96de7dc9bc804991bf020507f0a239b/transformed/media3-ui-1.1.1/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.recyclerview:recyclerview:1.3.2] /opt/toolchain/gradle-home/caches/transforms-3/d3aa7beb0db3bf83a8a0b179ae5cdacd/transformed/recyclerview-1.3.2/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.viewpager2:viewpager2:1.1.0-beta02] /opt/toolchain/gradle-home/caches/transforms-3/764f9d9bc5f28958c470c535186d641f/transformed/viewpager2-1.1.0-beta02/AndroidManifest.xml:2:1-7:12
 MERGED from [androidx.fragment:fragment:1.3.6] /opt/toolchain/gradle-home/caches/transforms-3/3b6d9671b51fd4432bb4a4e22862fe46/transformed/fragment-1.3.6/AndroidManifest.xml:17:1-24:12
@@ -20,6 +28,7 @@ MERGED from [androidx.dynamicanimation:dynamicanimation:1.0.0] /opt/toolchain/gr
 MERGED from [androidx.transition:transition:1.2.0] /opt/toolchain/gradle-home/caches/transforms-3/9f143df5eda24184081363e9741c121f/transformed/transition-1.2.0/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.vectordrawable:vectordrawable-animated:1.1.0] /opt/toolchain/gradle-home/caches/transforms-3/027bfe48d709072cee082e1c3e5562fd/transformed/vectordrawable-animated-1.1.0/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.vectordrawable:vectordrawable:1.1.0] /opt/toolchain/gradle-home/caches/transforms-3/34d865377bb9b998f3e09dc51872e1ee/transformed/vectordrawable-1.1.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.media:media:1.6.0] /opt/toolchain/gradle-home/caches/transforms-3/2796e0467321cc7338e344afa1658a03/transformed/media-1.6.0/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.viewpager:viewpager:1.0.0] /opt/toolchain/gradle-home/caches/transforms-3/b1cc9f523da61fee2df1f853b80a357d/transformed/viewpager-1.0.0/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.legacy:legacy-support-core-utils:1.0.0] /opt/toolchain/gradle-home/caches/transforms-3/09c7d85bb9a43124e01003d52542b914/transformed/legacy-support-core-utils-1.0.0/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.loader:loader:1.0.0] /opt/toolchain/gradle-home/caches/transforms-3/66fd7075cff3c24a815d829350eb76e9/transformed/loader-1.0.0/AndroidManifest.xml:17:1-22:12
@@ -139,6 +148,22 @@ MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /opt/toolchain/gr
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /opt/toolchain/gradle-home/caches/transforms-3/91f644df77635db83c7b48fbd7f1f940/transformed/constraintlayout-2.0.1/AndroidManifest.xml:5:5-7:41
 MERGED from [androidx.appcompat:appcompat:1.6.1] /opt/toolchain/gradle-home/caches/transforms-3/a6c4c081a78c7687adb6938b551c24c3/transformed/appcompat-1.6.1/AndroidManifest.xml:20:5-44
 MERGED from [androidx.appcompat:appcompat:1.6.1] /opt/toolchain/gradle-home/caches/transforms-3/a6c4c081a78c7687adb6938b551c24c3/transformed/appcompat-1.6.1/AndroidManifest.xml:20:5-44
+MERGED from [androidx.media3:media3-exoplayer:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/6f126228fb1f5144a7f5c6b2668690aa/transformed/media3-exoplayer-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-exoplayer:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/6f126228fb1f5144a7f5c6b2668690aa/transformed/media3-exoplayer-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-extractor:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/12e8897b9009297177a58c0fa0cc8a33/transformed/media3-extractor-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-extractor:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/12e8897b9009297177a58c0fa0cc8a33/transformed/media3-extractor-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-container:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/167dc5e07b3258d6e8e93fa6771b0bde/transformed/media3-container-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-container:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/167dc5e07b3258d6e8e93fa6771b0bde/transformed/media3-container-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-datasource:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/84c4c05640b39f768f9ceb5492417377/transformed/media3-datasource-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-datasource:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/84c4c05640b39f768f9ceb5492417377/transformed/media3-datasource-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-decoder:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/5816c04c3ac1e4e5caed2e615e3fd58f/transformed/media3-decoder-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-decoder:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/5816c04c3ac1e4e5caed2e615e3fd58f/transformed/media3-decoder-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-database:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/6039969611de34a1e140208259462526/transformed/media3-database-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-database:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/6039969611de34a1e140208259462526/transformed/media3-database-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-common:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/3197943448ef456cc9e890dc1bad9031/transformed/media3-common-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-common:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/3197943448ef456cc9e890dc1bad9031/transformed/media3-common-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-ui:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/f96de7dc9bc804991bf020507f0a239b/transformed/media3-ui-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-ui:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/f96de7dc9bc804991bf020507f0a239b/transformed/media3-ui-1.1.1/AndroidManifest.xml:20:5-22:41
 MERGED from [androidx.recyclerview:recyclerview:1.3.2] /opt/toolchain/gradle-home/caches/transforms-3/d3aa7beb0db3bf83a8a0b179ae5cdacd/transformed/recyclerview-1.3.2/AndroidManifest.xml:20:5-44
 MERGED from [androidx.recyclerview:recyclerview:1.3.2] /opt/toolchain/gradle-home/caches/transforms-3/d3aa7beb0db3bf83a8a0b179ae5cdacd/transformed/recyclerview-1.3.2/AndroidManifest.xml:20:5-44
 MERGED from [androidx.viewpager2:viewpager2:1.1.0-beta02] /opt/toolchain/gradle-home/caches/transforms-3/764f9d9bc5f28958c470c535186d641f/transformed/viewpager2-1.1.0-beta02/AndroidManifest.xml:5:5-44
@@ -163,6 +188,8 @@ MERGED from [androidx.vectordrawable:vectordrawable-animated:1.1.0] /opt/toolcha
 MERGED from [androidx.vectordrawable:vectordrawable-animated:1.1.0] /opt/toolchain/gradle-home/caches/transforms-3/027bfe48d709072cee082e1c3e5562fd/transformed/vectordrawable-animated-1.1.0/AndroidManifest.xml:20:5-22:41
 MERGED from [androidx.vectordrawable:vectordrawable:1.1.0] /opt/toolchain/gradle-home/caches/transforms-3/34d865377bb9b998f3e09dc51872e1ee/transformed/vectordrawable-1.1.0/AndroidManifest.xml:20:5-22:41
 MERGED from [androidx.vectordrawable:vectordrawable:1.1.0] /opt/toolchain/gradle-home/caches/transforms-3/34d865377bb9b998f3e09dc51872e1ee/transformed/vectordrawable-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media:media:1.6.0] /opt/toolchain/gradle-home/caches/transforms-3/2796e0467321cc7338e344afa1658a03/transformed/media-1.6.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media:media:1.6.0] /opt/toolchain/gradle-home/caches/transforms-3/2796e0467321cc7338e344afa1658a03/transformed/media-1.6.0/AndroidManifest.xml:20:5-22:41
 MERGED from [androidx.viewpager:viewpager:1.0.0] /opt/toolchain/gradle-home/caches/transforms-3/b1cc9f523da61fee2df1f853b80a357d/transformed/viewpager-1.0.0/AndroidManifest.xml:20:5-44
 MERGED from [androidx.viewpager:viewpager:1.0.0] /opt/toolchain/gradle-home/caches/transforms-3/b1cc9f523da61fee2df1f853b80a357d/transformed/viewpager-1.0.0/AndroidManifest.xml:20:5-44
 MERGED from [androidx.legacy:legacy-support-core-utils:1.0.0] /opt/toolchain/gradle-home/caches/transforms-3/09c7d85bb9a43124e01003d52542b914/transformed/legacy-support-core-utils-1.0.0/AndroidManifest.xml:20:5-44
@@ -225,6 +252,12 @@ INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManif
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
 		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
+uses-permission#android.permission.ACCESS_NETWORK_STATE
+ADDED from [androidx.media3:media3-exoplayer:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/6f126228fb1f5144a7f5c6b2668690aa/transformed/media3-exoplayer-1.1.1/AndroidManifest.xml:24:5-79
+MERGED from [androidx.media3:media3-common:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/3197943448ef456cc9e890dc1bad9031/transformed/media3-common-1.1.1/AndroidManifest.xml:24:5-79
+MERGED from [androidx.media3:media3-common:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/3197943448ef456cc9e890dc1bad9031/transformed/media3-common-1.1.1/AndroidManifest.xml:24:5-79
+	android:name
+		ADDED from [androidx.media3:media3-exoplayer:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/6f126228fb1f5144a7f5c6b2668690aa/transformed/media3-exoplayer-1.1.1/AndroidManifest.xml:24:22-76
 provider#androidx.startup.InitializationProvider
 ADDED from [androidx.emoji2:emoji2:1.2.0] /opt/toolchain/gradle-home/caches/transforms-3/3b1383cbb7835f36af50d47ea388cbd5/transformed/emoji2-1.2.0/AndroidManifest.xml:24:9-32:20
 MERGED from [androidx.lifecycle:lifecycle-process:2.6.1] /opt/toolchain/gradle-home/caches/transforms-3/011383c454fb3394949f261af43f5ea1/transformed/lifecycle-process-2.6.1/AndroidManifest.xml:24:9-32:20
