@@ -1364,7 +1364,7 @@ public class FileManagerModule extends HyVqModule {
         // ④ 同步路径：蓝色包裹的 ← → 组合
         syncBtn = buildSyncButton();
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f);
+                dp(34), ViewGroup.LayoutParams.WRAP_CONTENT);
         bottomNav.addView(syncBtn, slp);
 
         // ⑤ 新建 +
@@ -1413,7 +1413,7 @@ public class FileManagerModule extends HyVqModule {
      */
     private LinearLayout buildSyncButton() {
         LinearLayout box = new LinearLayout(ctx);
-        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setOrientation(LinearLayout.VERTICAL);   // 上下堆叠
         box.setGravity(Gravity.CENTER);
         // 蓝色包裹：圆角 + 蓝色描边
         int stroke = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
@@ -1423,23 +1423,29 @@ public class FileManagerModule extends HyVqModule {
         gd.setColor((fill & 0x00FFFFFF) | 0x33000000);
         gd.setStroke(Math.round(dp(1) * 1.5f), stroke);
         box.setBackground(gd);
-        box.setPadding(dp(2), dp(2), dp(2), dp(2));
+        box.setPadding(dp(1), dp(1), dp(1), dp(1));
 
+        // 上：← 靠左（右栏焦点时亮，点击 右→左）
         syncLeftIv = new ImageView(ctx);
         syncLeftIv.setImageResource(R.drawable.ic_arrow_back);
         syncLeftIv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        syncLeftIv.setPadding(dp(5), dp(5), dp(5), dp(5));
+        syncLeftIv.setPadding(dp(4), dp(3), dp(4), dp(3));
         syncLeftIv.setClickable(true);
-        syncLeftIv.setOnClickListener(v -> syncPath(false));   // ← 同步 右→左
-        box.addView(syncLeftIv, new LinearLayout.LayoutParams(0, dp(30), 1f));
+        syncLeftIv.setOnClickListener(v -> syncPath(false));
+        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(dp(26), dp(22));
+        llp.gravity = Gravity.START;          // 左对齐 → 形成交错
+        box.addView(syncLeftIv, llp);
 
+        // 下：→ 靠右（左栏焦点时亮，点击 左→右）
         syncRightIv = new ImageView(ctx);
         syncRightIv.setImageResource(R.drawable.ic_arrow_forward);
         syncRightIv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        syncRightIv.setPadding(dp(5), dp(5), dp(5), dp(5));
+        syncRightIv.setPadding(dp(4), dp(3), dp(4), dp(3));
         syncRightIv.setClickable(true);
-        syncRightIv.setOnClickListener(v -> syncPath(true));   // → 同步 左→右
-        box.addView(syncRightIv, new LinearLayout.LayoutParams(0, dp(30), 1f));
+        syncRightIv.setOnClickListener(v -> syncPath(true));
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(26), dp(22));
+        rlp.gravity = Gravity.END;            // 右对齐 → 形成交错
+        box.addView(syncRightIv, rlp);
 
         return box;
     }
