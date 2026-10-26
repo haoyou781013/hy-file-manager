@@ -59,6 +59,8 @@ drawable ic_sync_arrow_fwd
 drawable ic_trash
 drawable ic_undo
 drawable ic_video
+layout item_text_simple
+layout item_text_two_line
 mipmap ic_launcher
 string app_name
 style AnimPopup

@@ -1,15 +1,11 @@
 [
     {
-        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_sync_arrow_fwd.xml.flat",
-        "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_sync_arrow_fwd.xml"
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/mipmap-xhdpi_ic_launcher.png.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/mipmap-xhdpi/ic_launcher.png"
     },
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_pause.xml.flat",
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_pause.xml"
-    },
-    {
-        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/mipmap-xhdpi_ic_launcher.png.flat",
-        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/mipmap-xhdpi/ic_launcher.png"
     },
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_info.xml.flat",
@@ -44,6 +40,10 @@
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_folder.xml"
     },
     {
+        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/layout_item_text_simple.xml.flat",
+        "source": "com.aliya.hyfilemgr.app-main-37:/layout/item_text_simple.xml"
+    },
+    {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_more_vert.xml.flat",
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_more_vert.xml"
     },
@@ -68,12 +68,16 @@
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/anim/popup_in.xml"
     },
     {
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_sync_arrow_back.xml.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_sync_arrow_back.xml"
+    },
+    {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/anim_popup_out.xml.flat",
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/anim/popup_out.xml"
     },
     {
-        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_sync_arrow_back.xml.flat",
-        "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_sync_arrow_back.xml"
+        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/layout_item_text_two_line.xml.flat",
+        "source": "com.aliya.hyfilemgr.app-main-37:/layout/item_text_two_line.xml"
     },
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_bg_ripple.xml.flat",
@@ -112,8 +116,8 @@
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/mipmap-mdpi/ic_launcher.png"
     },
     {
-        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_arrow_upward.xml.flat",
-        "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_arrow_upward.xml"
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_sync_arrow_fwd.xml.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_sync_arrow_fwd.xml"
     },
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_cut.xml.flat",
@@ -202,6 +206,10 @@
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_redo.xml.flat",
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_redo.xml"
+    },
+    {
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_arrow_upward.xml.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_arrow_upward.xml"
     },
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_drag.xml.flat",
