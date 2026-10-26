@@ -9,8 +9,14 @@ color divider
 color text_primary
 color text_secondary
 color white
+drawable ic_apk
+drawable ic_archive
+drawable ic_audio
+drawable ic_doc
 drawable ic_file
 drawable ic_folder
+drawable ic_img
+drawable ic_video
 mipmap ic_launcher
 string app_name
 style Theme.HYFileManager
