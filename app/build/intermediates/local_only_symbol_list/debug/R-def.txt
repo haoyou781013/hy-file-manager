@@ -10,9 +10,12 @@ color blue_600
 color divider
 color glass_border_light
 color glass_light_75
+color ripple_blue
 color text_primary
 color text_secondary
 color white
+drawable bg_ripple
+drawable bg_ripple_round
 drawable ic_add
 drawable ic_apk
 drawable ic_archive

@@ -1425,7 +1425,7 @@ public class FileManagerModule extends HyVqModule {
         wrap.setGravity(Gravity.CENTER);
         wrap.setClickable(true);
         wrap.setFocusable(true);
-        wrap.setBackgroundResource(android.R.drawable.list_selector_background);
+        wrap.setBackgroundResource(R.drawable.bg_ripple_round);
         wrap.addView(iv, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         wrap.setOnClickListener(v -> iv.performClick());
@@ -1459,6 +1459,7 @@ public class FileManagerModule extends HyVqModule {
         syncLeftIv.setScaleType(ImageView.ScaleType.FIT_CENTER);
         syncLeftIv.setPadding(dp(3), dp(1), dp(3), dp(1));
         syncLeftIv.setClickable(true);
+        syncLeftIv.setBackgroundResource(R.drawable.bg_ripple_round);
         syncLeftIv.setOnClickListener(v -> syncPath(false));
         syncLeftIv.setOnTouchListener((v, ev) -> {
             if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN) v.animate().scaleX(0.8f).scaleY(0.8f).setDuration(80).start();
@@ -1476,6 +1477,7 @@ public class FileManagerModule extends HyVqModule {
         syncRightIv.setScaleType(ImageView.ScaleType.FIT_CENTER);
         syncRightIv.setPadding(dp(3), dp(1), dp(3), dp(1));
         syncRightIv.setClickable(true);
+        syncRightIv.setBackgroundResource(R.drawable.bg_ripple_round);
         syncRightIv.setOnClickListener(v -> syncPath(true));
         syncRightIv.setOnTouchListener((v, ev) -> {
             if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN) v.animate().scaleX(0.8f).scaleY(0.8f).setDuration(80).start();

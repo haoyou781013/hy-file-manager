@@ -15,4 +15,7 @@
     <!-- 从 HY_VQ 剥离：玻璃质感 -->
     <color name="glass_light_75">#BFFEFCFC</color>       <!-- 75% 不透，用于侧边栏 -->
     <color name="glass_border_light">#40FFFFFF</color>    <!-- 半透明白边，仿玻璃边缘高光 -->
+
+    <!-- 按压水波纹：主色 #1E88E5 的 20% 透明度（替代系统默认琥珀色） -->
+    <color name="ripple_blue">#331E88E5</color>
 </resources>

@@ -56,7 +56,7 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         row.setLayoutParams(new RecyclerView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, rowH));
         // 行背景（按下反馈用 selectableItemBackground）
-        row.setBackgroundResource(android.R.drawable.list_selector_background);
+        row.setBackgroundResource(com.aliya.hyfilemgr.R.drawable.bg_ripple);
 
         // 图标（纯色圆角方块，避免依赖 drawable 资源）
         ImageView icon = new ImageView(ctx);
