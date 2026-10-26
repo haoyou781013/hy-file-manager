@@ -1340,35 +1340,35 @@ public class FileManagerModule extends HyVqModule {
         int bg = UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow);
         bottomNav.setBackground(UiKit.rounded(ctx, 14, bg, 0));
         int pad = dp(4);
-        bottomNav.setPadding(pad, dp(3), pad, dp(3));
+        bottomNav.setPadding(pad, dp(1), pad, dp(1));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.topMargin = dp(6);
         bottomNav.setLayoutParams(lp);
 
         // ① 后退 <
-        navBackBtn = navButton(dp(26), v -> navBack(active));
+        navBackBtn = navButton(dp(20), v -> navBack(active));
         navBackBtn.setImageResource(R.drawable.ic_chevron_left);
         addNavBtnWrap(navBackBtn);
 
         // ② 前进 >
-        navFwdBtn = navButton(dp(26), v -> navForward(active));
+        navFwdBtn = navButton(dp(20), v -> navForward(active));
         navFwdBtn.setImageResource(R.drawable.ic_chevron_right);
         addNavBtnWrap(navFwdBtn);
 
         // ③ 上级 ↑
-        ImageView upBtn = navButton(dp(26), v -> navUp(active));
+        ImageView upBtn = navButton(dp(20), v -> navUp(active));
         upBtn.setImageResource(R.drawable.ic_arrow_up);
         addNavBtnWrap(upBtn);
 
         // ④ 同步路径：蓝色包裹的 ← → 组合
         syncBtn = buildSyncButton();
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
-                dp(34), ViewGroup.LayoutParams.WRAP_CONTENT);
+                dp(28), ViewGroup.LayoutParams.WRAP_CONTENT);
         bottomNav.addView(syncBtn, slp);
 
         // ⑤ 新建 +
-        ImageView addBtn = navButton(dp(26), v -> showNewMenu(bottomNav));
+        ImageView addBtn = navButton(dp(20), v -> showNewMenu(bottomNav));
         addBtn.setImageResource(R.drawable.ic_add);
         addNavBtnWrap(addBtn);
 
@@ -1384,7 +1384,7 @@ public class FileManagerModule extends HyVqModule {
         ImageView iv = new ImageView(ctx);
         iv.setColorFilter(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
         iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        iv.setPadding(dp(5), dp(5), dp(5), dp(5));
+        iv.setPadding(dp(3), dp(2), dp(3), dp(2));
         iv.setClickable(true);
         iv.setFocusable(true);
         iv.setOnClickListener(onClick);
@@ -1423,16 +1423,16 @@ public class FileManagerModule extends HyVqModule {
         gd.setColor((fill & 0x00FFFFFF) | 0x33000000);
         gd.setStroke(Math.round(dp(1) * 1.5f), stroke);
         box.setBackground(gd);
-        box.setPadding(dp(1), dp(1), dp(1), dp(1));
+        box.setPadding(0, 0, 0, 0);
 
         // 上：← 靠左（右栏焦点时亮，点击 右→左）
         syncLeftIv = new ImageView(ctx);
         syncLeftIv.setImageResource(R.drawable.ic_arrow_back);
         syncLeftIv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        syncLeftIv.setPadding(dp(4), dp(3), dp(4), dp(3));
+        syncLeftIv.setPadding(dp(3), dp(1), dp(3), dp(1));
         syncLeftIv.setClickable(true);
         syncLeftIv.setOnClickListener(v -> syncPath(false));
-        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(dp(26), dp(22));
+        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(dp(22), dp(15));
         llp.gravity = Gravity.START;          // 左对齐 → 形成交错
         box.addView(syncLeftIv, llp);
 
@@ -1440,10 +1440,10 @@ public class FileManagerModule extends HyVqModule {
         syncRightIv = new ImageView(ctx);
         syncRightIv.setImageResource(R.drawable.ic_arrow_forward);
         syncRightIv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        syncRightIv.setPadding(dp(4), dp(3), dp(4), dp(3));
+        syncRightIv.setPadding(dp(3), dp(1), dp(3), dp(1));
         syncRightIv.setClickable(true);
         syncRightIv.setOnClickListener(v -> syncPath(true));
-        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(26), dp(22));
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(22), dp(15));
         rlp.gravity = Gravity.END;            // 右对齐 → 形成交错
         box.addView(syncRightIv, rlp);
 
