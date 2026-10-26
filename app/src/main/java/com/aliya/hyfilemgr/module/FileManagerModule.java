@@ -1375,7 +1375,7 @@ public class FileManagerModule extends HyVqModule {
 
         // ③ 上级 ↑
         ImageView upBtn = navButton(dp(20), v -> navUp(active));
-        upBtn.setImageResource(R.drawable.ic_arrow_up);
+        upBtn.setImageResource(R.drawable.ic_arrow_upward);
         addNavBtnWrap(upBtn);
 
         // ④ 同步路径：蓝色包裹的 ← → 组合
@@ -1455,7 +1455,7 @@ public class FileManagerModule extends HyVqModule {
 
         // 上：← 靠左（右栏焦点时亮，点击 右→左）
         syncLeftIv = new ImageView(ctx);
-        syncLeftIv.setImageResource(R.drawable.ic_arrow_back);
+        syncLeftIv.setImageResource(R.drawable.ic_sync_arrow_back);
         syncLeftIv.setScaleType(ImageView.ScaleType.FIT_CENTER);
         syncLeftIv.setPadding(dp(3), dp(1), dp(3), dp(1));
         syncLeftIv.setClickable(true);
@@ -1473,7 +1473,7 @@ public class FileManagerModule extends HyVqModule {
 
         // 下：→ 靠右（左栏焦点时亮，点击 左→右）
         syncRightIv = new ImageView(ctx);
-        syncRightIv.setImageResource(R.drawable.ic_arrow_forward);
+        syncRightIv.setImageResource(R.drawable.ic_sync_arrow_fwd);
         syncRightIv.setScaleType(ImageView.ScaleType.FIT_CENTER);
         syncRightIv.setPadding(dp(3), dp(1), dp(3), dp(1));
         syncRightIv.setClickable(true);

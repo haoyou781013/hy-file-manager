@@ -22,6 +22,7 @@ drawable ic_archive
 drawable ic_arrow_back
 drawable ic_arrow_forward
 drawable ic_arrow_up
+drawable ic_arrow_upward
 drawable ic_audio
 drawable ic_category
 drawable ic_chevron_left
@@ -53,6 +54,8 @@ drawable ic_skip_next
 drawable ic_skip_previous
 drawable ic_sort
 drawable ic_star
+drawable ic_sync_arrow_back
+drawable ic_sync_arrow_fwd
 drawable ic_trash
 drawable ic_undo
 drawable ic_video
