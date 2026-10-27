@@ -2393,6 +2393,302 @@ public class FileManagerModule extends HyVqModule {
     // ══════════════════════════════════════════════════════════════
 
     /**
+     * 侧边栏底部固定的「设置」入口。
+     *
+     * <p>与上方滚动区分离，始终可见。图标 + 文字 + 右箭头，点击打开设置页。</p>
+     */
+    private void buildSidebarSettingsEntry() {
+        // 顶部细分隔线
+        View divider = new View(ctx);
+        divider.setBackgroundColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOutlineVariant));
+        LinearLayout.LayoutParams dvLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1) / 2));
+        navPanel.addView(divider, dvLp);
+
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(6), dp(12), dp(6), dp(12));
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setBackgroundResource(R.drawable.bg_ripple_round);
+        row.setOnClickListener(v -> {
+            closeNavSidebar();
+            showSettingsPage();
+        });
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.topMargin = dp(4);
+        navPanel.addView(row, rowLp);
+
+        ImageView icon = new ImageView(ctx);
+        icon.setImageResource(R.drawable.ic_settings);
+        icon.setColorFilter(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        row.addView(icon, new LinearLayout.LayoutParams(dp(20), dp(20)));
+
+        TextView label = new TextView(ctx);
+        label.setText("设置");
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        label.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+        LinearLayout.LayoutParams lbLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lbLp.leftMargin = dp(12);
+        row.addView(label, lbLp);
+    }
+
+    /**
+     * 设置页（底部弹出面板）。
+     *
+     * <p>当前两项：权限管理、文件管理。后续新设置项在此追加即可。</p>
+     */
+    private void showSettingsPage() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "设置"));
+
+        // ── 权限管理 ──
+        addSettingsRow(box, "权限管理",
+                "所有文件访问 · 存储权限 · SAF 授权", R.drawable.ic_root, v -> {
+                    hideSettingsDialog();
+                    showPermissionManager();
+                });
+
+        // ── 文件管理 ──
+        addSettingsRow(box, "文件管理",
+                "隐藏文件 · 缩略图 · 排序方式", R.drawable.ic_folder, v -> {
+                    hideSettingsDialog();
+                    showFileSettings();
+                });
+
+        settingsDialog = UiKit.glassDialog(ctx, box);
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setOrientation(LinearLayout.HORIZONTAL);
+        btns.setGravity(Gravity.END);
+        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnsLp.topMargin = dp(10);
+        box.addView(btns, btnsLp);
+        btns.addView(textButton("关闭", v -> hideSettingsDialog()));
+        settingsDialog.show();
+    }
+
+    /** 设置页对话框引用（供子页返回时复用） */
+    private android.app.Dialog settingsDialog;
+
+    private void hideSettingsDialog() {
+        if (settingsDialog != null && settingsDialog.isShowing()) {
+            UiKit.dismissWithAnim(settingsDialog);
+        }
+    }
+
+    /** 设置行：标题 + 副标题 + 图标 + 右箭头 */
+    private void addSettingsRow(LinearLayout parent, String title, String subtitle,
+                                int iconRes, View.OnClickListener onClick) {
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(14), dp(12), dp(14));
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setBackgroundResource(R.drawable.bg_ripple_round);
+        row.setOnClickListener(onClick);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.topMargin = dp(6);
+        parent.addView(row, rowLp);
+
+        ImageView icon = new ImageView(ctx);
+        icon.setImageResource(iconRes);
+        icon.setColorFilter(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimary));
+        row.addView(icon, new LinearLayout.LayoutParams(dp(22), dp(22)));
+
+        LinearLayout texts = new LinearLayout(ctx);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tLp.leftMargin = dp(14);
+        row.addView(texts, tLp);
+
+        TextView tvTitle = new TextView(ctx);
+        tvTitle.setText(title);
+        tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tvTitle.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+        texts.addView(tvTitle);
+
+        TextView tvSub = new TextView(ctx);
+        tvSub.setText(subtitle);
+        tvSub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvSub.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tvSub.setAlpha(0.75f);
+        LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        subLp.topMargin = dp(2);
+        texts.addView(tvSub, subLp);
+    }
+
+    /** 权限管理页：所有文件访问 / 存储权限 / SAF 授权目录 */
+    private void showPermissionManager() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "权限管理"));
+
+        // ① 所有文件访问
+        boolean allFiles = Environment.isExternalStorageManager();
+        addInfoRow(box, "所有文件访问",
+                allFiles ? "已授权 · 可读写整个存储" : "未授权 · 读写受限，点此授权",
+                allFiles, v -> {
+                    requestAllFilesAccess();
+                });
+
+        // ② 存储读写权限（Android 12 及以下）
+        boolean storageOk = checkPermission();
+        addInfoRow(box, "存储读写权限",
+                storageOk ? "已授权" : "未授权",
+                storageOk, v -> {
+                    if (Build.VERSION.SDK_INT >= 23) {
+                        java.util.ArrayList<String> perms = new java.util.ArrayList<>();
+                        perms.add(android.Manifest.permission.READ_EXTERNAL_STORAGE);
+                        if (Build.VERSION.SDK_INT <= 28) {
+                            perms.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE);
+                        }
+                        if (ctx instanceof android.app.Activity) {
+                            ((android.app.Activity) ctx).requestPermissions(
+                                    perms.toArray(new String[0]), 0x2001);
+                        } else {
+                            UiKit.toast(ctx, "请在应用内授予存储权限");
+                        }
+                    }
+                });
+
+        // ③ SAF 授权目录
+        addInfoRow(box, "SAF 授权目录",
+                SHOW_SAF_MOUNTS ? "已在侧边栏显示" : "侧边栏暂不显示（授权数据保留）",
+                SHOW_SAF_MOUNTS, v -> {
+                    openSafAuthorize();
+                });
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setOrientation(LinearLayout.HORIZONTAL);
+        btns.setGravity(Gravity.END);
+        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnsLp.topMargin = dp(10);
+        box.addView(btns, btnsLp);
+        btns.addView(textButton("返回", v -> {
+            UiKit.dismissWithAnim(d);
+            showSettingsPage();
+        }));
+        btns.addView(textButton("关闭", v -> UiKit.dismissWithAnim(d)));
+        d.show();
+    }
+
+    /** 文件管理设置页：隐藏文件 / 缩略图 / 排序 */
+    private void showFileSettings() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "文件管理"));
+
+        addInfoRow(box, "隐藏 . 开头文件",
+                showHidden ? "正在显示" : "已隐藏",
+                showHidden, v -> {
+                    showHidden = !showHidden;
+                    fmPrefs().edit().putBoolean(PREF_SHOW_HIDDEN, showHidden).apply();
+                    reloadAll();
+                    UiKit.toast(ctx, showHidden ? "已显示隐藏文件" : "已隐藏 . 开头文件");
+                });
+
+        addInfoRow(box, "缩略图",
+                thumbsEnabled ? "已开启（图片/视频/APK 预览）" : "已关闭（仅显示类型图标）",
+                thumbsEnabled, v -> {
+                    thumbsEnabled = !thumbsEnabled;
+                    fmPrefs().edit().putBoolean(PREF_THUMBS, thumbsEnabled).apply();
+                    for (Pane pp : panes) {
+                        if (pp != null && pp.adapter != null) {
+                            pp.adapter.setThumbsEnabled(thumbsEnabled);
+                        }
+                    }
+                    UiKit.toast(ctx, thumbsEnabled ? "已开启缩略图" : "已关闭缩略图");
+                });
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setOrientation(LinearLayout.HORIZONTAL);
+        btns.setGravity(Gravity.END);
+        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnsLp.topMargin = dp(10);
+        box.addView(btns, btnsLp);
+        btns.addView(textButton("排序方式", v -> {
+            UiKit.dismissWithAnim(d);
+            showSortMenu(navPanel);
+        }));
+        btns.addView(textButton("返回", v -> {
+            UiKit.dismissWithAnim(d);
+            showSettingsPage();
+        }));
+        btns.addView(textButton("关闭", v -> UiKit.dismissWithAnim(d)));
+        d.show();
+    }
+
+    /** 状态行：图标 + 标题 + 状态描述 + 勾选标记 */
+    private void addInfoRow(LinearLayout parent, String title, String status,
+                            boolean ok, View.OnClickListener onClick) {
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(12), dp(12), dp(12));
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setBackgroundResource(R.drawable.bg_ripple_round);
+        row.setOnClickListener(onClick);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.topMargin = dp(4);
+        parent.addView(row, rowLp);
+
+        LinearLayout texts = new LinearLayout(ctx);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        row.addView(texts, tLp);
+
+        TextView tvTitle = new TextView(ctx);
+        tvTitle.setText(title);
+        tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tvTitle.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+        texts.addView(tvTitle);
+
+        TextView tvSub = new TextView(ctx);
+        tvSub.setText(status);
+        tvSub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvSub.setTextColor(UiKit.color(ctx, ok
+                ? com.google.android.material.R.attr.colorPrimary
+                : com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tvSub.setAlpha(ok ? 1f : 0.75f);
+        LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        subLp.topMargin = dp(2);
+        texts.addView(tvSub, subLp);
+
+        // 状态点
+        View dot = new View(ctx);
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        g.setColor(UiKit.color(ctx, ok
+                ? com.google.android.material.R.attr.colorPrimary
+                : com.google.android.material.R.attr.colorOutline));
+        dot.setBackground(g);
+        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(8), dp(8));
+        dotLp.leftMargin = dp(8);
+        row.addView(dot, dotLp);
+    }
+
+    /**
      * 侧边栏头部：48dp 圆形头像 + 右侧「文件名 + 版本/路径摘要」纵列，
      * 与 HY_VQ nav_header.xml 的横向布局一致（头像左置、文字右侧纵列）。
      */
@@ -2596,6 +2892,9 @@ public class FileManagerModule extends HyVqModule {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         navPanel.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // ── 底部固定：设置入口（不随内容滚动）──
+        buildSidebarSettingsEntry();
 
         // ══════ 头部：头像 + 用户名（HY_VQ 同款） + 存储空间进度条 ══════
         buildSidebarHeader(content);
