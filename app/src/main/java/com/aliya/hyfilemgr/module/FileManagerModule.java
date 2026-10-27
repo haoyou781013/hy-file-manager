@@ -1809,11 +1809,11 @@ public class FileManagerModule extends HyVqModule {
 
         // 第 1 行：打开方式 / 解压到对侧 / 编辑 / 复制
         LinearLayout r1 = itemMenuGridRow(box, 4);
-        addGridItem(r1, "打开方式", R.drawable.ic_file, !parent, v -> {
+        addGridItem(r1, "打开", R.drawable.ic_file, !parent, v -> {
             dialog.dismiss();
             showOpenWithDialog(e.path, e.name, e.path != null && e.path.startsWith("content://"));
         });
-        addGridItem(r1, "解压到对侧", R.drawable.ic_archive, zip, v -> {
+        addGridItem(r1, "解到对侧", R.drawable.ic_archive, zip, v -> {
             dialog.dismiss();
             extractZipEntryToOtherPane(e);
         });
@@ -1852,11 +1852,11 @@ public class FileManagerModule extends HyVqModule {
             dialog.dismiss();
             showPropertyDialog(e);
         });
-        addGridItem(r3, "添加书签", R.drawable.ic_star_add, realOnly, v -> {
+        addGridItem(r3, "加书签", R.drawable.ic_star_add, realOnly, v -> {
             dialog.dismiss();
             addBookmarkPath(e.path);
         });
-        addGridItem(r3, "多选模式", R.drawable.ic_checklist, !parent && !inCat, v -> {
+        addGridItem(r3, "多选", R.drawable.ic_checklist, !parent && !inCat, v -> {
             dialog.dismiss();
             p.selected.add(e);
             enterMultiMode();
@@ -1869,7 +1869,7 @@ public class FileManagerModule extends HyVqModule {
                 dialog.dismiss();
                 onItemMenu(p, e, "恢复");
             });
-            addGridItem(r4, "彻底删除", R.drawable.ic_trash, !parent, v -> {
+            addGridItem(r4, "彻底删", R.drawable.ic_trash, !parent, v -> {
                 dialog.dismiss();
                 onItemMenu(p, e, "彻底删除");
             });
@@ -2223,11 +2223,12 @@ public class FileManagerModule extends HyVqModule {
 
         TextView label = new TextView(ctx);
         label.setText(text);
-        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
         label.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
         label.setGravity(Gravity.CENTER);
-        label.setSingleLine(true);
+        label.setMaxLines(2);
         label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        label.setLineSpacing(0, 0.95f);
         LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         labelLp.topMargin = dp(6);
