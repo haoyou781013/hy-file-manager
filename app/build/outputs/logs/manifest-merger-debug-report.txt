@@ -1,14 +1,15 @@
 -- Merging decision tree log ---
 manifest
-ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-33:12
-INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-33:12
-INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-33:12
-INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-33:12
+ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-38:12
+INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-38:12
+INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-38:12
+INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-38:12
 MERGED from [com.google.android.material:material:1.11.0] /opt/toolchain/gradle-home/caches/transforms-3/f23fdd6edf5a0b53fe96cc1a7a81b660/transformed/material-1.11.0/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.appcompat:appcompat-resources:1.6.1] /opt/toolchain/gradle-home/caches/transforms-3/3aa8c848966e0970300f7694454336bf/transformed/appcompat-resources-1.6.1/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /opt/toolchain/gradle-home/caches/transforms-3/91f644df77635db83c7b48fbd7f1f940/transformed/constraintlayout-2.0.1/AndroidManifest.xml:2:1-11:12
 MERGED from [androidx.appcompat:appcompat:1.6.1] /opt/toolchain/gradle-home/caches/transforms-3/a6c4c081a78c7687adb6938b551c24c3/transformed/appcompat-1.6.1/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.media3:media3-exoplayer:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/6f126228fb1f5144a7f5c6b2668690aa/transformed/media3-exoplayer-1.1.1/AndroidManifest.xml:17:1-26:12
+MERGED from [androidx.media3:media3-datasource-okhttp:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/f90d22266254b8dd983ddba711e476f4/transformed/media3-datasource-okhttp-1.1.1/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.media3:media3-extractor:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/12e8897b9009297177a58c0fa0cc8a33/transformed/media3-extractor-1.1.1/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.media3:media3-container:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/167dc5e07b3258d6e8e93fa6771b0bde/transformed/media3-container-1.1.1/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.media3:media3-datasource:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/84c4c05640b39f768f9ceb5492417377/transformed/media3-datasource-1.1.1/AndroidManifest.xml:17:1-24:12
@@ -55,20 +56,20 @@ MERGED from [androidx.documentfile:documentfile:1.0.0] /opt/toolchain/gradle-hom
 MERGED from [androidx.localbroadcastmanager:localbroadcastmanager:1.0.0] /opt/toolchain/gradle-home/caches/transforms-3/80eaef0f76b0ff69ddb27cc22877cf2e/transformed/localbroadcastmanager-1.0.0/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.print:print:1.0.0] /opt/toolchain/gradle-home/caches/transforms-3/3c911d2460d162e40def2ac544f1b65f/transformed/print-1.0.0/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.annotation:annotation-experimental:1.3.0] /opt/toolchain/gradle-home/caches/transforms-3/859e6adc335debf55de748f63ea044f7/transformed/annotation-experimental-1.3.0/AndroidManifest.xml:17:1-22:12
-INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-33:12
-INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-33:12
-INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-33:12
+INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-38:12
+INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-38:12
+INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-38:12
 	package
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
-		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-33:12
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-38:12
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
 	android:versionName
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
-		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-33:12
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-38:12
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
 	android:versionCode
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
-		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-33:12
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-38:12
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
 	xmlns:android
 		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:11-69
@@ -87,7 +88,7 @@ ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest
 	android:name
 		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:8:22-79
 application
-ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:10:5-32:19
+ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:10:5-37:19
 MERGED from [com.google.android.material:material:1.11.0] /opt/toolchain/gradle-home/caches/transforms-3/f23fdd6edf5a0b53fe96cc1a7a81b660/transformed/material-1.11.0/AndroidManifest.xml:22:5-20
 MERGED from [com.google.android.material:material:1.11.0] /opt/toolchain/gradle-home/caches/transforms-3/f23fdd6edf5a0b53fe96cc1a7a81b660/transformed/material-1.11.0/AndroidManifest.xml:22:5-20
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /opt/toolchain/gradle-home/caches/transforms-3/91f644df77635db83c7b48fbd7f1f940/transformed/constraintlayout-2.0.1/AndroidManifest.xml:9:5-20
@@ -146,6 +147,16 @@ ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest
 		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:30:13-77
 	android:name
 		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:28:13-48
+activity#com.aliya.hyfilemgr.MediaPlayerActivity
+ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:32:13-36:40
+	android:exported
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:36:13-37
+	android:configChanges
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:34:13-87
+	android:theme
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:35:13-77
+	android:name
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:33:13-48
 uses-sdk
 INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
@@ -160,6 +171,8 @@ MERGED from [androidx.appcompat:appcompat:1.6.1] /opt/toolchain/gradle-home/cach
 MERGED from [androidx.appcompat:appcompat:1.6.1] /opt/toolchain/gradle-home/caches/transforms-3/a6c4c081a78c7687adb6938b551c24c3/transformed/appcompat-1.6.1/AndroidManifest.xml:20:5-44
 MERGED from [androidx.media3:media3-exoplayer:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/6f126228fb1f5144a7f5c6b2668690aa/transformed/media3-exoplayer-1.1.1/AndroidManifest.xml:20:5-22:41
 MERGED from [androidx.media3:media3-exoplayer:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/6f126228fb1f5144a7f5c6b2668690aa/transformed/media3-exoplayer-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-datasource-okhttp:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/f90d22266254b8dd983ddba711e476f4/transformed/media3-datasource-okhttp-1.1.1/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.media3:media3-datasource-okhttp:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/f90d22266254b8dd983ddba711e476f4/transformed/media3-datasource-okhttp-1.1.1/AndroidManifest.xml:20:5-22:41
 MERGED from [androidx.media3:media3-extractor:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/12e8897b9009297177a58c0fa0cc8a33/transformed/media3-extractor-1.1.1/AndroidManifest.xml:20:5-22:41
 MERGED from [androidx.media3:media3-extractor:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/12e8897b9009297177a58c0fa0cc8a33/transformed/media3-extractor-1.1.1/AndroidManifest.xml:20:5-22:41
 MERGED from [androidx.media3:media3-container:1.1.1] /opt/toolchain/gradle-home/caches/transforms-3/167dc5e07b3258d6e8e93fa6771b0bde/transformed/media3-container-1.1.1/AndroidManifest.xml:20:5-22:41

@@ -69,6 +69,10 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.1.1")
     implementation("androidx.media3:media3-ui:1.1.1")
 
+    // 播放器网络数据源（PlayerCore 需要）
+    implementation("androidx.media3:media3-datasource-okhttp:1.1.1")
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+
     // ZIP 加密解出（从 HY_VQ 剥离）
     implementation("net.lingala.zip4j:zip4j:2.11.5")
 }

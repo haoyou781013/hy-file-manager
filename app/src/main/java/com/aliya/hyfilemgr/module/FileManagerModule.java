@@ -4889,6 +4889,7 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 用内置播放器打开（视频：全屏页 + 同目录左右切换） */
+    /** 用内置播放器（MediaPlayerActivity，Media3 内核）打开音视频，带同目录播放列表 */
     private void openWithBuiltInPlayer(String pathOrUri, String name, boolean isUri) {
         try {
             java.util.ArrayList<String> list = collectPlayable(pathOrUri, false);
@@ -4897,10 +4898,12 @@ public class FileManagerModule extends HyVqModule {
                 list.add(0, pathOrUri);
                 idx = 0;
             }
-            Intent i = new Intent(Intent.ACTION_VIEW);
-            android.net.Uri u = isUri ? android.net.Uri.parse(pathOrUri)
-                                      : android.net.Uri.fromFile(new java.io.File(pathOrUri));
-            i.setDataAndType(u, "audio/*");
+            Intent i = new Intent(ctx, com.aliya.hyfilemgr.MediaPlayerActivity.class);
+            i.putExtra(com.aliya.hyfilemgr.MediaPlayerActivity.EXTRA_LIST,
+                    list.toArray(new String[0]));
+            i.putExtra(com.aliya.hyfilemgr.MediaPlayerActivity.EXTRA_INDEX, idx);
+            i.putExtra(com.aliya.hyfilemgr.MediaPlayerActivity.EXTRA_IS_URI, isUri);
+            i.putExtra(com.aliya.hyfilemgr.MediaPlayerActivity.EXTRA_TITLE, name);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
             ctx.startActivity(i);
         } catch (Throwable t) {
