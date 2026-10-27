@@ -20,6 +20,22 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // ── 签名配置：复用 HY_VQ 的发布密钥 ──
+    // 密钥不在仓库内，从工作区 etc/keys 读取；缺失则回退 debug 签名（不影响本地编译）。
+    signingConfigs {
+        create("release") {
+            val ksDir = System.getenv("HY_KEYS_DIR") ?: "/sdcard/Android/haoyou781/etc/keys"
+            val ks = file("$ksDir/hyvq-release.jks")
+            val passFile = file("$ksDir/.storepass")
+            if (ks.exists() && passFile.exists()) {
+                storeFile = ks
+                storePassword = passFile.readText().trim()
+                keyAlias = "hyvq"
+                keyPassword = passFile.readText().trim()
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -27,6 +43,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
+        }
+        debug {
+            // debug 也用发布密钥：避免 DSH 更新重建 debug.keystore 后
+            // 每次安装都报 INSTALL_FAILED_UPDATE_INCOMPATIBLE
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
