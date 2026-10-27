@@ -2417,6 +2417,201 @@ public class FileManagerModule extends HyVqModule {
 
     /** 动态重建侧边栏内容：路径+挂载合并为同一列表（根目录/内部存储/SAF授权目录，
      *  可长按三条杠拖动排序、SAF 授权项可左滑删除；SAF 授权完成后也会调用刷新） */
+    // ══════════════════════════════════════════════════════════════
+    //  侧边栏头部（HY_VQ 同款）：头像 + 标题/副标题，下方接存储空间条
+    // ══════════════════════════════════════════════════════════════
+
+    /**
+     * 侧边栏头部：48dp 圆形头像 + 右侧「文件名 + 版本/路径摘要」纵列，
+     * 与 HY_VQ nav_header.xml 的横向布局一致（头像左置、文字右侧纵列）。
+     */
+    private void buildSidebarHeader(LinearLayout content) {
+        LinearLayout head = new LinearLayout(ctx);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setPadding(dp(4), dp(10), dp(4), dp(8));
+        content.addView(head);
+
+        // ── 圆形头像（48dp，MaterialCardView 自动裁剪成圆）──
+        com.google.android.material.card.MaterialCardView card =
+                new com.google.android.material.card.MaterialCardView(ctx);
+        card.setRadius(dp(25));
+        card.setCardElevation(0);
+        card.setStrokeWidth(0);
+        card.setCardBackgroundColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimaryContainer));
+
+        ImageView avatar = new ImageView(ctx);
+        avatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        avatar.setImageResource(R.drawable.ic_folder);
+        avatar.setColorFilter(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimary));
+        avatar.setPadding(dp(11), dp(11), dp(11), dp(11));
+        card.addView(avatar, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(dp(50), dp(50));
+        head.addView(card, cardLp);
+
+        // ── 右侧：标题 + 副标题 ──
+        LinearLayout texts = new LinearLayout(ctx);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams textsLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        textsLp.leftMargin = dp(12);
+        head.addView(texts, textsLp);
+
+        TextView title = new TextView(ctx);
+        title.setText("HY 文件管理");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        texts.addView(title);
+
+        TextView sub = new TextView(ctx);
+        sub.setText("v" + appVersion() + "  ·  本地文件");
+        sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        sub.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
+        sub.setAlpha(0.75f);
+        sub.setSingleLine(true);
+        LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        subLp.topMargin = dp(2);
+        texts.addView(sub, subLp);
+
+        // ── 存储空间进度条（紧跟头像下方）──
+        buildStorageBar(content);
+    }
+
+    /** 应用版本名（取 PackageManager，失败返回 "0.1.0"） */
+    private String appVersion() {
+        try {
+            return ctx.getPackageManager().getPackageInfo(ctx.getPackageName(), 0).versionName;
+        } catch (Throwable t) {
+            return "0.1.0";
+        }
+    }
+
+    /**
+     * 存储空间条：已用/总容量 + 百分比进度条（仿 Material LinearProgressIndicator）。
+     *
+     * <p>取内部存储（Environment.getDataDirectory 所在分区）的 total/free，
+     * 异步计算避免主线程 IO。用量超 90% 时进度条转警示色。</p>
+     */
+    private void buildStorageBar(LinearLayout content) {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams boxLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        boxLp.topMargin = dp(2);
+        boxLp.bottomMargin = dp(8);
+        boxLp.leftMargin = dp(4);
+        boxLp.rightMargin = dp(4);
+        content.addView(box, boxLp);
+
+        // 顶部一行：左「已用 x / y」 右「xx%」
+        LinearLayout labelRow = new LinearLayout(ctx);
+        labelRow.setOrientation(LinearLayout.HORIZONTAL);
+        labelRow.setGravity(Gravity.CENTER_VERTICAL);
+        box.addView(labelRow);
+
+        final TextView tvLeft = new TextView(ctx);
+        tvLeft.setText("存储空间");
+        tvLeft.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvLeft.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tvLeft.setSingleLine(true);
+        labelRow.addView(tvLeft, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        final TextView tvPct = new TextView(ctx);
+        tvPct.setText("—");
+        tvPct.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvPct.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvPct.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary));
+        tvPct.setSingleLine(true);
+        labelRow.addView(tvPct);
+
+        // 进度条容器（自定义 drawable，圆角 + 分段色）
+        final android.widget.FrameLayout track = new android.widget.FrameLayout(ctx);
+        android.graphics.drawable.GradientDrawable trackBg = UiKit.rounded(ctx, 3,
+                UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHighest), 0);
+        track.setBackground(trackBg);
+        LinearLayout.LayoutParams trackLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(5));
+        trackLp.topMargin = dp(5);
+        box.addView(track, trackLp);
+
+        final View fill = new View(ctx);
+        android.graphics.drawable.GradientDrawable fillBg = UiKit.rounded(ctx, 3, 0
+                | UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary), 0);
+        fill.setBackground(fillBg);
+        track.addView(fill, new android.widget.FrameLayout.LayoutParams(0, dp(5)));
+
+        // 底部：可用空间
+        final TextView tvFree = new TextView(ctx);
+        tvFree.setText("可用 —");
+        tvFree.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+        tvFree.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tvFree.setAlpha(0.7f);
+        tvFree.setSingleLine(true);
+        LinearLayout.LayoutParams freeLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        freeLp.topMargin = dp(3);
+        box.addView(tvFree, freeLp);
+
+        // 异步取容量（StatFs 在某些目录上可能耗时）
+        new Thread(() -> {
+            long total = 0, free = 0;
+            try {
+                android.os.StatFs st = new android.os.StatFs(
+                        Environment.getExternalStorageDirectory().getAbsolutePath());
+                total = st.getTotalBytes();
+                free = st.getAvailableBytes();
+            } catch (Throwable t) {
+                try {
+                    android.os.StatFs st2 = new android.os.StatFs("/data");
+                    total = st2.getTotalBytes();
+                    free = st2.getAvailableBytes();
+                } catch (Throwable ignored) {
+                }
+            }
+            final long ft = total, ff = free;
+            handler.post(() -> {
+                if (ft <= 0) {
+                    tvLeft.setText("存储空间不可用");
+                    tvPct.setText("—");
+                    return;
+                }
+                long used = Math.max(0, ft - ff);
+                int pct = (int) Math.round(used * 100.0 / ft);
+                tvLeft.setText("已用 " + humanSize(used) + " / " + humanSize(ft));
+                tvPct.setText(pct + "%");
+                tvFree.setText("可用 " + humanSize(ff));
+
+                // 进度条宽度（用 post 等布局完成拿到 track 宽度）
+                track.post(() -> {
+                    int w = track.getWidth();
+                    if (w <= 0) return;
+                    float ratio = (float) used / ft;
+                    if (ratio < 0.005f) ratio = 0.005f;   // 极小值也显示一点，避免"空条"
+                    int fw = Math.max(dp(2), Math.round(w * Math.min(1f, ratio)));
+                    android.view.ViewGroup.LayoutParams lp = fill.getLayoutParams();
+                    lp.width = fw;
+                    fill.setLayoutParams(lp);
+                    // 高占用改警示色
+                    boolean warn = pct >= 90;
+                    int color = UiKit.color(ctx, warn
+                            ? com.google.android.material.R.attr.colorError
+                            : com.google.android.material.R.attr.colorPrimary);
+                    android.graphics.drawable.GradientDrawable g = UiKit.rounded(ctx, 3, color, 0);
+                    fill.setBackground(g);
+                    tvPct.setTextColor(color);
+                });
+            });
+        }, "storage-stat").start();
+    }
+
     private void rebuildNavContent() {
         if (navPanel == null) return;
         navPanel.removeAllViews();
@@ -2431,24 +2626,21 @@ public class FileManagerModule extends HyVqModule {
         navPanel.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        // ── 头部：文件导航标题 + 当前路径（同外层侧边栏头部风格） ──
-        TextView title = new TextView(ctx);
-        title.setText("文件导航");
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        title.setTypeface(null, android.graphics.Typeface.BOLD);
-        title.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
-        content.addView(title);
+        // ══════ 头部：头像 + 用户名（HY_VQ 同款） + 存储空间进度条 ══════
+        buildSidebarHeader(content);
+        // 当前路径（次要信息，弱化显示）
         TextView curPath = new TextView(ctx);
-        curPath.setText(active.path);
-        curPath.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        curPath.setText(displayPath(active.path));
+        curPath.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         curPath.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
-        curPath.setAlpha(0.75f);
+        curPath.setAlpha(0.6f);
         curPath.setSingleLine(true);
         curPath.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         LinearLayout.LayoutParams curLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         curLp.topMargin = dp(2);
-        curLp.bottomMargin = dp(6);
+        curLp.bottomMargin = dp(4);
+        curLp.leftMargin = dp(4);
         content.addView(curPath, curLp);
 
         // ── 书签区（仿 ZhuFiler NavigationView 书签组：常驻可见，点击进入、长按删除） ──
