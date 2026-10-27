@@ -6174,7 +6174,7 @@ public class FileManagerModule extends HyVqModule {
             reloadAll();
         });
         addMenuRow(panel, showHidden ? "隐藏文件：显示中" : "隐藏文件：已隐藏",
-                android.R.drawable.ic_menu_view, v -> {
+                R.drawable.ic_visibility, v -> {
                     popup.dismiss();
                     showHidden = !showHidden;
                     fmPrefs().edit().putBoolean(PREF_SHOW_HIDDEN, showHidden).apply();
@@ -6182,7 +6182,7 @@ public class FileManagerModule extends HyVqModule {
                     reloadAll();
                 });
         addMenuRow(panel, thumbsEnabled ? "缩略图：已开启" : "缩略图：已关闭",
-                R.drawable.ic_img, v -> {
+                R.drawable.ic_thumbnail, v -> {
                     popup.dismiss();
                     thumbsEnabled = !thumbsEnabled;
                     fmPrefs().edit().putBoolean(PREF_THUMBS, thumbsEnabled).apply();
@@ -6193,32 +6193,32 @@ public class FileManagerModule extends HyVqModule {
                     }
                     UiKit.toast(ctx, thumbsEnabled ? "已开启缩略图" : "已关闭缩略图");
                 });
-        addMenuRow(panel, "书签列表", R.drawable.ic_star, v -> {
+        addMenuRow(panel, "书签列表", R.drawable.ic_bookmarks, v -> {
             popup.dismiss();
             showBookmarks();
         });
-        addMenuRow(panel, "收藏当前目录", android.R.drawable.ic_menu_save, v -> {
+        addMenuRow(panel, "收藏当前目录", R.drawable.ic_star_add, v -> {
             popup.dismiss();
             addBookmark();
         });
         addMenuRow(panel, gridMode ? "切换到列表视图" : "切换到网格视图",
-                R.drawable.ic_preview, v -> {
+                gridMode ? R.drawable.ic_list : R.drawable.ic_grid, v -> {
                     popup.dismiss();
                     gridMode = !gridMode;
                     persistState();
                     reloadAll();
                     UiKit.toast(ctx, gridMode ? "已切换到网格视图" : "已切换到列表视图");
                 });
-        addMenuRow(panel, "最近文件", R.drawable.ic_doc, v -> {
+        addMenuRow(panel, "最近文件", R.drawable.ic_history, v -> {
             popup.dismiss();
             showRecentFiles();
         });
-        addMenuRow(panel, "存储分析", R.drawable.ic_info, v -> {
+        addMenuRow(panel, "存储分析", R.drawable.ic_pie_chart, v -> {
             popup.dismiss();
             showStorageAnalysis();
         });
         addMenuRow(panel, queuedTasks > 0 ? "任务队列（" + queuedTasks + "）" : "任务队列",
-                android.R.drawable.ic_menu_manage, v -> {
+                R.drawable.ic_layers, v -> {
                     popup.dismiss();
                     showTaskQueue();
                 });
