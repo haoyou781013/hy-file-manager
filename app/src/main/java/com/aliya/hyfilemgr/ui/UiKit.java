@@ -317,9 +317,13 @@ public final class UiKit {
             // 记录原窗口宽度，保持各弹窗既定宽度不变（如 92%/78% 屏宽）
             int prevWidth = window.getAttributes().width;
             window.setBackgroundDrawable(bg);
-            // 窗口铺满屏幕，背景模糊图才能完整覆盖弹窗后区域
+            // 窗口铺满屏幕，背景模糊图才能完整覆盖弹窗后区域（含状态栏）
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
             window.setGravity(Gravity.CENTER);
+            // 允许绘制到状态栏下方（否者状态栏那条会被系统遮住/留白）
+            window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                    | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                    | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
             // 原弹窗内容改为垂直居中悬浮（宽度保持原窗口宽度）
             if (!centerContent) return;
             View decor = window.getDecorView();
@@ -353,13 +357,26 @@ public final class UiKit {
         try {
             android.app.Activity activity = (android.app.Activity) context;
             View decor = activity.getWindow().getDecorView();
+            if (decor.getWidth() <= 0 || decor.getHeight() <= 0) return null;
             View content = decor.findViewById(android.R.id.content);
             if (content == null || content.getWidth() <= 0 || content.getHeight() <= 0) return null;
-            int[] loc = new int[2];
-            content.getLocationInWindow(loc);
-            Bitmap shot = Bitmap.createBitmap(content.getWidth(), content.getHeight(), Bitmap.Config.ARGB_8888);
+
+            // 截整个 decorView（含状态栏区域），弹窗窗口铺满全屏时背景才能覆盖状态栏。
+            // 旧实现只截 android.R.id.content（不含状态栏），弹窗窗口又是 MATCH_PARENT，
+            // 于是状态栏那一条没有模糊背景 → 表现为「模糊不包括状态栏」。
+            int[] decorLoc = new int[2];
+            decor.getLocationInWindow(decorLoc);
+            int dw = decor.getWidth();
+            int dh = decor.getHeight();
+            // 若 decor 坐标在状态栏下方（decorLoc[1] > 0），说明还有一截在窗口之上，
+            // 把高度补上，保证从屏幕顶端开始覆盖。
+            int extraTop = Math.max(0, decorLoc[1]);
+            Bitmap shot = Bitmap.createBitmap(dw, dh + extraTop, Bitmap.Config.ARGB_8888);
             Canvas canvas = new Canvas(shot);
-            canvas.translate(-loc[0], -loc[1]);
+            // 顶部补边先用主题背景色填（避免黑条），随后 decor 会覆盖真实内容
+            int fill = color(context, com.google.android.material.R.attr.colorSurface);
+            canvas.drawColor(fill);
+            canvas.translate(-decorLoc[0], extraTop - decorLoc[1]);
             decor.draw(canvas);
             // 模糊半径 3：三趟 box blur（水平+垂直）已足够柔和；过高的半径（如 6）
             // 会让背景糊成一团，文字/内容观感发虚（实测反馈"模糊度过高"）。
