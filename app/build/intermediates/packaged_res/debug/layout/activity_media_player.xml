@@ -102,12 +102,15 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
-            android:background="#33FFFFFF"
-            android:paddingHorizontal="22dp"
-            android:paddingVertical="9dp"
+            android:background="@drawable/bg_player_chip"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingHorizontal="26dp"
+            android:paddingVertical="10dp"
             android:text="重试"
             android:textColor="#FFFFFF"
-            android:textSize="13sp" />
+            android:textSize="14sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
     <!-- 顶部：返回 + 文件名 -->
@@ -116,19 +119,23 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
-        android:background="#99000000"
+        android:background="@drawable/bg_player_scrim_top"
         android:gravity="center_vertical"
         android:orientation="horizontal"
-        android:paddingHorizontal="10dp"
-        android:paddingVertical="8dp">
+        android:paddingHorizontal="12dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="22dp">
 
         <ImageView
             android:id="@+id/btn_player_back"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:src="@drawable/ic_arrow_back"
             android:contentDescription="返回"
-            android:padding="8dp"
+            android:background="@drawable/bg_player_btn"
+            android:clickable="true"
+            android:focusable="true"
+            android:padding="9dp"
             app:tint="#FFFFFF" />
 
         <TextView
@@ -145,11 +152,12 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="6dp"
+            android:layout_marginStart="10dp"
             android:ellipsize="middle"
             android:maxLines="1"
             android:textColor="#FFFFFF"
-            android:textSize="14sp" />
+            android:textSize="15sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
     <!-- 底部控制区：上排「时间 + 进度」，下排「控制键居中 + 左下角列表」 -->
@@ -158,10 +166,11 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:background="#99000000"
+        android:background="@drawable/bg_player_scrim_bottom"
         android:orientation="vertical"
-        android:paddingHorizontal="10dp"
-        android:paddingVertical="8dp">
+        android:paddingHorizontal="14dp"
+        android:paddingTop="28dp"
+        android:paddingBottom="12dp">
 
         <!-- 第一行：时间与进度 -->
         <LinearLayout
@@ -174,23 +183,32 @@
                 android:id="@+id/tv_player_pos"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:fontFeatureSettings="tnum"
                 android:text="00:00"
                 android:textColor="#FFFFFF"
-                android:textSize="12sp" />
+                android:textSize="12sp"
+                android:textStyle="bold" />
 
             <SeekBar
                 android:id="@+id/seek_player"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginHorizontal="10dp" />
+                android:layout_marginHorizontal="12dp"
+                android:maxHeight="3dp"
+                android:minHeight="3dp"
+                android:progressDrawable="@drawable/progress_player"
+                android:thumb="@drawable/thumb_player"
+                android:thumbOffset="7dp"
+                android:splitTrack="false" />
 
             <TextView
                 android:id="@+id/tv_player_dur"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:fontFeatureSettings="tnum"
                 android:text="00:00"
-                android:textColor="#FFFFFF"
+                android:textColor="#B3FFFFFF"
                 android:textSize="12sp" />
         </LinearLayout>
 
@@ -209,30 +227,40 @@
 
                 <ImageView
                     android:id="@+id/btn_player_prev"
-                    android:layout_width="38dp"
-                    android:layout_height="38dp"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
                     android:src="@drawable/ic_skip_previous"
+                    android:background="@drawable/bg_player_btn"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:contentDescription="上一个"
-                    android:padding="9dp"
+                    android:padding="11dp"
                     app:tint="#FFFFFF" />
 
                 <ImageView
                     android:id="@+id/btn_player_play"
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
-                    android:layout_marginHorizontal="18dp"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:layout_marginHorizontal="20dp"
                     android:src="@drawable/ic_pause"
+                    android:background="@drawable/bg_player_btn_primary"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:contentDescription="播放/暂停"
-                    android:padding="10dp"
-                    app:tint="#FFFFFF" />
+                    android:elevation="3dp"
+                    android:padding="14dp"
+                    app:tint="#1B2A38" />
 
                 <ImageView
                     android:id="@+id/btn_player_next"
-                    android:layout_width="38dp"
-                    android:layout_height="38dp"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
                     android:src="@drawable/ic_skip_next"
+                    android:background="@drawable/bg_player_btn"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:contentDescription="下一个"
-                    android:padding="9dp"
+                    android:padding="11dp"
                     app:tint="#FFFFFF" />
             </LinearLayout>
 
@@ -249,9 +277,11 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="8dp"
-                    android:background="#22FFFFFF"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="6dp"
+                    android:background="@drawable/bg_player_chip"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="7dp"
                     android:text="选集"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp"
@@ -262,9 +292,11 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="8dp"
-                    android:background="#22FFFFFF"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="6dp"
+                    android:background="@drawable/bg_player_chip"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="7dp"
                     android:text="弹幕"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp"
@@ -274,9 +306,11 @@
                     android:id="@+id/btn_player_speed"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:background="#22FFFFFF"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="6dp"
+                    android:background="@drawable/bg_player_chip"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="7dp"
                     android:text="1.0×"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />
@@ -286,9 +320,11 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
-                    android:background="#22FFFFFF"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="6dp"
+                    android:background="@drawable/bg_player_chip"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="7dp"
                     android:text="适应"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />

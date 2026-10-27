@@ -14,6 +14,11 @@ color ripple_blue
 color text_primary
 color text_secondary
 color white
+drawable bg_player_btn
+drawable bg_player_btn_primary
+drawable bg_player_chip
+drawable bg_player_scrim_bottom
+drawable bg_player_scrim_top
 drawable bg_ripple
 drawable bg_ripple_round
 drawable ic_add
@@ -59,6 +64,8 @@ drawable ic_sync_arrow_fwd
 drawable ic_trash
 drawable ic_undo
 drawable ic_video
+drawable progress_player
+drawable thumb_player
 id audio_placeholder
 id btn_iv_back
 id btn_player_back
