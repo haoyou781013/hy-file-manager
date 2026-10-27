@@ -22,7 +22,7 @@
         app:use_controller="false" />
 
         <!-- 弹幕覆盖层（叠在播放画面上；不拦截触摸，点击仍走播放器控制） -->
-        <com.aliya.hy_vq.player.DanmakuView
+        <com.aliya.hyfilemgr.player.DanmakuView
             android:id="@+id/danmaku_view"
             android:layout_width="match_parent"
             android:layout_height="match_parent"

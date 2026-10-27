@@ -5305,7 +5305,7 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 当前音频播放弹窗的播放器（同一时刻只允许一个；关窗即释放）。
-     *  已统一到 Media3 内核（见 {@code com.aliya.hy_vq.player.PlayerCore}）——
+     *  已统一到 Media3 内核（见 {@code com.aliya.hyfilemgr.player.PlayerCore}）——
      *  ExoPlayer 不依赖 Surface，音频可直接出声，因此音视频共用同一条播放链路。 */
     private androidx.media3.exoplayer.ExoPlayer audioPlayer;
     private android.os.Handler audioTicker;
