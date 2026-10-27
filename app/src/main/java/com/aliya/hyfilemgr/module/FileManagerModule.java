@@ -1804,11 +1804,11 @@ public class FileManagerModule extends HyVqModule {
 
         final android.app.Dialog dialog = UiKit.glassDialog(ctx, box);
 
-        // ── 网格布局：每行 4 格，图标上 / 文字下 ──
-        List<LinearLayout> rows = new ArrayList<>();
+        // ── 网格布局：按宽度自适应列数（优先 4，放不下 3），图标上 / 文字下 ──
+        final int cols = openGridColumns();
 
-        // 第 1 行：打开方式 / 解压到对侧 / 编辑 / 复制
-        LinearLayout r1 = itemMenuGridRow(box, 4);
+        // 第 1 行：打开方式 / 解到对侧 / 编辑 (+ 复制，4 列时)
+        LinearLayout r1 = itemMenuGridRow(box, Math.min(3, cols));
         addGridItem(r1, "打开", R.drawable.ic_file, !parent, v -> {
             dialog.dismiss();
             showOpenWithDialog(e.path, e.name, e.path != null && e.path.startsWith("content://"));
@@ -1821,13 +1821,21 @@ public class FileManagerModule extends HyVqModule {
             dialog.dismiss();
             openInEditorByName(e.path, e.name, false);
         });
-        addGridItem(r1, "复制", R.drawable.ic_copy, writable, v -> {
-            dialog.dismiss();
-            putClipboard(Collections.singletonList(e), false);
-        });
+        if (cols >= 4) {
+            addGridItem(r1, "复制", R.drawable.ic_copy, writable, v -> {
+                dialog.dismiss();
+                putClipboard(Collections.singletonList(e), false);
+            });
+        }
 
-        // 第 2 行：剪切 / 删除 / 重命名 / 压缩
-        LinearLayout r2 = itemMenuGridRow(box, 4);
+        // 第 2 行：剪切 / 删除 / 重命名 (+ 复制，3 列时)
+        LinearLayout r2 = itemMenuGridRow(box, Math.min(3, cols));
+        if (cols < 4) {
+            addGridItem(r2, "复制", R.drawable.ic_copy, writable, v -> {
+                dialog.dismiss();
+                putClipboard(Collections.singletonList(e), false);
+            });
+        }
         addGridItem(r2, "剪切", R.drawable.ic_cut, writable, v -> {
             dialog.dismiss();
             putClipboard(Collections.singletonList(e), true);
@@ -1847,7 +1855,7 @@ public class FileManagerModule extends HyVqModule {
                 });
 
         // 第 3 行：属性 / 添加书签 / 多选模式
-        LinearLayout r3 = itemMenuGridRow(box, 3);
+        LinearLayout r3 = itemMenuGridRow(box, Math.min(3, cols));
         addGridItem(r3, "属性", R.drawable.ic_info, !parent, v -> {
             dialog.dismiss();
             showPropertyDialog(e);
@@ -2252,8 +2260,9 @@ public class FileManagerModule extends HyVqModule {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         rowLp.topMargin = dp(2);
         box.addView(row, rowLp);
-        // 不足 4 格补空占位
-        for (int i = items; i < 4; i++) {
+        // 按屏幕方向补空占位：横屏 4 列 / 竖屏 3 列（与「打开方式」同一规则）
+        int cols = openGridColumns();
+        for (int i = items; i < cols; i++) {
             View sp = new View(ctx);
             row.addView(sp, new LinearLayout.LayoutParams(0, 1, 1f));
         }
@@ -5426,19 +5435,8 @@ public class FileManagerModule extends HyVqModule {
                         {"archive", "解压", "ZIP 压缩包", String.valueOf(isZipFile)},
                         {"apk", "安装", "Android 安装包", String.valueOf(isApk)},
                 };
-                // 自适应列数：按可用项数决定，避免几十像素的窄格子挤文字
-                int usable = 0;
-                for (String[] it : items) {
-                    if (Boolean.parseBoolean(it[3])) usable++;
-                }
-                int cols;
-                if (usable <= 2) {
-                    cols = 2;                       // 1~2 项：两列（每格更宽）
-                } else if (usable == 3) {
-                    cols = 3;
-                } else {
-                    cols = openGridColumns();       // 4~5 项：竖屏 3 / 横屏 4
-                }
+                // 自适应列数：横屏 4 列 / 竖屏 3 列（与长按菜单同一套规则）
+                int cols = openGridColumns();
                 LinearLayout row = new LinearLayout(ctx);
                 row.setOrientation(LinearLayout.HORIZONTAL);
                 row.setPadding(dp(-2), dp(-2), dp(-2), dp(-2));
@@ -5555,9 +5553,32 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 判断网格列数：竖屏 3 列 / 横屏 4 列 */
+    /** 每格最小可用宽度（dp）：低于此值文字就会被挤压，需要减列 */
+    private static final int GRID_MIN_CELL_DP = 78;
+
+    /**
+     * 网格列数：按实际可用宽度自适应，优先 4 列，放不下降 3 列。
+     *
+     * <p>不依赖屏幕方向，只看容器宽度（竖屏手机通常 3 列，平板/折叠展开 4 列）。</p>
+     */
     private int openGridColumns() {
-        android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
-        return dm.widthPixels > dm.heightPixels ? 4 : 3;
+        return gridColumnsFor(0);
+    }
+
+    /**
+     * @param containerWidthPx 容器实际宽度；<=0 时用屏幕宽度估算
+     */
+    private int gridColumnsFor(int containerWidthPx) {
+        int widthPx = containerWidthPx;
+        if (widthPx <= 0) {
+            int screenW = ctx.getResources().getDisplayMetrics().widthPixels;
+            // 弹窗约占屏宽 92%，减去左右 padding
+            widthPx = (int) (screenW * 0.92f) - dp(48);
+        }
+        float density = ctx.getResources().getDisplayMetrics().density;
+        float minCellPx = GRID_MIN_CELL_DP * density;
+        int maxCols = Math.max(1, (int) (widthPx / minCellPx));
+        return Math.min(4, maxCols);   // 最多 4 列
     }
 
     private void addOpenRow(LinearLayout parent, final android.app.Dialog dialog,
