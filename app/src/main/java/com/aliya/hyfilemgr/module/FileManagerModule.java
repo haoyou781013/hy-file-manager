@@ -5419,8 +5419,26 @@ public class FileManagerModule extends HyVqModule {
             tvPage.setText(sysMode[0] ? "系统打开方式" : "内置打开方式");
             btnSwitch.setText(sysMode[0] ? "内置打开方式" : "系统打开方式");
             if (!sysMode[0]) {
-                // 自适应卡片网格：竖屏 3 列 / 横屏 4 列
-                int cols = openGridColumns();
+                String[][] items = {
+                        {"img", "图片查看", "双指缩放 · 拖动 · 双击还原", String.valueOf(isImg)},
+                        {"video", "播放器", "视频与音频 · 进度控制", String.valueOf(isMedia)},
+                        {"doc", "文本编辑", "查看与编辑文本、代码", String.valueOf(isText)},
+                        {"archive", "解压", "ZIP 压缩包", String.valueOf(isZipFile)},
+                        {"apk", "安装", "Android 安装包", String.valueOf(isApk)},
+                };
+                // 自适应列数：按可用项数决定，避免几十像素的窄格子挤文字
+                int usable = 0;
+                for (String[] it : items) {
+                    if (Boolean.parseBoolean(it[3])) usable++;
+                }
+                int cols;
+                if (usable <= 2) {
+                    cols = 2;                       // 1~2 项：两列（每格更宽）
+                } else if (usable == 3) {
+                    cols = 3;
+                } else {
+                    cols = openGridColumns();       // 4~5 项：竖屏 3 / 横屏 4
+                }
                 LinearLayout row = new LinearLayout(ctx);
                 row.setOrientation(LinearLayout.HORIZONTAL);
                 row.setPadding(dp(-2), dp(-2), dp(-2), dp(-2));
@@ -5429,13 +5447,6 @@ public class FileManagerModule extends HyVqModule {
                         0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
                 cardLp.setMargins(dp(2), dp(2), dp(2), dp(2));
 
-                String[][] items = {
-                        {"img", "内置图片查看器", "双指缩放 · 拖动 · 双击还原", String.valueOf(isImg)},
-                        {"video", "内置播放器", "视频与音频 · 进度控制", String.valueOf(isMedia)},
-                        {"doc", "内置文本编辑器", "查看与编辑文本、代码", String.valueOf(isText)},
-                        {"archive", "解压到当前目录", "ZIP 压缩包", String.valueOf(isZipFile)},
-                        {"apk", "安装应用", "Android 安装包", String.valueOf(isApk)},
-                };
                 for (String[] it : items) {
                     if (added == cols) {
                         listBox.addView(row);
@@ -5509,24 +5520,30 @@ public class FileManagerModule extends HyVqModule {
 
         TextView t = new TextView(ctx);
         t.setText(title);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         t.setTextColor(enabled ? onSurface : variant);
         t.setGravity(android.view.Gravity.CENTER);
         t.setAlpha(enabled ? 1f : 0.5f);
-        t.setSingleLine(true);
+        t.setMaxLines(2);
         t.setEllipsize(android.text.TextUtils.TruncateAt.END);
         card.addView(t, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        TextView dsc = new TextView(ctx);
-        dsc.setText(enabled ? desc : "不适用");
-        dsc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-        dsc.setTextColor(variant);
-        dsc.setGravity(android.view.Gravity.CENTER);
-        dsc.setAlpha(enabled ? 1f : 0.5f);
-        dsc.setMaxLines(2);
-        card.addView(dsc, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        // 副标题只在不适用时显示（"不适用"），可用项不占纵向空间
+        if (!enabled) {
+            TextView dsc = new TextView(ctx);
+            dsc.setText("不适用");
+            dsc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+            dsc.setTextColor(variant);
+            dsc.setGravity(android.view.Gravity.CENTER);
+            dsc.setAlpha(0.5f);
+            dsc.setSingleLine(true);
+            LinearLayout.LayoutParams dscLp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            dscLp.topMargin = dp(2);
+            card.addView(dsc, dscLp);
+        }
 
         if (enabled) {
             card.setOnClickListener(v -> {
