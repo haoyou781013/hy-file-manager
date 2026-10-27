@@ -1802,71 +1802,89 @@ public class FileManagerModule extends HyVqModule {
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, e.name));
 
-        // 居中玻璃对话框 + 边框描边（用户要求：长按弹窗居中显示，与背景可分辨）
-        // 固定菜单（对齐 MT 管理器长按菜单）：不可用项置灰但保留可见，点击无响应
         final android.app.Dialog dialog = UiKit.glassDialog(ctx, box);
-        addMenuRow(box, "打开方式", android.R.drawable.ic_menu_share, !parent, v -> {
+
+        // ── 网格布局：每行 4 格，图标上 / 文字下 ──
+        List<LinearLayout> rows = new ArrayList<>();
+
+        // 第 1 行：打开方式 / 解压到对侧 / 编辑 / 复制
+        LinearLayout r1 = itemMenuGridRow(box, 4);
+        addGridItem(r1, "打开方式", R.drawable.ic_file, !parent, v -> {
             dialog.dismiss();
-            onItemMenu(p, e, "打开方式");
+            showOpenWithDialog(e.path, e.name, e.path != null && e.path.startsWith("content://"));
         });
-        // 包内条目专用：把这一条解出到「另一窗格」的当前目录（双列布局的价值所在）
-        if (e.path != null && e.path.startsWith(PREFIX_ZIP) && !e.isDir()) {
-            addMenuRow(box, "解压到对侧", R.drawable.ic_archive, true, v -> {
-                dialog.dismiss();
-                extractZipEntryToOtherPane(e);
-            });
-        }
-        // 编辑：仅真实路径文本/代码文件可用（点击同款内置编辑器）
-        addMenuRow(box, "编辑", R.drawable.ic_doc, realOnly && isTextFile(e.name), v -> {
+        addGridItem(r1, "解压到对侧", R.drawable.ic_archive, zip, v -> {
             dialog.dismiss();
-            onItemMenu(p, e, "编辑");
+            extractZipEntryToOtherPane(e);
         });
-        addMenuRow(box, "复制", R.drawable.ic_copy, writable, v -> {
+        addGridItem(r1, "编辑", R.drawable.ic_doc, realOnly && isTextFile(e.name), v -> {
             dialog.dismiss();
-            onItemMenu(p, e, "复制");
+            openInEditorByName(e.path, e.name, false);
         });
-        addMenuRow(box, "剪切", R.drawable.ic_cut, writable, v -> {
+        addGridItem(r1, "复制", R.drawable.ic_copy, writable, v -> {
             dialog.dismiss();
-            onItemMenu(p, e, "剪切");
+            putClipboard(Collections.singletonList(e), false);
         });
-        addMenuRow(box, "删除", android.R.drawable.ic_menu_delete, writable, v -> {
+
+        // 第 2 行：剪切 / 删除 / 重命名 / 压缩
+        LinearLayout r2 = itemMenuGridRow(box, 4);
+        addGridItem(r2, "剪切", R.drawable.ic_cut, writable, v -> {
             dialog.dismiss();
-            onItemMenu(p, e, "删除");
+            putClipboard(Collections.singletonList(e), true);
         });
-        addMenuRow(box, "重命名", android.R.drawable.ic_menu_edit, writable, v -> {
+        addGridItem(r2, "删除", R.drawable.ic_trash, writable, v -> {
             dialog.dismiss();
-            onItemMenu(p, e, "重命名");
+            confirmDelete(Collections.singletonList(e));
         });
-        // zip → 解压；其余真实条目（文件/文件夹）→ 压缩
-        addMenuRow(box, zip ? "解压" : "压缩",
-                zip ? R.drawable.ic_download : android.R.drawable.ic_menu_upload,
-                realOnly, v -> {
+        addGridItem(r2, "重命名", R.drawable.ic_rename, writable, v -> {
+            dialog.dismiss();
+            showRenameDialog(e);
+        });
+        addGridItem(r2, zip ? "解压" : "压缩",
+                zip ? R.drawable.ic_archive : R.drawable.ic_compress, realOnly, v -> {
                     dialog.dismiss();
-                    onItemMenu(p, e, zip ? "解压" : "压缩");
+                    if (zip) extractZip(e); else compressToZip(e);
                 });
-        addMenuRow(box, "属性", android.R.drawable.ic_menu_info_details, !parent, v -> {
+
+        // 第 3 行：属性 / 添加书签 / 多选模式
+        LinearLayout r3 = itemMenuGridRow(box, 3);
+        addGridItem(r3, "属性", R.drawable.ic_info, !parent, v -> {
             dialog.dismiss();
-            onItemMenu(p, e, "属性");
+            showPropertyDialog(e);
         });
-        addMenuRow(box, "添加书签", R.drawable.ic_star, realOnly, v -> {
+        addGridItem(r3, "添加书签", R.drawable.ic_star_add, realOnly, v -> {
             dialog.dismiss();
-            onItemMenu(p, e, "添加书签");
+            addBookmarkPath(e.path);
         });
-        addMenuRow(box, "多选模式", android.R.drawable.ic_menu_agenda, !parent && !inCat, v -> {
+        addGridItem(r3, "多选模式", R.drawable.ic_checklist, !parent && !inCat, v -> {
             dialog.dismiss();
-            onItemMenu(p, e, "多选模式");
+            p.selected.add(e);
+            enterMultiMode();
         });
-        // 回收站场景追加：恢复 / 彻底删除（其余写操作已置灰）
+
+        // 第 4 行（仅回收站）：恢复 / 彻底删除
         if (inTrash) {
-            addMenuRow(box, "恢复", android.R.drawable.ic_menu_revert, !parent, v -> {
+            LinearLayout r4 = itemMenuGridRow(box, 2);
+            addGridItem(r4, "恢复", R.drawable.ic_restore, !parent, v -> {
                 dialog.dismiss();
                 onItemMenu(p, e, "恢复");
             });
-            addMenuRow(box, "彻底删除", android.R.drawable.ic_menu_delete, !parent, v -> {
+            addGridItem(r4, "彻底删除", R.drawable.ic_trash, !parent, v -> {
                 dialog.dismiss();
                 onItemMenu(p, e, "彻底删除");
             });
         }
+
+        // 底部：取消
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setOrientation(LinearLayout.HORIZONTAL);
+        btns.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnsLp.topMargin = dp(10);
+        box.addView(btns, btnsLp);
+        btns.addView(textButton("取消", v -> dialog.dismiss()));
+
         dialog.show();
     }
 
@@ -2163,6 +2181,84 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 新建菜单行：图标 + 文字（圆角行）；enabled=false 时整行置灰禁用（MT 风格：不可用项保持可见但灰色） */
+    /**
+     * 长按菜单的网格项（图标上、文字下）。
+     *
+     * <p>自适应列数：容器为横向 LinearLayout，每格 weight=1，满 4 格自动换行。
+     * 调用方用 {@link #itemMenuGridRow} 创建行容器。</p>
+     *
+     * @param grid  当前行容器
+     * @param text  显示文字
+     * @param icon  图标资源
+     * @param enabled false 时整格置灰（保留可见，提示功能存在但当前不可用）
+     */
+    private void addGridItem(LinearLayout grid, String text, int iconRes,
+                             boolean enabled, View.OnClickListener onClick) {
+        LinearLayout cell = new LinearLayout(ctx);
+        cell.setOrientation(LinearLayout.VERTICAL);
+        cell.setGravity(Gravity.CENTER);
+        cell.setPadding(dp(4), dp(12), dp(4), dp(10));
+        cell.setClickable(enabled);
+        cell.setFocusable(enabled);
+        if (enabled) {
+            cell.setOnClickListener(v -> {
+                v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80)
+                        .withEndAction(() -> v.animate().scaleX(1f).scaleY(1f)
+                                .setDuration(140)
+                                .setInterpolator(new android.view.animation.OvershootInterpolator(2f))
+                                .start())
+                        .start();
+                onClick.onClick(v);
+            });
+        }
+        cell.setAlpha(enabled ? 1f : 0.35f);
+        cell.setBackgroundResource(R.drawable.bg_ripple_round);
+
+        ImageView icon = new ImageView(ctx);
+        icon.setImageResource(iconRes);
+        icon.setColorFilter(UiKit.color(ctx, enabled
+                ? com.google.android.material.R.attr.colorOnSurfaceVariant
+                : com.google.android.material.R.attr.colorOutline));
+        cell.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
+
+        TextView label = new TextView(ctx);
+        label.setText(text);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        label.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+        label.setGravity(Gravity.CENTER);
+        label.setSingleLine(true);
+        label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        labelLp.topMargin = dp(6);
+        cell.addView(label, labelLp);
+
+        grid.addView(cell, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+    }
+
+    /**
+     * 创建长按菜单的一行（横向，最多 4 格）。
+     *
+     * @param box   菜单根容器（Vertical LinearLayout）
+     * @param items 本行项数，不足 4 时右侧补空占位保持等宽
+     */
+    private LinearLayout itemMenuGridRow(LinearLayout box, int items) {
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.topMargin = dp(2);
+        box.addView(row, rowLp);
+        // 不足 4 格补空占位
+        for (int i = items; i < 4; i++) {
+            View sp = new View(ctx);
+            row.addView(sp, new LinearLayout.LayoutParams(0, 1, 1f));
+        }
+        return row;
+    }
+
     private void addMenuRow(LinearLayout panel, String text, int iconRes, boolean enabled, View.OnClickListener onClick) {
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.HORIZONTAL);

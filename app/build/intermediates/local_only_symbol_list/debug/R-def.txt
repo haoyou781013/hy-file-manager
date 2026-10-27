@@ -31,8 +31,10 @@ drawable ic_arrow_upward
 drawable ic_audio
 drawable ic_bookmarks
 drawable ic_category
+drawable ic_checklist
 drawable ic_chevron_left
 drawable ic_chevron_right
+drawable ic_compress
 drawable ic_copy
 drawable ic_cut
 drawable ic_doc
@@ -57,6 +59,8 @@ drawable ic_play
 drawable ic_preview
 drawable ic_redo
 drawable ic_refresh
+drawable ic_rename
+drawable ic_restore
 drawable ic_root
 drawable ic_save
 drawable ic_search
