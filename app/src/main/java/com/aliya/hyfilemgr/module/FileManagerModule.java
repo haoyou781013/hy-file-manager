@@ -5553,32 +5553,14 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 判断网格列数：竖屏 3 列 / 横屏 4 列 */
-    /** 每格最小可用宽度（dp）：低于此值文字就会被挤压，需要减列 */
-    private static final int GRID_MIN_CELL_DP = 78;
-
     /**
-     * 网格列数：按实际可用宽度自适应，优先 4 列，放不下降 3 列。
+     * 网格列数：固定 4 列（HY_VQ beta.10 同款）。
      *
-     * <p>不依赖屏幕方向，只看容器宽度（竖屏手机通常 3 列，平板/折叠展开 4 列）。</p>
+     * <p>不随屏幕方向变化，也不按可用宽度降列。竖屏下每格约 1/4 弹窗宽度，
+     * 文案按此宽度裁短（见 showItemMenu / showOpenWithDialog 的 items）。</p>
      */
     private int openGridColumns() {
-        return gridColumnsFor(0);
-    }
-
-    /**
-     * @param containerWidthPx 容器实际宽度；<=0 时用屏幕宽度估算
-     */
-    private int gridColumnsFor(int containerWidthPx) {
-        int widthPx = containerWidthPx;
-        if (widthPx <= 0) {
-            int screenW = ctx.getResources().getDisplayMetrics().widthPixels;
-            // 弹窗约占屏宽 92%，减去左右 padding
-            widthPx = (int) (screenW * 0.92f) - dp(48);
-        }
-        float density = ctx.getResources().getDisplayMetrics().density;
-        float minCellPx = GRID_MIN_CELL_DP * density;
-        int maxCols = Math.max(1, (int) (widthPx / minCellPx));
-        return Math.min(4, maxCols);   // 最多 4 列
+        return 4;
     }
 
     private void addOpenRow(LinearLayout parent, final android.app.Dialog dialog,
