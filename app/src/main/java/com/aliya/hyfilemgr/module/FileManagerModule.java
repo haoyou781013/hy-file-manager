@@ -190,6 +190,8 @@ public class FileManagerModule extends HyVqModule {
     private static final String PREF_SORT_MODE = "sort_mode";
     private static final String PREF_SHOW_HIDDEN = "show_hidden";
     private static final String PREF_GRID_MODE = "grid_mode";
+    private static final String PREF_THUMBS = "thumbs_enabled";
+    private boolean thumbsEnabled = true;
     private static final String PREF_RECENT_FILES = "recent_files";
     // 注：历史上有 last_path_l / last_path_r / active_pane 三项（用于恢复上次目录），
     // 按用户要求「重启回到存储根」已停用，偏好文件中的旧键值忽略即可。
@@ -279,6 +281,7 @@ public class FileManagerModule extends HyVqModule {
     @Override
     public void onAttach(Context context, ModuleServices services) {
         this.ctx = context.getApplicationContext();
+        com.aliya.hyfilemgr.filemgr.ThumbLoader.init(this.ctx);
         if (context instanceof Activity) hostActivity = (Activity) context;
         activeInstance = this;
         restoreState();
@@ -304,6 +307,7 @@ public class FileManagerModule extends HyVqModule {
         sortMode = Math.max(SORT_NAME, Math.min(SORT_TIME, sp.getInt(PREF_SORT_MODE, SORT_NAME)));
         showHidden = sp.getBoolean(PREF_SHOW_HIDDEN, false);
         gridMode = sp.getBoolean(PREF_GRID_MODE, false);
+        thumbsEnabled = sp.getBoolean(PREF_THUMBS, true);
         recentFiles.clear();
         String rf = sp.getString(PREF_RECENT_FILES, "");
         if (!rf.isEmpty()) {
@@ -324,6 +328,7 @@ public class FileManagerModule extends HyVqModule {
                 .putString(PREF_RECENT_FILES, rfb.toString())
                 .putInt(PREF_SORT_MODE, sortMode)
                 .putBoolean(PREF_SHOW_HIDDEN, showHidden)
+                .putBoolean(PREF_THUMBS, thumbsEnabled)
                 .apply();
     }
 
@@ -854,6 +859,7 @@ public class FileManagerModule extends HyVqModule {
         rv.setPadding(0, dp(2), 0, 0);
         p.list = rv;
         p.adapter = new FileListAdapter(ctx, p.entries, p.selected, makeListener(p));
+        p.adapter.setThumbsEnabled(thumbsEnabled);
         rv.setAdapter(p.adapter);
         // 列表项动画：淡入淡出 + 位移，比默认更柔和
         androidx.recyclerview.widget.DefaultItemAnimator ia =
@@ -5778,6 +5784,18 @@ public class FileManagerModule extends HyVqModule {
                     fmPrefs().edit().putBoolean(PREF_SHOW_HIDDEN, showHidden).apply();
                     UiKit.toast(ctx, showHidden ? "已显示隐藏文件" : "已隐藏 . 开头文件");
                     reloadAll();
+                });
+        addMenuRow(panel, thumbsEnabled ? "缩略图：已开启" : "缩略图：已关闭",
+                R.drawable.ic_img, v -> {
+                    popup.dismiss();
+                    thumbsEnabled = !thumbsEnabled;
+                    fmPrefs().edit().putBoolean(PREF_THUMBS, thumbsEnabled).apply();
+                    for (Pane pp : panes) {
+                        if (pp != null && pp.adapter != null) {
+                            pp.adapter.setThumbsEnabled(thumbsEnabled);
+                        }
+                    }
+                    UiKit.toast(ctx, thumbsEnabled ? "已开启缩略图" : "已关闭缩略图");
                 });
         addMenuRow(panel, "书签列表", R.drawable.ic_star, v -> {
             popup.dismiss();

@@ -33,6 +33,19 @@ import java.util.Set;
  */
 public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
 
+    /** 缩略图开关（内存/CPU 敏感时可关闭；默认开启） */
+    private boolean thumbsEnabled = true;
+
+    /** 设置缩略图开关并刷新列表 */
+    public void setThumbsEnabled(boolean on) {
+        this.thumbsEnabled = on;
+        notifyDataSetChanged();
+    }
+
+    public boolean isThumbsEnabled() {
+        return thumbsEnabled;
+    }
+
     // ── 格式支持：扩展名 → 图标分类（与 FileManagerModule 分类白名单同源扩充） ──
     private static final Set<String> IMG_EXTS = new HashSet<>(Arrays.asList(
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "svg",
@@ -105,26 +118,36 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
                 ? UiKit.color(context, com.google.android.material.R.attr.colorPrimaryContainer)
                 : UiKit.color(context, com.google.android.material.R.attr.colorSurfaceContainerLow);
         h.itemView.setBackground(makeBg(surface, checked));
-        // 图标配色：文件夹=主色，文件=次要色，虚拟/链接降饱和度（灰色系）
-        h.icon.setImageResource(iconRes(e));
-        int iconColor;
-        switch (e.type) {
-            case VIRTUAL_DIR:
-            case VIRTUAL_FILE:
-                iconColor = UiKit.color(context, com.google.android.material.R.attr.colorOutline);
-                break;
-            case LINK:
-                iconColor = UiKit.color(context, com.google.android.material.R.attr.colorTertiary);
-                break;
-            case DIR:
-                iconColor = UiKit.color(context, com.google.android.material.R.attr.colorPrimary);
-                break;
-            default:
-                // 多彩扁平化（Material 流行趋势）：文件图标按类型主题色
-                iconColor = fileColor(e);
-                break;
+        // 缩略图优先（图片/视频首帧/APK 图标）；无缩略图或开关关闭 → 回退类型图标
+        boolean useThumb = thumbsEnabled && !e.parent && !e.virtual
+                && !e.isDir() && ThumbLoader.supports(e.name);
+        if (useThumb) {
+            ThumbLoader.load(context, h.icon, e.path, e.name, e.lastModified);
+        } else {
+            h.icon.setColorFilter(null);
+            h.icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            h.icon.setImageResource(iconRes(e));
         }
-        h.icon.setColorFilter(iconColor);
+        if (!useThumb) {
+            int iconColor;
+            switch (e.type) {
+                case VIRTUAL_DIR:
+                case VIRTUAL_FILE:
+                    iconColor = UiKit.color(context, com.google.android.material.R.attr.colorOutline);
+                    break;
+                case LINK:
+                    iconColor = UiKit.color(context, com.google.android.material.R.attr.colorTertiary);
+                    break;
+                case DIR:
+                    iconColor = UiKit.color(context, com.google.android.material.R.attr.colorPrimary);
+                    break;
+                default:
+                    // 多彩扁平化（Material 流行趋势）：文件图标按类型主题色
+                    iconColor = fileColor(e);
+                    break;
+            }
+            h.icon.setColorFilter(iconColor);
+        }
         // 虚拟条目标记
         h.badge.setVisibility(e.virtual ? View.VISIBLE : View.GONE);
         h.itemView.setOnClickListener(v -> {
