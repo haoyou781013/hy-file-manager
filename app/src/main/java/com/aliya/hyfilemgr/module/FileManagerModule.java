@@ -5666,10 +5666,14 @@ public class FileManagerModule extends HyVqModule {
     /** 内置图片查看器 */
     private void openImageViewer(String pathOrUri, String name, boolean isUri) {
         try {
-            Intent i = new Intent(Intent.ACTION_VIEW);
-            android.net.Uri u = isUri ? android.net.Uri.parse(pathOrUri)
-                                      : android.net.Uri.fromFile(new java.io.File(pathOrUri));
-            i.setDataAndType(u, "image/*");
+            // 内置图片查看器（双指缩放 / 拖动 / 双击还原 / 大图采样解码）
+            Intent i = new Intent(ctx, com.aliya.hyfilemgr.ImageViewerActivity.class);
+            if (isUri) {
+                i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_URI, pathOrUri);
+            } else {
+                i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_PATH, pathOrUri);
+            }
+            i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_TITLE, name);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
             ctx.startActivity(i);
         } catch (Throwable t) {
