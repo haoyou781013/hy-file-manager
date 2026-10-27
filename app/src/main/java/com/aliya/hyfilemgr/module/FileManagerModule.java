@@ -100,7 +100,7 @@ public class FileManagerModule extends HyVqModule {
      *  恢复 = 移回 TRASH_DIR 相对路径对应的原绝对路径；隐藏目录天然被分类扫描跳过 */
     private static final String TRASH_DIR =
             Environment.getExternalStorageDirectory().getAbsolutePath() + "/.HyVqTrash";
-    /** 分类视图虚拟路径前缀：Pane.path = "cat://images" 等（reload 特殊路由，不落盘） */
+    /** 分类视图虚拟路径前缀（分类功能已移除，仅作历史路径识别兜底，不再产生新路径） */
     private static final String PREFIX_CAT = "cat://";
     /** 回收站虚拟路径：Pane.path = "trash://"（reload 特殊路由） */
     private static final String PREFIX_TRASH = "trash://";
@@ -1152,33 +1152,6 @@ public class FileManagerModule extends HyVqModule {
         refreshSyncButton();
     }
 
-    /** 分类 Tab：弹出分类选择对话框（图片/视频/音频/文档/APK/压缩包 → cat:// 虚拟视图） */
-    private void showCategoryPicker() {
-        LinearLayout box = new LinearLayout(ctx);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(UiKit.sectionHeader(ctx, "选择分类"));
-        final ListView lv = new ListView(ctx);
-        final List<String> labels = new ArrayList<>();
-        for (String[] c : CATEGORIES) {
-            labels.add(c[1] + "（" + c[2].split(" ").length + " 种格式）");
-        }
-        lv.setAdapter(textListAdapter(labels, null));
-        box.addView(lv, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(300)));
-        final android.app.Dialog dialog = UiKit.glassDialog(ctx, box);
-        lv.setOnItemClickListener((p, v, pos, id) -> {
-            dialog.dismiss();
-            active.navPrev = active.path;
-            active.path = PREFIX_CAT + CATEGORIES[pos][0];
-            reload(active);
-        });
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setOrientation(LinearLayout.HORIZONTAL);
-        btns.setGravity(Gravity.END);
-        box.addView(btns);
-        btns.addView(textButton("取消", v -> dialog.dismiss()));
-        dialog.show();
-    }
 
     /** 构建 FAB：右下角悬浮圆形新建按钮（Material 规范，Elevation 阴影，点击弹新建菜单） */
     private void buildFab() {
@@ -1351,7 +1324,7 @@ public class FileManagerModule extends HyVqModule {
         String cur = p.path;
         if (cur == null) return;
         // 虚拟路径：退回收站/分类的上一层就是根目录
-        if (cur.startsWith(PREFIX_CAT) || cur.startsWith(PREFIX_TRASH)) {
+        if (cur.startsWith(PREFIX_TRASH)) {
             navigateTo(p, Environment.getExternalStorageDirectory().getAbsolutePath());
             return;
         }
@@ -1496,7 +1469,7 @@ public class FileManagerModule extends HyVqModule {
             return;
         }
         // 分类/回收站虚拟视图：直接返回内部存储根
-        if (active.path.startsWith(PREFIX_CAT) || active.path.startsWith(PREFIX_TRASH)) {
+        if (active.path.startsWith(PREFIX_TRASH)) {
             active.path = Environment.getExternalStorageDirectory().getAbsolutePath();
             reload(active);
             return;
@@ -1553,10 +1526,8 @@ public class FileManagerModule extends HyVqModule {
         p.selected.clear();
         if (p == active) exitMultiMode();
 
-        // 虚拟视图路由：分类 / 回收站（不经过 AccessRouter 四源路由，路径不落盘）
-        if (p.path.startsWith(PREFIX_CAT)) {
-            loadCategory(p);
-        } else if (p.path.startsWith(PREFIX_TRASH)) {
+        // 虚拟视图路由：回收站（不经过 AccessRouter 四源路由，路径不落盘）
+        if (p.path.startsWith(PREFIX_TRASH)) {
             loadTrash(p);
         } else if (p.path.startsWith(PREFIX_ZIP)) {
             loadZip(p);
@@ -1611,7 +1582,7 @@ public class FileManagerModule extends HyVqModule {
             }
         }
         // 虚拟视图（分类/回收站）的".."固定返回内部存储根
-        if (p.path.startsWith(PREFIX_CAT) || p.path.startsWith(PREFIX_TRASH)) {
+        if (p.path.startsWith(PREFIX_TRASH)) {
             p.entries.add(0, FileEntry.parent(
                     Environment.getExternalStorageDirectory().getAbsolutePath()));
         }
@@ -1819,7 +1790,7 @@ public class FileManagerModule extends HyVqModule {
         boolean saf = e.path != null && e.path.startsWith("content://");
         boolean real = !virt && !saf;
         boolean inTrash = p.path.startsWith(PREFIX_TRASH);
-        boolean inCat = p.path.startsWith(PREFIX_CAT);
+        boolean inCat = false;   // 分类功能已移除，恒 false
         boolean parent = e.parent;
         boolean zip = real && isZip(e);
         // 写操作可用条件：非".."、真实或SAF条目、不在回收站/分类只读视图
@@ -2648,73 +2619,6 @@ public class FileManagerModule extends HyVqModule {
 
         // ── ⭐ v2.8.0 ROOT 分组（已授权时列出系统路径；未授权时一行申请入口） ──
 
-        // ── 快速访问：分类快捷入口（参考 Her 分组导航；点击直达 cat:// 分类视图） ──
-        {
-            TextView qHead = new TextView(ctx);
-            qHead.setText("快速访问");
-            qHead.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            qHead.setTypeface(null, android.graphics.Typeface.BOLD);
-            qHead.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
-            LinearLayout.LayoutParams qHeadLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            qHeadLp.topMargin = dp(10);
-            qHeadLp.bottomMargin = dp(4);
-            qHeadLp.leftMargin = dp(4);
-            content.addView(qHead, qHeadLp);
-
-            for (final String[] cat : CATEGORIES) {
-                final String catPath = "cat://" + cat[0];
-                final boolean sel = catPath.equals(active.path);
-                LinearLayout qrow = new LinearLayout(ctx);
-                qrow.setOrientation(LinearLayout.HORIZONTAL);
-                qrow.setGravity(Gravity.CENTER_VERTICAL);
-                qrow.setPadding(dp(8), dp(6), dp(6), dp(6));
-                qrow.setClickable(true);
-                {
-                    int rowBg = sel
-                            ? UiKit.color(ctx, com.google.android.material.R.attr.colorPrimaryContainer)
-                            : UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow);
-                    android.graphics.drawable.GradientDrawable g = UiKit.rounded(ctx, 0, rowBg, 0);
-                    g.setCornerRadii(new float[]{dp(14), dp(14), dp(14), dp(14), dp(14), dp(14), dp(14), dp(14)});
-                    g.setStroke(dp(1), UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant));
-                    qrow.setBackground(g);
-                }
-                qrow.setOnClickListener(v -> {
-                    closeNavSidebar();
-                    active.navPrev = active.path;
-                    active.path = catPath;
-                    reload(active);
-                });
-                ImageView qicon = new ImageView(ctx);
-                // 按分类 id 映射图标(与 iconForDrawerFile 同源)
-                int catIcon = R.drawable.ic_file;
-                if ("images".equals(cat[0])) catIcon = R.drawable.ic_img;
-                else if ("video".equals(cat[0])) catIcon = R.drawable.ic_video;
-                else if ("audio".equals(cat[0])) catIcon = R.drawable.ic_audio;
-                else if ("apk".equals(cat[0])) catIcon = R.drawable.ic_apk;
-                else if ("archives".equals(cat[0])) catIcon = R.drawable.ic_archive;
-                else if ("docs".equals(cat[0])) catIcon = R.drawable.ic_doc;
-                qicon.setImageResource(catIcon);
-                qicon.setColorFilter(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
-                int qs = dp(16);
-                qrow.addView(qicon, new LinearLayout.LayoutParams(qs, qs));
-                TextView qtv = new TextView(ctx);
-                qtv.setText(cat[1]);
-                qtv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-                qtv.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
-                qtv.setSingleLine(true);
-                LinearLayout.LayoutParams qtvLp = new LinearLayout.LayoutParams(
-                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-                qtvLp.leftMargin = dp(8);
-                qrow.addView(qtv, qtvLp);
-                content.addView(qrow, new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-                View qsp = new View(ctx);
-                LinearLayout.LayoutParams qspLp = new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, dp(2));
-                content.addView(qsp, qspLp);
-            }
-        }
 
         // ── 存储位置分组标题（挂载列表） ──
         {
@@ -2865,12 +2769,6 @@ public class FileManagerModule extends HyVqModule {
                 R.drawable.ic_home, false, true, rootPath));
         list.add(new MountEntry("storage", "内部存储", storageInfo(storePath),
                 R.drawable.ic_folder, false, true, storePath));
-        // 分类视图（用户规划 2026-08-16：分类 → 左侧边栏）；id=虚拟路径 cat://xxx，
-        // enterable=false → 点击进入走 id（reload 虚拟路由），选中态按 id 比对
-        for (String[] c : CATEGORIES) {
-            list.add(new MountEntry(PREFIX_CAT + c[0], c[1], "按扩展名归类",
-                    R.drawable.ic_folder, false, false, PREFIX_CAT + c[0]));
-        }
         // 回收站（用户规划 2026-08-16：回收站 → 左侧边栏）；虚拟路径 trash://
         list.add(new MountEntry(PREFIX_TRASH, "回收站", "已删除文件，可恢复",
                 android.R.drawable.ic_menu_delete, false, false, PREFIX_TRASH));
@@ -6103,7 +6001,7 @@ public class FileManagerModule extends HyVqModule {
 
     private void showSearchDialog() {
         if (active == null || active.path == null) return;
-        if (active.path.startsWith(PREFIX_CAT) || active.path.startsWith(PREFIX_TRASH)) {
+        if (active.path.startsWith(PREFIX_TRASH)) {
             UiKit.toast(ctx, "分类/回收站视图不支持搜索");
             return;
         }
@@ -6333,53 +6231,7 @@ public class FileManagerModule extends HyVqModule {
         return false;
     }
 
-    // ── 分类视图（侧边栏入口；参考 Fossify MimeTypesActivity 按扩展名归类，
-    //    免 MediaStore 权限，后台扫描 /storage/emulated/0） ──
 
-    /** 分类加载：缓存命中直接列出；未命中后台扫描（扫描期间显示"扫描中"空列表） */
-    private void loadCategory(final Pane p) {
-        final String catId = p.path.substring(PREFIX_CAT.length());
-        p.entries.clear();
-        if (catCacheKey != null && catCacheKey.equals(catId) && catCache != null) {
-            p.entries.addAll(catCache);
-            p.lastResult = AccessResult.empty("分类");
-            return;
-        }
-        p.lastResult = AccessResult.empty("分类扫描中…");
-        UiKit.toast(ctx, "分类扫描中（首次较慢），请稍候…");
-        runTask(() -> {
-            final List<FileEntry> found = scanCategory(catId);
-            handler.post(() -> {
-                catCacheKey = catId;
-                catCache = found;
-                if (p.path.startsWith(PREFIX_CAT)
-                        && p.path.substring(PREFIX_CAT.length()).equals(catId)) {
-                    p.entries.clear();
-                    p.entries.addAll(found);
-                    sortEntries(p);
-                    p.adapter.setData(p.entries);
-                }
-            });
-        });
-    }
-
-    private List<FileEntry> scanCategory(String catId) {
-        String exts = "";
-        for (String[] c : CATEGORIES) {
-            if (c[0].equals(catId)) {
-                exts = c[2];
-                break;
-            }
-        }
-        final Set<String> extSet = new HashSet<>();
-        for (String x : exts.split(" ")) {
-            if (!x.isEmpty()) extSet.add(x.toLowerCase(Locale.getDefault()));
-        }
-        final List<FileEntry> out = new ArrayList<>();
-        scanDir(new File(Environment.getExternalStorageDirectory().getAbsolutePath()),
-                extSet, out, 0);
-        return out;
-    }
 
     /** 递归扫描：深度≤10、结果≤3000（防卡死）；跳过隐藏目录（含回收站）与 Android 大目录 */
     private void scanDir(File dir, Set<String> extSet, List<FileEntry> out, int depth) {
@@ -6516,7 +6368,7 @@ public class FileManagerModule extends HyVqModule {
         if (other == null || other.path == null
                 || other.path.startsWith(PREFIX_ZIP)
                 || other.path.startsWith(PREFIX_TRASH)
-                || other.path.startsWith(PREFIX_CAT)) {
+                ) {
             UiKit.toast(ctx, "另一窗格不在可写入的目录");
             return;
         }
@@ -6881,7 +6733,7 @@ public class FileManagerModule extends HyVqModule {
 
     /** 收藏指定条目路径：目录收藏自身，文件收藏父目录；仅真实路径支持 */
     private void addBookmarkPath(String path) {
-        if (path == null || path.startsWith(PREFIX_CAT) || path.startsWith(PREFIX_TRASH)
+        if (path == null || path.startsWith(PREFIX_TRASH)
                 || path.startsWith("content://")) {
             UiKit.toast(ctx, "该条目不能收藏");
             return;
