@@ -2217,13 +2217,19 @@ public class FileManagerModule extends HyVqModule {
         // 首次进入才播进场动画（后续勾选不重播）
         if (!wasMulti && opBar != null) {
             opBar.animate().cancel();
-            opBar.setTranslationY(dp(24));
-            opBar.setAlpha(0f);
             opBar.setVisibility(View.VISIBLE);
-            opBar.animate().translationY(0f).alpha(1f)
-                    .setDuration(220)
-                    .setInterpolator(new android.view.animation.DecelerateInterpolator())
-                    .start();
+            opBar.setAlpha(0f);
+            opBar.setTranslationY(dp(24));
+            // 同 bottomNav：等布局完成后再动画，否则起始值被重置导致「无动画」
+            opBar.post(() -> {
+                if (opBar == null || opBar.getVisibility() != View.VISIBLE) return;
+                opBar.animate()
+                        .translationY(0f)
+                        .alpha(1f)
+                        .setDuration(220)
+                        .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                        .start();
+            });
         }
         // ⭐10 Material 规范：多选模式下隐藏 FAB（底部操作栏接管操作）
         if (fabNew != null) fabNew.setVisibility(View.GONE);
@@ -2265,13 +2271,24 @@ public class FileManagerModule extends HyVqModule {
     /** bottomNav 以「淡入 + 上移」出现（退出多选后的过渡） */
     private void showBottomNavAnimated() {
         if (bottomNav == null) return;
-        bottomNav.setTranslationY(dp(16));
-        bottomNav.setAlpha(0f);
+        bottomNav.animate().cancel();
         bottomNav.setVisibility(View.VISIBLE);
-        bottomNav.animate().translationY(0f).alpha(1f)
-                .setDuration(220)
-                .setInterpolator(new android.view.animation.DecelerateInterpolator())
-                .start();
+        bottomNav.setAlpha(0f);
+        bottomNav.setTranslationY(dp(16));
+        // ⚠️ 必须等一帧再启动动画：
+        // setVisibility(VISIBLE) 会让 body(LinearLayout) 重新测量/布局，
+        // 布局流程会把 translationY 复位为 0、alpha 复位为 1，
+        // 若在同一帧内 animate() 会从「已归零」的状态开始，
+        // 表现为「无动画直接出现」。post 到下一帧可确保布局已完成。
+        bottomNav.post(() -> {
+            if (bottomNav == null || bottomNav.getVisibility() != View.VISIBLE) return;
+            bottomNav.animate()
+                    .translationY(0f)
+                    .alpha(1f)
+                    .setDuration(240)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                    .start();
+        });
     }
 
     /** 清空选中并让列表回到非多选外观（退出多选的收尾动作） */
