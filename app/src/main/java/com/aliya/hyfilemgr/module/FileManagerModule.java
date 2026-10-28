@@ -2195,8 +2195,21 @@ public class FileManagerModule extends HyVqModule {
         multiMode = true;
         for (Pane p : panes) p.adapter.setMultiMode(true);
         updateOpBar();
+        // ⚠️ bottomNav 必须**立即**隐藏（同一帧），不能做淡出动画：
+        // bottomNav 是 body(LinearLayout) 的子 View，只要它还在（哪怕正在淡出），
+        // 就仍占着一行高度，锚在 contentWrap 底部的 opBar 被顶在上方；
+        // 等它淡出结束腾出空间，opBar 再「落下来」→ 看到的就是
+        // 「多选栏先弹到上面，再跟着下沉」。
+        // 因此这里先硬切隐藏（多选栏随后从底部滑入，视觉上仍然连贯）。
+        if (bottomNav != null) {
+            bottomNav.animate().cancel();
+            bottomNav.setAlpha(1f);
+            bottomNav.setTranslationY(0f);
+            bottomNav.setVisibility(View.GONE);
+        }
         // 首次进入才播进场动画（后续勾选不重播）
         if (!wasMulti && opBar != null) {
+            opBar.animate().cancel();
             opBar.setTranslationY(dp(24));
             opBar.setAlpha(0f);
             opBar.setVisibility(View.VISIBLE);
@@ -2207,17 +2220,6 @@ public class FileManagerModule extends HyVqModule {
         }
         // ⭐10 Material 规范：多选模式下隐藏 FAB（底部操作栏接管操作）
         if (fabNew != null) fabNew.setVisibility(View.GONE);
-        // 多选底栏「替换」而非「叠加」底部导航栏：
-        // 两者同为 body 的直接子 View，同时可见会看到两层底栏叠在一起。
-        if (bottomNav != null && bottomNav.getVisibility() == View.VISIBLE) {
-            bottomNav.animate().translationY(dp(16)).alpha(0f).setDuration(140)
-                    .setInterpolator(new android.view.animation.AccelerateInterpolator())
-                    .withEndAction(() -> {
-                        bottomNav.setVisibility(View.GONE);
-                        bottomNav.setTranslationY(0f);
-                        bottomNav.setAlpha(1f);
-                    }).start();
-        }
     }
 
     private void exitMultiMode() {
