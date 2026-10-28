@@ -36,7 +36,8 @@ public class TerminalPanel {
 
     private TerminalSession session;
     private TextView output;
-    private EditText input;
+    private EditText input;      // 0 宽隐藏输入框，仅接管键盘
+    private TextView inputDisplay; // 可见的输入回显
     private ScrollView scroll;
     private TextView pwdView;
     private final StringBuilder buffer = new StringBuilder();
@@ -137,22 +138,46 @@ public class TerminalPanel {
         prompt.setTextColor(0xFF7EE787);
         inputRow.addView(prompt);
 
+        // ── Termux 同款输入方案 ──
+        // 不用可见 EditText 承载输入（它一旦 setText 就会触发焦点/IME 重算，
+        // 部分 ROM 上直接收起键盘）。改为：
+        //   ① 一个 0 宽度的隐藏 EditText 只负责「接住」输入法事件
+        //   ② 可见的是一行自绘 TextView（显示当前输入缓冲）
+        //   ③ 隐藏 EditText 始终持有焦点，键盘自然常驻
+        inputDisplay = new TextView(ctx);
+        inputDisplay.setText("");
+        inputDisplay.setHint("输入命令…");
+        inputDisplay.setHintTextColor(0xFF484F58);
+        inputDisplay.setTextColor(0xFFC9D1D9);
+        inputDisplay.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        inputDisplay.setTypeface(Typeface.MONOSPACE);
+        inputDisplay.setSingleLine(true);
+        inputDisplay.setPadding(0, dp(8), dp(6), dp(8));
+        inputDisplay.setOnClickListener(v -> keepFocus());
+        inputRow.addView(inputDisplay, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        // 0 宽隐藏输入框：只用来接管键盘
         input = new EditText(ctx);
-        input.setHint("输入命令…");
-        input.setHintTextColor(0xFF484F58);
-        input.setTextColor(0xFFC9D1D9);
-        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        input.setTypeface(Typeface.MONOSPACE);
         input.setBackgroundColor(0x00000000);
-        input.setSingleLine(true);
-        input.setImeOptions(EditorInfo.IME_ACTION_SEND);
-        input.setPadding(0, dp(8), 0, dp(8));
+        input.setAlpha(0f);
+        input.setImeOptions(EditorInfo.IME_ACTION_SEND
+                | EditorInfo.IME_FLAG_NO_FULLSCREEN
+                | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        input.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s2, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s2, int a, int b, int c) { }
+            @Override public void afterTextChanged(android.text.Editable e2) {
+                inputDisplay.setText(e2.toString());
+            }
+        });
         input.setOnEditorActionListener((v, actionId, event) -> {
             runCommand();
             return true;
         });
-        inputRow.addView(input, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        inputRow.addView(input, new LinearLayout.LayoutParams(0, dp(1)));
 
         inputRow.addView(btn("执行", v -> runCommand()));
 
@@ -211,7 +236,9 @@ public class TerminalPanel {
 
     private void runCommand() {
         String cmd = input.getText().toString();
+        // 只清空内容，不动焦点：隐藏输入框始终保持 focus，键盘不会收起
         input.setText("");
+        inputDisplay.setText("");
         if (cmd.trim().isEmpty()) {
             appendOutput("$ \n");
             keepFocus();
@@ -234,12 +261,15 @@ public class TerminalPanel {
     /** 保持输入框焦点并让输入法继续显示，避免执行后键盘收起 */
     private void keepFocus() {
         if (input == null) return;
-        input.requestFocus();
+        if (!input.hasFocus()) input.requestFocus();
         android.view.inputmethod.InputMethodManager imm =
                 (android.view.inputmethod.InputMethodManager)
                         ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
         if (imm != null) {
-            imm.showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+            // 已显示就不重复调用（重复调用在某些 ROM 上反而会闪收）
+            if (!imm.isActive(input)) {
+                imm.showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+            }
         }
     }
 

@@ -3742,26 +3742,12 @@ public class FileManagerModule extends HyVqModule {
         curLp.leftMargin = dp(4);
         content.addView(curPath, curLp);
 
-        // ── 书签区（仿 ZhuFiler NavigationView 书签组：常驻可见，点击进入、长按删除） ──
-        buildBookmarkSection(content);
-
-        // ── ⭐ v2.8.0 ROOT 分组（已授权时列出系统路径；未授权时一行申请入口） ──
-
-
-        // ── 存储位置分组标题（挂载列表） ──
-        {
-            TextView mHead = new TextView(ctx);
-            mHead.setText("存储位置");
-            mHead.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            mHead.setTypeface(null, android.graphics.Typeface.BOLD);
-            mHead.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
-            LinearLayout.LayoutParams mHeadLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            mHeadLp.topMargin = dp(10);
-            mHeadLp.bottomMargin = dp(4);
-            mHeadLp.leftMargin = dp(4);
-            content.addView(mHead, mHeadLp);
-        }
+        // ══════ 第一组：本地（可折叠）══════
+        final LinearLayout localBody = new LinearLayout(ctx);
+        localBody.setOrientation(LinearLayout.VERTICAL);
+        localBody.setVisibility(navLocalExpanded ? View.VISIBLE : View.GONE);
+        content.addView(localBody);
+        content.addView(buildCollapsibleHeader("本地", localBody, () -> navLocalExpanded));
 
         // ── 合并列表：根目录 + 内部存储 + SAF 授权目录（FCL 式"类挂载"，统一排序） ──
         List<MountEntry> entries = buildMountList();
@@ -3775,7 +3761,7 @@ public class FileManagerModule extends HyVqModule {
             }
         }
         for (final MountEntry e : entries) {
-            content.addView(buildMountRow(content, e));
+            localBody.addView(buildMountRow(localBody, e));
         }
 
         // ── 分隔线 + 授权按钮（列表底部，触发系统文件选择器）；与授权项同开关隐藏 ──
@@ -3785,7 +3771,7 @@ public class FileManagerModule extends HyVqModule {
             LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(1));
             divLp.setMargins(dp(16), dp(8), dp(16), dp(8));
-            content.addView(divider, divLp);
+            localBody.addView(divider, divLp);
 
             TextView authBtn = new TextView(ctx);
             authBtn.setText("＋授权目录");
@@ -3802,8 +3788,102 @@ public class FileManagerModule extends HyVqModule {
             LinearLayout.LayoutParams authLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(36));
             authLp.bottomMargin = dp(6);
-            content.addView(authBtn, authLp);
+            localBody.addView(authBtn, authLp);
         }
+
+        // ══════ 第二组：工具（可折叠）══════
+        final LinearLayout toolsBody = new LinearLayout(ctx);
+        toolsBody.setOrientation(LinearLayout.VERTICAL);
+        toolsBody.setVisibility(navToolsExpanded ? View.VISIBLE : View.GONE);
+
+        // 终端
+        TextView termRow = new TextView(ctx);
+        termRow.setText("终端");
+        termRow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        termRow.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        termRow.setPadding(dp(14), dp(11), dp(14), dp(11));
+        termRow.setBackgroundResource(R.drawable.bg_ripple_round);
+        termRow.setClickable(true);
+        termRow.setOnClickListener(v -> {
+            closeNavSidebar();
+            openTerminal();
+        });
+        toolsBody.addView(termRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        content.addView(toolsBody);
+        content.addView(buildCollapsibleHeader("工具", toolsBody, () -> navToolsExpanded));
+    }
+
+    /** 侧边栏分组展开状态（重建时保持） */
+    private boolean navLocalExpanded = true;
+    private boolean navToolsExpanded = true;
+
+    /**
+     * 可折叠分组标题行：箭头 + 标题 + 右侧计数/说明。
+     *
+     * <p>点击切换可见性并播放旋转箭头 + 淡入淡出动画；状态写回
+     * {@code expandedFlag} 对应的字段（由调用方以 lambda 提供 getter）。</p>
+     *
+     * @param body     被折叠的内容容器
+     * @param expanded 当前是否展开的 getter（调用方字段）
+     */
+    private View buildCollapsibleHeader(String title, final LinearLayout body,
+                                        final java.util.function.BooleanSupplier expanded) {
+        LinearLayout head = new LinearLayout(ctx);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.setPadding(dp(6), dp(10), dp(8), dp(8));
+        head.setBackgroundResource(R.drawable.bg_ripple_round);
+        head.setClickable(true);
+
+        // 折叠箭头
+        final ImageView arrow = new ImageView(ctx);
+        arrow.setImageResource(R.drawable.ic_chevron_right);
+        int as = dp(14);
+        arrow.setColorFilter(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        LinearLayout.LayoutParams aLp = new LinearLayout.LayoutParams(as, as);
+        arrow.setLayoutParams(aLp);
+        arrow.setRotation(expanded.getAsBoolean() ? 90f : 0f);
+        head.addView(arrow);
+
+        TextView tv = new TextView(ctx);
+        tv.setText(title);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tv.setTypeface(null, android.graphics.Typeface.BOLD);
+        tv.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tLp.leftMargin = dp(8);
+        head.addView(tv, tLp);
+
+        LinearLayout.LayoutParams headLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        headLp.topMargin = dp(6);
+        head.setOnClickListener(v -> {
+            boolean nowVisible = body.getVisibility() != View.VISIBLE;
+            // 箭头旋转
+            arrow.animate().rotation(nowVisible ? 90f : 0f).setDuration(180).start();
+            // 内容淡入淡出
+            if (nowVisible) {
+                body.setVisibility(View.VISIBLE);
+                body.setAlpha(0f);
+                body.animate().alpha(1f).setDuration(180).start();
+            } else {
+                body.animate().alpha(0f).setDuration(150)
+                        .withEndAction(() -> {
+                            body.setVisibility(View.GONE);
+                            body.setAlpha(1f);
+                        }).start();
+            }
+            // 写回状态（标题是「本地」还是「工具」由 title 判定）
+            if ("本地".equals(title)) navLocalExpanded = nowVisible;
+            else navToolsExpanded = nowVisible;
+        });
+        return head;
     }
 
     /** SAF 授权完成回调（MainActivity.onActivityResult 转发）：
