@@ -3145,6 +3145,7 @@ drawable ic_drag
 drawable ic_encode
 drawable ic_file
 drawable ic_folder
+drawable ic_font
 drawable ic_goto
 drawable ic_grid
 drawable ic_history

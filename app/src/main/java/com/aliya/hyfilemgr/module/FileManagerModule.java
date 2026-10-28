@@ -5513,6 +5513,7 @@ public class FileManagerModule extends HyVqModule {
                         {"doc", "文本编辑", "查看与编辑文本、代码", "true"},
                         {"archive", "解压", "ZIP 压缩包", "true"},
                         {"apk", "安装", "Android 安装包", "true"},
+                        {"font", "字体预览", "TTF · OTF · TTC 样张", "true"},
                 };
                 // 与长按菜单同一套卡片式按键：每行 4 个，行数按数量自适应
                 final int PER_ROW = 4;
@@ -5532,7 +5533,9 @@ public class FileManagerModule extends HyVqModule {
                     int res = "img".equals(it[0]) ? R.drawable.ic_img
                             : "video".equals(it[0]) ? R.drawable.ic_video
                             : "doc".equals(it[0]) ? R.drawable.ic_doc
-                            : "archive".equals(it[0]) ? R.drawable.ic_archive : R.drawable.ic_apk;
+                            : "archive".equals(it[0]) ? R.drawable.ic_archive
+                            : "font".equals(it[0]) ? R.drawable.ic_font
+                            : R.drawable.ic_apk;
                     final boolean en = Boolean.parseBoolean(it[3]);
                     addGridItem(row, it[1], res, en, v -> {
                         d.dismiss();
@@ -5547,6 +5550,8 @@ public class FileManagerModule extends HyVqModule {
                                     err = tryOpenInEditor(pathOrUri, name, isUri); break;
                                 case "archive":
                                     err = tryUnzip(pathOrUri, name, isUri); break;
+                                case "font":
+                                    err = tryOpenFontPreview(pathOrUri, name, isUri); break;
                                 default:
                                     err = tryInstallApk(pathOrUri, name, isUri); break;
                             }
@@ -5739,6 +5744,43 @@ public class FileManagerModule extends HyVqModule {
             return null;
         } catch (Throwable t) {
             return t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+    }
+
+    /** 尝试用字体预览打开。支持 ttf / otf / ttc / woff。 */
+    private String tryOpenFontPreview(String pathOrUri, String name, boolean isUri) {
+        String ext = extOf(name);
+        boolean isFont = "ttf".equals(ext) || "otf".equals(ext)
+                || "ttc".equals(ext) || "woff".equals(ext);
+        if (!isFont) {
+            return "这不是字体文件（扩展名 ." + ext
+                    + "），字体预览支持 ttf / otf / ttc / woff";
+        }
+        if (!isUri) {
+            File f = new File(pathOrUri);
+            if (!f.exists()) return "文件不存在或无法访问";
+            if (!f.canRead()) return "没有读取该文件的权限";
+            if (f.length() == 0) return "文件为空（0 字节），可能未下载完整";
+        }
+        openFontPreview(pathOrUri, name, isUri);
+        return null;
+    }
+
+    /** 启动字体预览页 */
+    private void openFontPreview(String pathOrUri, String name, boolean isUri) {
+        try {
+            Intent i = new Intent(ctx,
+                    com.aliya.hyfilemgr.font.FontPreviewActivity.class);
+            if (isUri) {
+                i.putExtra(com.aliya.hyfilemgr.font.FontPreviewActivity.EXTRA_URI, pathOrUri);
+            } else {
+                i.putExtra(com.aliya.hyfilemgr.font.FontPreviewActivity.EXTRA_PATH, pathOrUri);
+            }
+            i.putExtra(com.aliya.hyfilemgr.font.FontPreviewActivity.EXTRA_TITLE, name);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            ctx.startActivity(i);
+        } catch (Throwable t) {
+            UiKit.toast(ctx, "无法打开字体预览：" + t.getMessage());
         }
     }
 
