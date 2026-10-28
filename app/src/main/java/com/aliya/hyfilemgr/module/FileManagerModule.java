@@ -902,78 +902,96 @@ public class FileManagerModule extends HyVqModule {
         final float[] downY = {0f};
         final int[] touchPos = {-1};
         final View[] shifting = {null};
-        final boolean[] decided = {false};
+        final boolean[] abort = {false};
 
-        rv.setOnTouchListener((v, ev) -> {
-            switch (ev.getActionMasked()) {
-                case android.view.MotionEvent.ACTION_DOWN: {
-                    if (active != p) setActive(p);
-                    downX[0] = ev.getX();
-                    downY[0] = ev.getY();
-                    decided[0] = false;
-                    shifting[0] = null;
-                    touchPos[0] = positionAt(rv, ev);
-                    return false;
-                }
-                case android.view.MotionEvent.ACTION_MOVE: {
-                    if (decided[0] || multiMode) return false;
-                    float dx = ev.getX() - downX[0];
-                    float dy = ev.getY() - downY[0];
-                    // 纵向意图明显 → 放弃本次手势（交给列表滚动）
-                    if (!decided[0] && Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > dp(12)) {
-                        decided[0] = true;
+        // 用 RecyclerView.OnItemTouchListener：在 onInterceptTouchEvent 阶段
+        // 就能拿到事件，早于子项点击与滚动拦截，否则 OnTouchListener 会被吞掉。
+        rv.addOnItemTouchListener(new RecyclerView.OnItemTouchListener() {
+            @Override
+            public boolean onInterceptTouchEvent(RecyclerView r, android.view.MotionEvent ev) {
+                switch (ev.getActionMasked()) {
+                    case android.view.MotionEvent.ACTION_DOWN: {
+                        if (active != p) setActive(p);
+                        downX[0] = ev.getX();
+                        downY[0] = ev.getY();
+                        abort[0] = false;
+                        shifting[0] = null;
+                        touchPos[0] = positionAt(r, ev);
                         return false;
                     }
-                    if (Math.abs(dx) < dp(6)) return false;
-                    float shift = Math.max(-maxShift, Math.min(maxShift, dx));
-                    if (shifting[0] == null && touchPos[0] >= 0) {
-                        RecyclerView.ViewHolder vh =
-                                rv.findViewHolderForAdapterPosition(touchPos[0]);
-                        if (vh != null) shifting[0] = vh.itemView;
-                    }
-                    if (shifting[0] != null) {
-                        shifting[0].setTranslationX(shift);
-                        float progress = Math.min(1f, Math.abs(dx) / threshold);
-                        shifting[0].setAlpha(1f - 0.25f * progress);
-                    }
-                    return false;
-                }
-                case android.view.MotionEvent.ACTION_UP: {
-                    float dx = ev.getX() - downX[0];
-                    final View target = shifting[0];
-                    shifting[0] = null;
-                    if (multiMode || target == null) return false;
-                    if (Math.abs(dx) >= threshold && touchPos[0] >= 0) {
-                        // ── 达到阈值：松手进入多选 ──
-                        final FileEntry sel = entryAt(p, touchPos[0]);
-                        target.animate().translationX(0f).alpha(1f)
-                                .setDuration(140).start();
-                        if (sel != null) {
-                            p.selected.add(sel);
-                            enterMultiMode();
-                            p.adapter.setSelected(p.selected);
-                            updateOpBar();
+                    case android.view.MotionEvent.ACTION_MOVE: {
+                        if (abort[0] || multiMode) return false;
+                        float dx = ev.getX() - downX[0];
+                        float dy = ev.getY() - downY[0];
+                        // 纵向意图更强 → 放弃，交给列表滚动
+                        if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > dp(10)) {
+                            abort[0] = true;
+                            releaseShift();
+                            return false;
                         }
-                        return true;
+                        if (Math.abs(dx) < dp(6)) return false;
+                        // 横向确认：阻止父容器（列表纵向滚动）抢事件
+                        r.getParent().requestDisallowInterceptTouchEvent(true);
+                        if (shifting[0] == null && touchPos[0] >= 0) {
+                            RecyclerView.ViewHolder vh =
+                                    r.findViewHolderForAdapterPosition(touchPos[0]);
+                            if (vh != null) shifting[0] = vh.itemView;
+                        }
+                        if (shifting[0] != null) {
+                            float shift = Math.max(-maxShift, Math.min(maxShift, dx));
+                            shifting[0].setTranslationX(shift);
+                            float progress = Math.min(1f, Math.abs(dx) / threshold);
+                            shifting[0].setAlpha(1f - 0.25f * progress);
+                        }
+                        return false;
                     }
-                    // ── 未达阈值：回弹 ──
-                    target.animate().translationX(0f).alpha(1f)
-                            .setDuration(180)
-                            .setInterpolator(new android.view.animation.OvershootInterpolator(2f))
-                            .start();
-                    return false;
-                }
-                case android.view.MotionEvent.ACTION_CANCEL: {
-                    if (shifting[0] != null) {
-                        shifting[0].animate().translationX(0f).alpha(1f)
-                                .setDuration(160).start();
+                    case android.view.MotionEvent.ACTION_UP: {
+                        float dx = ev.getX() - downX[0];
+                        View target = shifting[0];
                         shifting[0] = null;
+                        r.getParent().requestDisallowInterceptTouchEvent(false);
+                        if (multiMode || target == null || abort[0]) return false;
+                        if (Math.abs(dx) >= threshold && touchPos[0] >= 0) {
+                            FileEntry sel = entryAt(p, touchPos[0]);
+                            target.animate().translationX(0f).alpha(1f)
+                                    .setDuration(140).start();
+                            if (sel != null) {
+                                p.selected.add(sel);
+                                enterMultiMode();
+                                p.adapter.setSelected(p.selected);
+                                updateOpBar();
+                                return true;   // 吞掉本次点击，避免再触发条目点击
+                            }
+                        }
+                        target.animate().translationX(0f).alpha(1f)
+                                .setDuration(180)
+                                .setInterpolator(new android.view.animation.OvershootInterpolator(2f))
+                                .start();
+                        return false;
                     }
-                    return false;
+                    case android.view.MotionEvent.ACTION_CANCEL: {
+                        r.getParent().requestDisallowInterceptTouchEvent(false);
+                        releaseShift();
+                        return false;
+                    }
+                    default:
+                        return false;
                 }
-                default:
-                    return false;
             }
+
+            private void releaseShift() {
+                if (shifting[0] != null) {
+                    shifting[0].animate().translationX(0f).alpha(1f)
+                            .setDuration(160).start();
+                    shifting[0] = null;
+                }
+            }
+
+            @Override
+            public void onTouchEvent(RecyclerView r, android.view.MotionEvent ev) { }
+
+            @Override
+            public void onRequestDisallowInterceptTouchEvent(boolean disallow) { }
         });
     }
 
@@ -2182,22 +2200,33 @@ public class FileManagerModule extends HyVqModule {
 
     private void exitMultiMode() {
         multiMode = false;
-        for (Pane p : panes) {
-            p.selected.clear();
-            p.adapter.setMultiMode(false);
-        }
-        if (opBar != null && opBar.getVisibility() == View.VISIBLE) {
+        // ⚠️ 先播退场动画，动画结束再清选中 + 隐藏 opBar。
+        // 若先清选中，adapter.notifyDataSetChanged 会立刻改变行高/内容，
+        // 触发布局重组，与 translationY 动画叠加就会出现「先下沉再回弹」的抖动。
+        final boolean animating = opBar != null && opBar.getVisibility() == View.VISIBLE;
+        if (animating) {
             opBar.animate().translationY(dp(24)).alpha(0f).setDuration(160)
                     .withEndAction(() -> {
                         opBar.setVisibility(View.GONE);
                         opBar.setTranslationY(0f);
                         opBar.setAlpha(1f);
+                        clearSelectionAndRefresh();
                     }).start();
+        } else {
+            clearSelectionAndRefresh();
         }
-        // 退出多选恢复 FAB 与活跃窗格状态栏
+        // 底部导航与 FAB 同步恢复（与 opBar 的隐藏成对，不参与动画）
         if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
-        // 同步恢复底部导航栏（与 enterMultiMode 的隐藏成对）
         if (bottomNav != null) bottomNav.setVisibility(View.VISIBLE);
+    }
+
+    /** 清空选中并让列表回到非多选外观（退出多选的收尾动作） */
+    private void clearSelectionAndRefresh() {
+        for (Pane p : panes) {
+            p.selected.clear();
+            p.adapter.setMultiMode(false);
+        }
+        if (opCount != null) opCount.setText("已选 0 项");
     }
 
     private void selectAll() {
