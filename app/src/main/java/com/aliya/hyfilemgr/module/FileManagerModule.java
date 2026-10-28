@@ -5661,18 +5661,36 @@ public class FileManagerModule extends HyVqModule {
             // 排除本应用自身。
             java.util.Set<String> canHandle = new java.util.HashSet<>();
             java.util.List<Intent> probes = new java.util.ArrayList<>();
+            // ① 精确 MIME（如 application/x-font-ttf）
             if (mime != null && !mime.isEmpty()) {
                 Intent exact = new Intent(Intent.ACTION_VIEW);
                 exact.setDataAndType(uri, mime);
                 probes.add(exact);
+                // ①b 类型通配（如 application/*）
+                int slash = mime.indexOf('/');
+                if (slash > 0) {
+                    Intent wild = new Intent(Intent.ACTION_VIEW);
+                    wild.setDataAndType(uri, mime.substring(0, slash) + "/*");
+                    probes.add(wild);
+                }
             }
+            // ② 任意 MIME
             Intent anyProbe = new Intent(Intent.ACTION_VIEW);
             anyProbe.setDataAndType(uri, "*/*");
             probes.add(anyProbe);
+            // ③ 仅 scheme（MT 管理器等文件管理器只声明 file/content scheme，
+            //    不带 type，用 setDataAndType 匹配不上，必须用 setData）
+            Intent schemeProbe = new Intent(Intent.ACTION_VIEW);
+            schemeProbe.setData(uri);
+            probes.add(schemeProbe);
+            // ④ 无 data 的 VIEW（部分应用只声明 action+category）
+            probes.add(new Intent(Intent.ACTION_VIEW));
+
             for (Intent probe : probes) {
                 try {
                     for (android.content.pm.ResolveInfo ri
-                            : ctx.getPackageManager().queryIntentActivities(probe, 0)) {
+                            : ctx.getPackageManager().queryIntentActivities(
+                                    probe, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)) {
                         if (ri.activityInfo != null) canHandle.add(ri.activityInfo.packageName);
                     }
                 } catch (Throwable ignored) {
@@ -5805,17 +5823,46 @@ public class FileManagerModule extends HyVqModule {
                     String pkg = ri.activityInfo.packageName;
                     String act = ri.activityInfo.name;
                     boolean canOpenThis = Boolean.TRUE.equals(handleMap.get(pkg));
-                    // 1) 该应用声明了能处理此类型 → 直接指定 Component 打开
-                    if (canOpenThis && act != null && !act.isEmpty()) {
-                        try {
-                            Intent i = new Intent(Intent.ACTION_VIEW);
-                            i.setComponent(new android.content.ComponentName(pkg, act));
-                            i.setDataAndType(uri, mime == null ? "*/*" : mime);
-                            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
-                                    | Intent.FLAG_ACTIVITY_NEW_TASK);
-                            ctx.startActivity(i);
-                            return;
-                        } catch (Throwable ignored) {
+                    // 1) 该应用能处理 → 直接指定 Component 打开
+                    //    依次尝试：精确 MIME → */* → 仅 scheme（文件管理器类）
+                    if (canOpenThis) {
+                        java.util.List<Intent> tries = new java.util.ArrayList<>();
+                        Intent i1 = new Intent(Intent.ACTION_VIEW);
+                        if (act != null && !act.isEmpty()) {
+                            i1.setComponent(new android.content.ComponentName(pkg, act));
+                        } else {
+                            i1.setPackage(pkg);
+                        }
+                        if (mime != null && !mime.isEmpty()) {
+                            i1.setDataAndType(uri, mime);
+                            tries.add(i1);
+                        }
+                        Intent i2 = new Intent(Intent.ACTION_VIEW);
+                        if (act != null && !act.isEmpty()) {
+                            i2.setComponent(new android.content.ComponentName(pkg, act));
+                        } else {
+                            i2.setPackage(pkg);
+                        }
+                        i2.setDataAndType(uri, "*/*");
+                        tries.add(i2);
+                        Intent i3 = new Intent(Intent.ACTION_VIEW);
+                        if (act != null && !act.isEmpty()) {
+                            i3.setComponent(new android.content.ComponentName(pkg, act));
+                        } else {
+                            i3.setPackage(pkg);
+                        }
+                        i3.setData(uri);
+                        tries.add(i3);
+
+                        for (Intent i : tries) {
+                            try {
+                                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                                        | Intent.FLAG_ACTIVITY_NEW_TASK);
+                                ctx.startActivity(i);
+                                return;
+                            } catch (Throwable ignored) {
+                            }
                         }
                     }
                     // 2) 未声明处理 → 用包名拉起该应用主界面（用户自行在其内选择文件）
