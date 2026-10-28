@@ -75,6 +75,8 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
     private List<FileEntry> entries;
     private Set<FileEntry> selected;
     private boolean multiMode;
+    /** 列表密度：1=紧凑 2=标准 3=宽松（影响行内边距与图标尺寸） */
+    private int density = 2;
     private final Listener listener;
 
     public FileListAdapter(Context context, List<FileEntry> entries,
@@ -88,6 +90,16 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
     /** 刷新数据源（主线程） */
     public void setData(List<FileEntry> entries) {
         this.entries = entries;
+        notifyDataSetChanged();
+    }
+
+    /**
+     * 设置列表密度。
+     *
+     * @param density 1=紧凑 2=标准 3=宽松
+     */
+    public void setDensity(int density) {
+        this.density = Math.max(1, Math.min(3, density));
         notifyDataSetChanged();
     }
 
@@ -253,7 +265,14 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
 
     /** 构建行视图：勾选框 + 图标 + 名称/角标/副文本 */
     private View buildRow() {
-        int pad = dp(10);
+        // 密度 → 行内边距 / 图标尺寸
+        final int pad;
+        final int iconSize;
+        switch (density) {
+            case 1:  pad = dp(6);  iconSize = dp(18); break;   // 紧凑
+            case 3:  pad = dp(14); iconSize = dp(26); break;   // 宽松
+            default: pad = dp(10); iconSize = dp(22); break;   // 标准
+        }
         LinearLayout row = new LinearLayout(context);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -270,7 +289,7 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
 
         ImageView icon = new ImageView(context);
         icon.setImageResource(R.drawable.ic_folder);
-        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(22), dp(22));
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(iconSize, iconSize);
         iconLp.setMarginStart(dp(4));
         row.addView(icon, iconLp);
 

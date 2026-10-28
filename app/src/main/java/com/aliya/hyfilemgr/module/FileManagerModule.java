@@ -189,6 +189,21 @@ public class FileManagerModule extends HyVqModule {
     // ── 浏览状态持久化键（2026-09-06 补齐：排序/隐藏文件/双窗格路径原为纯内存，重启即回默认） ──
     private static final String PREF_SORT_MODE = "sort_mode";
     private static final String PREF_SHOW_HIDDEN = "show_hidden";
+    private static final String PREF_DPI = "ui_dpi";
+    private static final String PREF_DENSITY = "list_density";
+
+    /** 列表文件密度：1=紧凑 2=标准 3=宽松 */
+    private static int listDensity = 2;
+
+    /** 同步写入整型偏好（commit 同步落盘，失败打日志） */
+    private void savePrefInt(String key, int value) {
+        try {
+            boolean ok = fmPrefs().edit().putInt(key, value).commit();
+            android.util.Log.i("HYPrefs", "save " + key + "=" + value + " ok=" + ok);
+        } catch (Throwable t) {
+            android.util.Log.e("HYPrefs", "save " + key + " failed", t);
+        }
+    }
     private static final String PREF_GRID_MODE = "grid_mode";
     private static final String PREF_THUMBS = "thumbs_enabled";
     private boolean thumbsEnabled = true;
@@ -308,6 +323,8 @@ public class FileManagerModule extends HyVqModule {
         showHidden = sp.getBoolean(PREF_SHOW_HIDDEN, false);
         gridMode = sp.getBoolean(PREF_GRID_MODE, false);
         thumbsEnabled = sp.getBoolean(PREF_THUMBS, true);
+        listDensity = Math.max(1, Math.min(3, sp.getInt(PREF_DENSITY, 2)));
+        com.aliya.hyfilemgr.util.DpiUtils.setOverrideDpi(sp.getInt(PREF_DPI, 0));
         recentFiles.clear();
         String rf = sp.getString(PREF_RECENT_FILES, "");
         if (!rf.isEmpty()) {
@@ -330,6 +347,8 @@ public class FileManagerModule extends HyVqModule {
                 .putInt(PREF_SORT_MODE, sortMode)
                 .putBoolean(PREF_SHOW_HIDDEN, showHidden)
                 .putBoolean(PREF_THUMBS, thumbsEnabled)
+                .putInt(PREF_DENSITY, listDensity)
+                .putInt(PREF_DPI, com.aliya.hyfilemgr.util.DpiUtils.getOverrideDpi())
                 .commit();
     }
 
@@ -897,6 +916,7 @@ public class FileManagerModule extends HyVqModule {
         p.list = rv;
         p.adapter = new FileListAdapter(ctx, p.entries, p.selected, makeListener(p));
         p.adapter.setThumbsEnabled(thumbsEnabled);
+        p.adapter.setDensity(listDensity);
         rv.setAdapter(p.adapter);
         // 列表项动画：淡入淡出 + 位移，比默认更柔和
         androidx.recyclerview.widget.DefaultItemAnimator ia =
@@ -2939,6 +2959,13 @@ public class FileManagerModule extends HyVqModule {
                     showFileSettings();
                 });
 
+        // ── 个性化 ──
+        addSettingsRow(box, "个性化",
+                "显示密度(DPI) · 列表文件密度", R.drawable.ic_sliders, v -> {
+                    hideSettingsDialog();
+                    showAppearanceSettings();
+                });
+
         settingsDialog = UiKit.glassDialog(ctx, box);
         LinearLayout btns = new LinearLayout(ctx);
         btns.setOrientation(LinearLayout.HORIZONTAL);
@@ -3108,6 +3135,155 @@ public class FileManagerModule extends HyVqModule {
         }));
         btns.addView(textButton("关闭", v -> UiKit.dismissWithAnim(d)));
         d.show();
+    }
+
+    /** 个性化设置页：显示密度(DPI) + 列表文件密度 */
+    private void showAppearanceSettings() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "个性化"));
+
+        // ── 显示密度 DPI ──
+        int curDpi = com.aliya.hyfilemgr.util.DpiUtils.getOverrideDpi();
+        String dpiLabel = curDpi <= 0 ? "跟随系统" : (curDpi + " dpi");
+        addSettingsRow(box, "显示密度（DPI）",
+                dpiLabel + " · 仅本应用生效，修改后自动重启界面",
+                R.drawable.ic_sliders, v -> {
+                    hideSettingsDialog();
+                    showDpiPicker();
+                });
+
+        // ── 列表文件密度 ──
+        String[] densityNames = {"紧凑", "标准", "宽松"};
+        int d = listDensity;
+        addSettingsRow(box, "列表文件密度",
+                densityNames[Math.max(0, Math.min(2, d - 1))]
+                        + " · 影响行高与图标大小",
+                R.drawable.ic_list, v -> {
+                    hideSettingsDialog();
+                    showDensityPicker();
+                });
+
+        final android.app.Dialog dlg = UiKit.glassDialog(ctx, box);
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setOrientation(LinearLayout.HORIZONTAL);
+        btns.setGravity(Gravity.END);
+        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnsLp.topMargin = dp(10);
+        box.addView(btns, btnsLp);
+        btns.addView(textButton("返回", v -> {
+            UiKit.dismissWithAnim(dlg);
+            showSettingsPage();
+        }));
+        btns.addView(textButton("关闭", v -> UiKit.dismissWithAnim(dlg)));
+        dlg.show();
+    }
+
+    /** DPI 选择弹窗 */
+    private void showDpiPicker() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "显示密度（DPI）"));
+
+        TextView hint = new TextView(ctx);
+        hint.setText("数值越大，界面元素越大（相当于系统「显示大小」）。\n"
+                + "仅影响本应用，选择后界面会自动重建。");
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hint.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        hint.setPadding(dp(4), 0, dp(4), dp(8));
+        box.addView(hint);
+
+        final android.app.Dialog dlg = UiKit.glassDialog(ctx, box);
+        int cur = com.aliya.hyfilemgr.util.DpiUtils.getOverrideDpi();
+        for (final int dpi : com.aliya.hyfilemgr.util.DpiUtils.PRESETS) {
+            String label = dpi == 0 ? "跟随系统" : (dpi + " dpi");
+            boolean active = (cur == dpi);
+            addInfoRow(box, label,
+                    active ? "当前使用中" : (dpi == 0 ? "使用系统默认密度" : "点按切换"),
+                    active, v -> {
+                        UiKit.dismissWithAnim(dlg);
+                        applyDpi(dpi);
+                    });
+        }
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        box.addView(btns, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim(dlg)));
+        dlg.show();
+    }
+
+    /** 应用 DPI：落盘 + 重建界面 */
+    private void applyDpi(int dpi) {
+        com.aliya.hyfilemgr.util.DpiUtils.setOverrideDpi(dpi);
+        savePrefInt(PREF_DPI, dpi);
+        UiKit.toast(ctx, "已切换到 " + (dpi == 0 ? "跟随系统" : dpi + " dpi")
+                + "，界面即将重建");
+        // DPI 改变需要重建 Activity（updateConfiguration 不影响已创建的 View）
+        final android.app.Activity act = hostActivity;
+        if (act != null) {
+            // 用 Handler 而非 View.postDelayed：Activity 本身不是 View
+            new android.os.Handler(android.os.Looper.getMainLooper())
+                    .postDelayed(new Runnable() {
+                        @Override
+                        public void run() {
+                            act.recreate();
+                        }
+                    }, 350);
+        } else {
+            UiKit.toast(ctx, "重启应用后生效");
+        }
+    }
+
+    /** 列表密度选择弹窗 */
+    private void showDensityPicker() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "列表文件密度"));
+
+        TextView hint = new TextView(ctx);
+        hint.setText("紧凑 ≈ 一屏多显示 3~4 行；宽松 ≈ 行与行更舒展。");
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hint.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        hint.setPadding(dp(4), 0, dp(4), dp(8));
+        box.addView(hint);
+
+        final android.app.Dialog dlg = UiKit.glassDialog(ctx, box);
+        String[] names = {"紧凑", "标准", "宽松"};
+        String[] descs = {"行高最小，信息密度最高",
+                "默认，均衡",
+                "行高最大，触控更舒适"};
+        for (int i = 0; i < 3; i++) {
+            final int val = i + 1;
+            boolean active = (listDensity == val);
+            addInfoRow(box, names[i],
+                    active ? "当前使用中" : descs[i], active, v -> {
+                        UiKit.dismissWithAnim(dlg);
+                        applyDensity(val);
+                    });
+        }
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        box.addView(btns, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim(dlg)));
+        dlg.show();
+    }
+
+    /** 应用列表密度（立即生效，无需重启） */
+    private void applyDensity(int density) {
+        listDensity = Math.max(1, Math.min(3, density));
+        savePrefInt(PREF_DENSITY, listDensity);
+        for (Pane p : panes) {
+            if (p != null && p.adapter != null) p.adapter.setDensity(listDensity);
+        }
+        String[] names = {"紧凑", "标准", "宽松"};
+        UiKit.toast(ctx, "列表密度：" + names[listDensity - 1]);
     }
 
     /** 文件管理设置页：隐藏文件 / 缩略图 / 排序 */

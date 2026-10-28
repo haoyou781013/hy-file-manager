@@ -1,5 +1,6 @@
 package com.aliya.hyfilemgr;
 
+import android.content.Context;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -18,6 +19,16 @@ import com.aliya.hyfilemgr.module.FileManagerModule;
 public class MainActivity extends AppCompatActivity {
 
     private FileManagerModule module;
+
+    @Override
+    protected void attachBaseContext(Context base) {
+        // 读取已保存的 DPI 覆盖，在 Activity 创建前套用到 Context。
+        // 必须在此处做：晚于 onCreate 时所有已布局的 View 尺寸不会重算。
+        int dpi = base.getSharedPreferences("hyvq_filemgr", MODE_PRIVATE)
+                .getInt("ui_dpi", 0);
+        com.aliya.hyfilemgr.util.DpiUtils.setOverrideDpi(dpi);
+        super.attachBaseContext(com.aliya.hyfilemgr.util.DpiUtils.wrap(base));
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {

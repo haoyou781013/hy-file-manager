@@ -70,6 +70,7 @@ drawable ic_search
 drawable ic_settings
 drawable ic_skip_next
 drawable ic_skip_previous
+drawable ic_sliders
 drawable ic_sort
 drawable ic_star
 drawable ic_star_add
