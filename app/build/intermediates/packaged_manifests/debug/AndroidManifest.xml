@@ -127,6 +127,12 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"
             android:theme="@android:style/Theme.Black.NoTitleBar" />
+        <activity
+            android:name="com.aliya.hyfilemgr.terminal.TerminalActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:theme="@android:style/Theme.Black.NoTitleBar"
+            android:windowSoftInputMode="adjustResize" />
 
         <provider
             android:name="androidx.startup.InitializationProvider"

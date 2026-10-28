@@ -11,10 +11,10 @@ INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManif
 	android:name
 		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:91:13-62
 manifest
-ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-105:12
-INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-105:12
-INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-105:12
-INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-105:12
+ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-111:12
+INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-111:12
+INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-111:12
+INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-111:12
 MERGED from [com.google.android.material:material:1.12.0] /opt/toolchain/gradle-home/caches/transforms-3/79edf4a5284e0f2b562cd47fe4aa5e99/transformed/material-1.12.0/AndroidManifest.xml:17:1-24:12
 MERGED from [androidx.appcompat:appcompat-resources:1.6.1] /opt/toolchain/gradle-home/caches/transforms-3/3aa8c848966e0970300f7694454336bf/transformed/appcompat-resources-1.6.1/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /opt/toolchain/gradle-home/caches/transforms-3/91f644df77635db83c7b48fbd7f1f940/transformed/constraintlayout-2.0.1/AndroidManifest.xml:2:1-11:12
@@ -68,20 +68,20 @@ MERGED from [androidx.documentfile:documentfile:1.0.0] /opt/toolchain/gradle-hom
 MERGED from [androidx.localbroadcastmanager:localbroadcastmanager:1.0.0] /opt/toolchain/gradle-home/caches/transforms-3/80eaef0f76b0ff69ddb27cc22877cf2e/transformed/localbroadcastmanager-1.0.0/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.print:print:1.0.0] /opt/toolchain/gradle-home/caches/transforms-3/3c911d2460d162e40def2ac544f1b65f/transformed/print-1.0.0/AndroidManifest.xml:17:1-22:12
 MERGED from [androidx.annotation:annotation-experimental:1.4.0] /opt/toolchain/gradle-home/caches/transforms-3/2a07326c428ec012a2437f2b062580ef/transformed/annotation-experimental-1.4.0/AndroidManifest.xml:2:1-7:12
-INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-105:12
-INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-105:12
-INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-105:12
+INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-111:12
+INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-111:12
+INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-111:12
 	package
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
-		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-105:12
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-111:12
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
 	android:versionName
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
-		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-105:12
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-111:12
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
 	android:versionCode
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
-		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-105:12
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:1-111:12
 		INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml
 	xmlns:android
 		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:2:11-69
@@ -172,7 +172,7 @@ ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest
 	android:name
 		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:52:18-43
 application
-ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:55:1-104:19
+ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:55:1-110:19
 MERGED from [com.google.android.material:material:1.12.0] /opt/toolchain/gradle-home/caches/transforms-3/79edf4a5284e0f2b562cd47fe4aa5e99/transformed/material-1.12.0/AndroidManifest.xml:22:5-20
 MERGED from [com.google.android.material:material:1.12.0] /opt/toolchain/gradle-home/caches/transforms-3/79edf4a5284e0f2b562cd47fe4aa5e99/transformed/material-1.12.0/AndroidManifest.xml:22:5-20
 MERGED from [androidx.constraintlayout:constraintlayout:2.0.1] /opt/toolchain/gradle-home/caches/transforms-3/91f644df77635db83c7b48fbd7f1f940/transformed/constraintlayout-2.0.1/AndroidManifest.xml:9:5-20
@@ -267,6 +267,18 @@ ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest
 		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:103:13-66
 	android:name
 		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:100:13-53
+activity#com.aliya.hyfilemgr.terminal.TerminalActivity
+ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:104:13-109:69
+	android:windowSoftInputMode
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:108:13-55
+	android:exported
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:107:13-37
+	android:configChanges
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:106:13-74
+	android:theme
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:109:13-66
+	android:name
+		ADDED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml:105:13-54
 uses-sdk
 INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
 INJECTED from /sdcard/Android/haoyou781/HY文件管理/app/src/main/AndroidManifest.xml

@@ -2945,6 +2945,13 @@ public class FileManagerModule extends HyVqModule {
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "设置"));
 
+        // ── 终端 ──
+        addSettingsRow(box, "终端",
+                "打开当前目录的命令行（系统 shell）", R.drawable.ic_terminal, v -> {
+                    hideSettingsDialog();
+                    openTerminal();
+                });
+
         // ── 权限管理 ──
         addSettingsRow(box, "权限管理",
                 "所有文件访问 · 存储权限 · SAF 授权", R.drawable.ic_lock, v -> {
@@ -3135,6 +3142,24 @@ public class FileManagerModule extends HyVqModule {
         }));
         btns.addView(textButton("关闭", v -> UiKit.dismissWithAnim(d)));
         d.show();
+    }
+
+    /** 打开内置终端，工作目录继承活跃窗格当前路径 */
+    private void openTerminal() {
+        try {
+            String dir = (active != null && active.path != null) ? active.path : "/sdcard";
+            // SAF 路径（content://）不能作为工作目录，退回 /sdcard
+            if (dir.startsWith("content://")) dir = "/sdcard";
+            Intent i = new Intent(ctx, com.aliya.hyfilemgr.terminal.TerminalActivity.class);
+            i.putExtra(com.aliya.hyfilemgr.terminal.TerminalActivity.EXTRA_WORKDIR, dir);
+            i.putExtra(com.aliya.hyfilemgr.terminal.TerminalActivity.EXTRA_TITLE,
+                    dir.substring(dir.lastIndexOf('/') + 1).isEmpty()
+                            ? "终端" : "终端 · " + dir.substring(dir.lastIndexOf('/') + 1));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(i);
+        } catch (Throwable t) {
+            UiKit.toast(ctx, "无法打开终端：" + t.getMessage());
+        }
     }
 
     /** 个性化设置页：显示密度(DPI) + 列表文件密度（均为进度条式） */
