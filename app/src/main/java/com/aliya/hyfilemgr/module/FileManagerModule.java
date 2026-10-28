@@ -5654,57 +5654,88 @@ public class FileManagerModule extends HyVqModule {
                     : FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider",
                     new File(pathOrUri));
             final String mime = mimeOf(extOf(name));
-            // ── 列出所有可能的打开方式（不局限于本文件 MIME）──
-            // 1) 先按文件真实 MIME 查（精确匹配）
-            // 2) 再按 */* 查（兜底，覆盖只声明通配的应用）
-            // 合并去重，排除本应用自身，交给用户自行选择。
-            java.util.LinkedHashMap<String, android.content.pm.ResolveInfo> merged =
-                    new java.util.LinkedHashMap<>();
+            // ── 列出设备上**所有已安装应用**（不限系统/第三方、不限 MIME）──
+            // 每个应用标注是否能处理此文件类型：
+            //   ① 先统计声明了本 MIME（或 */*）的应用 → 可打开，排在前面
+            //   ② 其余全部应用也列出（点击时尝试用 VIEW intent 打开）
+            // 排除本应用自身。
+            java.util.Set<String> canHandle = new java.util.HashSet<>();
             java.util.List<Intent> probes = new java.util.ArrayList<>();
             if (mime != null && !mime.isEmpty()) {
                 Intent exact = new Intent(Intent.ACTION_VIEW);
                 exact.setDataAndType(uri, mime);
                 probes.add(exact);
             }
-            Intent any = new Intent(Intent.ACTION_VIEW);
-            any.setDataAndType(uri, "*/*");
-            probes.add(any);
-
+            Intent anyProbe = new Intent(Intent.ACTION_VIEW);
+            anyProbe.setDataAndType(uri, "*/*");
+            probes.add(anyProbe);
             for (Intent probe : probes) {
-                java.util.List<android.content.pm.ResolveInfo> list;
                 try {
-                    list = ctx.getPackageManager().queryIntentActivities(probe,
-                            android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
+                    for (android.content.pm.ResolveInfo ri
+                            : ctx.getPackageManager().queryIntentActivities(probe, 0)) {
+                        if (ri.activityInfo != null) canHandle.add(ri.activityInfo.packageName);
+                    }
                 } catch (Throwable ignored) {
-                    list = ctx.getPackageManager().queryIntentActivities(probe, 0);
-                }
-                for (android.content.pm.ResolveInfo ri : list) {
-                    if (ri.activityInfo == null) continue;
-                    // 排除本应用（避免「用自己的内置方式打开」重复出现）
-                    if (ctx.getPackageName().equals(ri.activityInfo.packageName)) continue;
-                    String key = ri.activityInfo.packageName + "/" + ri.activityInfo.name;
-                    if (!merged.containsKey(key)) merged.put(key, ri);
                 }
             }
 
-            final java.util.List<android.content.pm.ResolveInfo> apps =
-                    new java.util.ArrayList<>(merged.values());
-            if (apps.isEmpty()) {
-                parent.addView(hintText("系统未找到可打开文件的应用", variant));
-                parent.addView(hintText("可能尚未授予「所有文件访问」，或设备没有安装可处理该类型文件的应用。", variant));
-                LinearLayout act0 = new LinearLayout(ctx);
-                act0.setGravity(android.view.Gravity.CENTER_VERTICAL);
-                LinearLayout.LayoutParams act0Lp = new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT);
-                act0Lp.topMargin = dp(8);
-                parent.addView(act0, act0Lp);
-                act0.addView(textButton("申请所有文件访问", v -> {
-                    dialog.dismiss();
-                    requestAllFilesAccess();
-                }));
+            // 取所有已安装应用
+            java.util.List<android.content.pm.ApplicationInfo> allApps;
+            try {
+                allApps = ctx.getPackageManager().getInstalledApplications(
+                        android.content.pm.PackageManager.GET_META_DATA);
+            } catch (Throwable t) {
+                allApps = new java.util.ArrayList<>();
+            }
+            // 自己实现的简单容器：包名 → ApplicationInfo，同时记录能否处理
+            final java.util.List<android.content.pm.ApplicationInfo> ordered =
+                    new java.util.ArrayList<>();
+            final java.util.Map<String, Boolean> handleMap = new java.util.HashMap<>();
+            for (android.content.pm.ApplicationInfo ai : allApps) {
+                if (ctx.getPackageName().equals(ai.packageName)) continue;   // 排除自身
+                boolean can = canHandle.contains(ai.packageName);
+                ordered.add(ai);
+                handleMap.put(ai.packageName, can);
+            }
+            // 能处理的排前面
+            ordered.sort((a, b) -> {
+                boolean ha = Boolean.TRUE.equals(handleMap.get(a.packageName));
+                boolean hb = Boolean.TRUE.equals(handleMap.get(b.packageName));
+                if (ha != hb) return ha ? -1 : 1;
+                try {
+                    String la = ctx.getPackageManager().getApplicationLabel(a).toString();
+                    String lb = ctx.getPackageManager().getApplicationLabel(b).toString();
+                    return la.compareToIgnoreCase(lb);
+                } catch (Throwable t) {
+                    return 0;
+                }
+            });
+
+            if (ordered.isEmpty()) {
+                parent.addView(hintText("设备上没有找到可用的应用", variant));
                 return;
             }
+            // 提示：能处理的有几个
+            int canCount = 0;
+            for (android.content.pm.ApplicationInfo ai : ordered) {
+                if (Boolean.TRUE.equals(handleMap.get(ai.packageName))) canCount++;
+            }
+            parent.addView(hintText("共 " + ordered.size() + " 个应用，其中 "
+                    + canCount + " 个声明支持此类型（已置顶）", variant));
+
+            // 把 ApplicationInfo 包装成与下面循环兼容的 ResolveInfo
+            final java.util.List<android.content.pm.ResolveInfo> apps =
+                    new java.util.ArrayList<>();
+            for (android.content.pm.ApplicationInfo ai : ordered) {
+                android.content.pm.ResolveInfo ri = new android.content.pm.ResolveInfo();
+                ri.activityInfo = new android.content.pm.ActivityInfo();
+                ri.activityInfo.packageName = ai.packageName;
+                ri.activityInfo.name = "";
+                ri.activityInfo.applicationInfo = ai;
+                ri.activityInfo.exported = true;
+                apps.add(ri);
+            }
+            if (apps.isEmpty()) return;
             for (final android.content.pm.ResolveInfo ri : apps) {
                 LinearLayout row = new LinearLayout(ctx);
                 row.setOrientation(LinearLayout.HORIZONTAL);
@@ -5754,16 +5785,35 @@ public class FileManagerModule extends HyVqModule {
 
                 row.setOnClickListener(v -> {
                     dialog.dismiss();
+                    String pkg = ri.activityInfo.packageName;
+                    String act = ri.activityInfo.name;
+                    boolean canOpenThis = Boolean.TRUE.equals(handleMap.get(pkg));
+                    // 1) 该应用声明了能处理此类型 → 直接指定 Component 打开
+                    if (canOpenThis && act != null && !act.isEmpty()) {
+                        try {
+                            Intent i = new Intent(Intent.ACTION_VIEW);
+                            i.setComponent(new android.content.ComponentName(pkg, act));
+                            i.setDataAndType(uri, mime == null ? "*/*" : mime);
+                            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                    | Intent.FLAG_ACTIVITY_NEW_TASK);
+                            ctx.startActivity(i);
+                            return;
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    // 2) 未声明处理 → 用包名拉起该应用主界面（用户自行在其内选择文件）
                     try {
-                        Intent i = new Intent(Intent.ACTION_VIEW);
-                        i.setComponent(new android.content.ComponentName(
-                                ri.activityInfo.packageName, ri.activityInfo.name));
-                        i.setDataAndType(uri, mime == null ? "*/*" : mime);
-                        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
-                                | Intent.FLAG_ACTIVITY_NEW_TASK);
+                        Intent i = ctx.getPackageManager()
+                                .getLaunchIntentForPackage(pkg);
+                        if (i == null) {
+                            UiKit.toast(ctx, "该应用没有可启动的界面");
+                            return;
+                        }
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                         ctx.startActivity(i);
+                        UiKit.toast(ctx, "已启动应用，请在其中选择打开该文件");
                     } catch (Throwable t) {
-                        UiKit.toast(ctx, "打开失败：" + t.getMessage());
+                        UiKit.toast(ctx, "启动失败：" + t.getMessage());
                     }
                 });
             }
