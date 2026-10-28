@@ -368,6 +368,11 @@ public class FileManagerModule extends HyVqModule {
         // 插进流式布局会占据高度，退场下移时让出的空间变成空白（看不到文件），
         // 同时布局重排还会与位移动画打架产生回弹。
         FrameLayout contentWrap = new FrameLayout(ctx);
+        // 关闭裁剪 + 固定软件层：opBar 用 elevation 浮在列表上时会提升为独立
+        // GPU 合成层，升降动画期间与列表层反复合并/分离，表现为覆盖区域
+        // 「突然出现/消失」。禁用子 View 裁剪并让 contentWrap 保持单一图层可消除。
+        contentWrap.setClipChildren(false);
+        contentWrap.setClipToPadding(false);
         contentWrap.addView(buildContent(), new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         body.addView(contentWrap, new LinearLayout.LayoutParams(
@@ -1072,7 +1077,9 @@ public class FileManagerModule extends HyVqModule {
         opBar.setPadding(pad, dp(8), pad, dp(8));
         // LayoutParams 由外层 FrameLayout 指定（底部对齐叠加）
         opBar.setVisibility(View.GONE);
-        opBar.setElevation(dp(8));
+        // 不用 elevation：elevation 会让 opBar 提升为独立渲染层，
+        // 动画期间与下方列表层的合成顺序变化会造成闪烁。
+        // 改用不透明底色 + 描边保证可辨识度。
 
         // ── 第一行：已选计数 ──
         opCount = new TextView(ctx);
