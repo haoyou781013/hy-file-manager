@@ -5679,7 +5679,8 @@ public class FileManagerModule extends HyVqModule {
                 }
             }
 
-            // 取所有已安装应用
+            // 取所有已安装应用，并过滤掉「无启动界面」的包
+            // （系统服务 / 字体包 / 共享库 / 资源包等，表现为空名称 + 默认图标）
             java.util.List<android.content.pm.ApplicationInfo> allApps;
             try {
                 allApps = ctx.getPackageManager().getInstalledApplications(
@@ -5687,13 +5688,29 @@ public class FileManagerModule extends HyVqModule {
             } catch (Throwable t) {
                 allApps = new java.util.ArrayList<>();
             }
-            // 自己实现的简单容器：包名 → ApplicationInfo，同时记录能否处理
             final java.util.List<android.content.pm.ApplicationInfo> ordered =
                     new java.util.ArrayList<>();
             final java.util.Map<String, Boolean> handleMap = new java.util.HashMap<>();
+            final android.content.pm.PackageManager pm = ctx.getPackageManager();
             for (android.content.pm.ApplicationInfo ai : allApps) {
                 if (ctx.getPackageName().equals(ai.packageName)) continue;   // 排除自身
+                // ① 必须有可启动界面（过滤系统组件包）
+                Intent launch = null;
+                try {
+                    launch = pm.getLaunchIntentForPackage(ai.packageName);
+                } catch (Throwable ignored) {
+                }
                 boolean can = canHandle.contains(ai.packageName);
+                // ② 没有启动界面且也不声明能处理本类型 → 跳过
+                if (launch == null && !can) continue;
+                // ③ 名称必须非空（再兜一层，过滤无标签的内部包）
+                String label = null;
+                try {
+                    CharSequence cs = pm.getApplicationLabel(ai);
+                    if (cs != null) label = cs.toString();
+                } catch (Throwable ignored) {
+                }
+                if (label == null || label.trim().isEmpty()) continue;
                 ordered.add(ai);
                 handleMap.put(ai.packageName, can);
             }
