@@ -85,8 +85,13 @@ public final class ThumbLoader {
      * @param iv  目标 ImageView（会在加载完成时校验其 tag 防错位）
      * @param key 缓存键：优先用文件绝对路径 + mtime（文件变了自动失效）
      */
+    /** 解码失败时的回调（由调用方回退为类型图标） */
+    public interface OnFail {
+        void onFail(ImageView iv);
+    }
+
     public static void load(Context ctx, final ImageView iv, final String path,
-                            final String name, final long mtime) {
+                            final String name, final long mtime, final OnFail onFail) {
         if (iv == null || path == null) return;
         final String cacheKey = path + "@" + mtime;
         iv.setTag(cacheKey);
@@ -113,7 +118,14 @@ public final class ThumbLoader {
                 if (out != null) writeDisk(app, cacheKey, out);
             }
             final Bitmap fin = out;
-            if (fin == null) return;
+            if (fin == null) {
+                // 解码失败：通知调用方回退类型图标，避免留下空白
+                MAIN.post(() -> {
+                    if (!cacheKey.equals(iv.getTag())) return;
+                    if (onFail != null) onFail.onFail(iv);
+                });
+                return;
+            }
             MAIN.post(() -> {
                 // 防错位：加载完成时 ImageView 已被复用为别的条目 → 丢弃
                 if (!cacheKey.equals(iv.getTag())) return;
@@ -125,6 +137,12 @@ public final class ThumbLoader {
     }
 
     // ── 解码 ──
+
+    /** 兼容旧调用：不关心失败 */
+    public static void load(Context ctx, ImageView iv, String path,
+                            String name, long mtime) {
+        load(ctx, iv, path, name, mtime, null);
+    }
 
     private static Bitmap decode(Context ctx, String path, String name) {
         String low = name == null ? path.toLowerCase(Locale.ROOT)

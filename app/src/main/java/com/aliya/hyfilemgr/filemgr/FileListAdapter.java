@@ -122,7 +122,18 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         boolean useThumb = thumbsEnabled && !e.parent && !e.virtual
                 && !e.isDir() && ThumbLoader.supports(e.name);
         if (useThumb) {
-            ThumbLoader.load(context, h.icon, e.path, e.name, e.lastModified);
+            // 先显示类型图标兜底，解码成功后覆盖；
+            // 解码失败保持类型图标（ThumbLoader 内部会先清空，故这里要重设）
+            h.icon.setColorFilter(null);
+            h.icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            h.icon.setImageResource(iconRes(e));
+            ThumbLoader.load(context, h.icon, e.path, e.name, e.lastModified,
+                    iv -> {
+                        // 回退：重新贴上类型图标
+                        iv.setColorFilter(null);
+                        iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
+                        iv.setImageResource(iconRes(e));
+                    });
         } else {
             h.icon.setColorFilter(null);
             h.icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
