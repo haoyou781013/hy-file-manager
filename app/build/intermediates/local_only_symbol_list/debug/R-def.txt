@@ -35,6 +35,7 @@ drawable ic_category
 drawable ic_checklist
 drawable ic_chevron_left
 drawable ic_chevron_right
+drawable ic_close
 drawable ic_compress
 drawable ic_copy
 drawable ic_cut

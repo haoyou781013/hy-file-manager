@@ -3136,6 +3136,7 @@ drawable ic_chevron_left
 drawable ic_chevron_right
 drawable ic_clear_black_24
 drawable ic_clock_black_24dp
+drawable ic_close
 drawable ic_compress
 drawable ic_copy
 drawable ic_cut

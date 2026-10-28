@@ -880,13 +880,116 @@ public class FileManagerModule extends HyVqModule {
             }
         });
         // 轻点窗格任意位置（含空白）即切焦点 —— 同步键高亮依赖 active
-        rv.setOnTouchListener((v, ev) -> {
-            if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN && active != p) {
-                setActive(p);
-            }
-            return false;   // 不消费，正常传递给条目点击/滚动
-        });
+        attachSwipeToSelect(rv, p);
         return rv;
+    }
+
+    /** 横滑进入多选的触发阈值（dp） */
+    private static final int SWIPE_SELECT_DP = 72;
+
+    /**
+     * 横向滑动进入多选。
+     *
+     * <p>手指在列表上横向移动超过 {@link #SWIPE_SELECT_DP} 后松手，
+     * 进入多选并选中滑动起点所在的行。手势过程中被滑动的条目会跟随
+     * 手指轻微位移（最大 28dp）并逐级加深蓝色边框，形成「正在拾起」的
+     * 实时反馈；未达阈值则回弹归位。</p>
+     */
+    private void attachSwipeToSelect(final RecyclerView rv, final Pane p) {
+        final float threshold = dp(SWIPE_SELECT_DP);
+        final float maxShift = dp(28);
+        final float[] downX = {0f};
+        final float[] downY = {0f};
+        final int[] touchPos = {-1};
+        final View[] shifting = {null};
+        final boolean[] decided = {false};
+
+        rv.setOnTouchListener((v, ev) -> {
+            switch (ev.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN: {
+                    if (active != p) setActive(p);
+                    downX[0] = ev.getX();
+                    downY[0] = ev.getY();
+                    decided[0] = false;
+                    shifting[0] = null;
+                    touchPos[0] = positionAt(rv, ev);
+                    return false;
+                }
+                case android.view.MotionEvent.ACTION_MOVE: {
+                    if (decided[0] || multiMode) return false;
+                    float dx = ev.getX() - downX[0];
+                    float dy = ev.getY() - downY[0];
+                    // 纵向意图明显 → 放弃本次手势（交给列表滚动）
+                    if (!decided[0] && Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > dp(12)) {
+                        decided[0] = true;
+                        return false;
+                    }
+                    if (Math.abs(dx) < dp(6)) return false;
+                    float shift = Math.max(-maxShift, Math.min(maxShift, dx));
+                    if (shifting[0] == null && touchPos[0] >= 0) {
+                        RecyclerView.ViewHolder vh =
+                                rv.findViewHolderForAdapterPosition(touchPos[0]);
+                        if (vh != null) shifting[0] = vh.itemView;
+                    }
+                    if (shifting[0] != null) {
+                        shifting[0].setTranslationX(shift);
+                        float progress = Math.min(1f, Math.abs(dx) / threshold);
+                        shifting[0].setAlpha(1f - 0.25f * progress);
+                    }
+                    return false;
+                }
+                case android.view.MotionEvent.ACTION_UP: {
+                    float dx = ev.getX() - downX[0];
+                    final View target = shifting[0];
+                    shifting[0] = null;
+                    if (multiMode || target == null) return false;
+                    if (Math.abs(dx) >= threshold && touchPos[0] >= 0) {
+                        // ── 达到阈值：松手进入多选 ──
+                        final FileEntry sel = entryAt(p, touchPos[0]);
+                        target.animate().translationX(0f).alpha(1f)
+                                .setDuration(140).start();
+                        if (sel != null) {
+                            p.selected.add(sel);
+                            enterMultiMode();
+                            p.adapter.setSelected(p.selected);
+                            updateOpBar();
+                        }
+                        return true;
+                    }
+                    // ── 未达阈值：回弹 ──
+                    target.animate().translationX(0f).alpha(1f)
+                            .setDuration(180)
+                            .setInterpolator(new android.view.animation.OvershootInterpolator(2f))
+                            .start();
+                    return false;
+                }
+                case android.view.MotionEvent.ACTION_CANCEL: {
+                    if (shifting[0] != null) {
+                        shifting[0].animate().translationX(0f).alpha(1f)
+                                .setDuration(160).start();
+                        shifting[0] = null;
+                    }
+                    return false;
+                }
+                default:
+                    return false;
+            }
+        });
+    }
+
+    /** 屏幕坐标 → RecyclerView 适配器位置；越界返回 -1 */
+    private int positionAt(RecyclerView rv, android.view.MotionEvent ev) {
+        View child = rv.findChildViewUnder(ev.getX(), ev.getY());
+        if (child == null) return -1;
+        return rv.getChildAdapterPosition(child);
+    }
+
+    /** 取窗格内指定位置的条目；越界返回 null */
+    private FileEntry entryAt(Pane p, int pos) {
+        if (p == null || p.entries == null) return null;
+        if (pos < 0 || pos >= p.entries.size()) return null;
+        FileEntry e = p.entries.get(pos);
+        return (e == null || e.parent) ? null : e;
     }
 
     /** 剪贴板栏：复制/剪切后出现，支持粘贴/清空 */
@@ -915,28 +1018,104 @@ public class FileManagerModule extends HyVqModule {
         return clipBar;
     }
 
-    /** 多选操作栏：全选/复制/剪切/删除/取消（作用于活跃窗格） */
+    /**
+     * 多选底部功能栏（重构版）。
+     *
+     * <p>结构：左侧「已选 N 项」计数 + 右侧 6 个图标动作
+     * （全选 / 复制 / 剪切 / 删除 / 更多 / 关闭）。图标卡片式、等宽分布，
+     * 进出场带位移 + 透明度 + 轻微回弹动画。</p>
+     */
     private View buildOpBar() {
         opBar = new LinearLayout(ctx);
-        opBar.setOrientation(LinearLayout.HORIZONTAL);
-        opBar.setGravity(Gravity.CENTER);
-        int bg = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimaryContainer);
-        opBar.setBackground(UiKit.rounded(ctx, 14, bg, 0));
-        int pad = dp(6);
-        opBar.setPadding(pad, pad, pad, pad);
+        opBar.setOrientation(LinearLayout.VERTICAL);
+        int surface = UiKit.color(ctx,
+                com.google.android.material.R.attr.colorSurfaceContainerHigh);
+        int stroke = UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimary);
+        opBar.setBackground(UiKit.rounded(ctx, 16, surface, stroke));
+        int pad = dp(10);
+        opBar.setPadding(pad, dp(8), pad, dp(8));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.topMargin = dp(6);
         opBar.setLayoutParams(lp);
         opBar.setVisibility(View.GONE);
+        opBar.setElevation(dp(6));
 
-        opBar.addView(textButton("全选", v -> selectAll()));
-        opBar.addView(textButton("复制", v -> clipboardCopy(false)));
-        opBar.addView(textButton("剪切", v -> clipboardCopy(true)));
-        opBar.addView(textButton("删除", v -> deleteSelected()));
-        opBar.addView(textButton("取消", v -> exitMultiMode()));
+        // ── 第一行：已选计数 ──
+        opCount = new TextView(ctx);
+        opCount.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        opCount.setTypeface(null, android.graphics.Typeface.BOLD);
+        opCount.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimary));
+        opCount.setText("已选 0 项");
+        opBar.addView(opCount);
+
+        // ── 第二行：动作网格 ──
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rowLp.topMargin = dp(6);
+        opBar.addView(row, rowLp);
+
+        row.addView(opAction(R.drawable.ic_checklist, "全选", v -> selectAll()));
+        row.addView(opAction(R.drawable.ic_copy, "复制", v -> clipboardCopy(false)));
+        row.addView(opAction(R.drawable.ic_cut, "剪切", v -> clipboardCopy(true)));
+        row.addView(opAction(R.drawable.ic_trash, "删除", v -> deleteSelected()));
+        row.addView(opAction(R.drawable.ic_more_vert, "更多", v -> showMoreMenu(opBar)));
+        row.addView(opAction(R.drawable.ic_close, "关闭", v -> exitMultiMode()));
+
         return opBar;
     }
+
+    /**
+     * 多选栏内的单个图标动作：图标在上、文字在下，等宽 weight=1。
+     */
+    private View opAction(int iconRes, String label, View.OnClickListener onClick) {
+        LinearLayout cell = new LinearLayout(ctx);
+        cell.setOrientation(LinearLayout.VERTICAL);
+        cell.setGravity(Gravity.CENTER);
+        cell.setPadding(dp(2), dp(6), dp(2), dp(4));
+        cell.setBackgroundResource(R.drawable.bg_ripple_round);
+        cell.setClickable(true);
+        cell.setFocusable(true);
+        cell.setOnClickListener(v -> {
+            v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(70)
+                    .withEndAction(() -> v.animate().scaleX(1f).scaleY(1f)
+                            .setDuration(140)
+                            .setInterpolator(new android.view.animation.OvershootInterpolator(2.5f))
+                            .start())
+                    .start();
+            onClick.onClick(v);
+        });
+
+        ImageView ic = new ImageView(ctx);
+        ic.setImageResource(iconRes);
+        ic.setColorFilter(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        cell.addView(ic, new LinearLayout.LayoutParams(dp(22), dp(22)));
+
+        TextView tv = new TextView(ctx);
+        tv.setText(label);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tv.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tv.setGravity(Gravity.CENTER);
+        tv.setSingleLine(true);
+        LinearLayout.LayoutParams tvLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tvLp.topMargin = dp(4);
+        cell.addView(tv, tvLp);
+
+        cell.setLayoutParams(new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        return cell;
+    }
+
+    /** 多选栏左侧计数文本 */
+    private TextView opCount;
 
     /** 底部状态栏：活跃窗格的文件夹数 · 文件数 · 存储 */
 
@@ -1779,6 +1958,11 @@ public class FileManagerModule extends HyVqModule {
     }
 
     private void updateOpBar() {
+        if (opCount != null) {
+            int n = active == null || active.selected == null ? 0 : active.selected.size();
+            opCount.setText("已选 " + n + " 项");
+        }
+
         if (opBar == null) return;
         opBar.setVisibility(multiMode ? View.VISIBLE : View.GONE);
     }
@@ -1975,9 +2159,20 @@ public class FileManagerModule extends HyVqModule {
     // ── 多选（作用于活跃窗格） ──
 
     private void enterMultiMode() {
+        boolean wasMulti = multiMode;
         multiMode = true;
         for (Pane p : panes) p.adapter.setMultiMode(true);
         updateOpBar();
+        // 首次进入才播进场动画（后续勾选不重播）
+        if (!wasMulti && opBar != null) {
+            opBar.setTranslationY(dp(24));
+            opBar.setAlpha(0f);
+            opBar.setVisibility(View.VISIBLE);
+            opBar.animate().translationY(0f).alpha(1f)
+                    .setDuration(220)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                    .start();
+        }
         // ⭐10 Material 规范：多选模式下隐藏 FAB（底部操作栏接管操作）
         if (fabNew != null) fabNew.setVisibility(View.GONE);
         // 多选底栏「替换」而非「叠加」底部导航栏：
@@ -1991,7 +2186,14 @@ public class FileManagerModule extends HyVqModule {
             p.selected.clear();
             p.adapter.setMultiMode(false);
         }
-        if (opBar != null) opBar.setVisibility(View.GONE);
+        if (opBar != null && opBar.getVisibility() == View.VISIBLE) {
+            opBar.animate().translationY(dp(24)).alpha(0f).setDuration(160)
+                    .withEndAction(() -> {
+                        opBar.setVisibility(View.GONE);
+                        opBar.setTranslationY(0f);
+                        opBar.setAlpha(1f);
+                    }).start();
+        }
         // 退出多选恢复 FAB 与活跃窗格状态栏
         if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
         // 同步恢复底部导航栏（与 enterMultiMode 的隐藏成对）

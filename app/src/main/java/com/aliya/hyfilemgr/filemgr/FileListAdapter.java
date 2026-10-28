@@ -112,12 +112,13 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         h.name.setText(e.name);
         h.sub.setText(buildSub(e));
         boolean checked = selected != null && selected.contains(e);
-        h.check.setVisibility(multiMode ? View.VISIBLE : View.GONE);
-        h.check.setChecked(checked);
         int surface = checked
                 ? UiKit.color(context, com.google.android.material.R.attr.colorPrimaryContainer)
                 : UiKit.color(context, com.google.android.material.R.attr.colorSurfaceContainerLow);
         h.itemView.setBackground(makeBg(surface, checked));
+        // 选中态轻微内缩 + 放大反馈，配合蓝色边框形成「被拿起」的观感
+        h.itemView.setScaleX(checked ? 0.985f : 1f);
+        h.itemView.setScaleY(checked ? 0.985f : 1f);
         // 缩略图优先（图片/视频首帧/APK 图标）；无缩略图或开关关闭 → 回退类型图标
         boolean useThumb = thumbsEnabled && !e.parent && !e.virtual
                 && !e.isDir() && ThumbLoader.supports(e.name);
@@ -260,8 +261,11 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         row.setLayoutParams(new RecyclerView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        // 多选不再显示勾选框：选中态完全由「蓝底 + 蓝边框」表达。
+        // 仍保留一个不可见占位以满足 ViewHolder 字段，宽度 0 不占空间。
         CheckBox check = new CheckBox(context);
-        LinearLayout.LayoutParams checkLp = new LinearLayout.LayoutParams(dp(36), dp(36));
+        check.setVisibility(View.GONE);
+        LinearLayout.LayoutParams checkLp = new LinearLayout.LayoutParams(0, 0);
         row.addView(check, checkLp);
 
         ImageView icon = new ImageView(context);
@@ -318,13 +322,19 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         return row;
     }
 
+    /**
+     * 行背景。
+     *
+     * <p>选中态 = 主色淡填充 + 2dp 主色边框（替代原有的勾选框，
+     * 用「整行被蓝色框住」表达选中）。未选中态只有圆角填充、无边框。</p>
+     */
     private GradientDrawable makeBg(int fill, boolean checked) {
         GradientDrawable gd = new GradientDrawable();
         gd.setCornerRadius(dp(14));
         gd.setColor(fill);
-        // 仅选中时加描边（未选中无描边，避免影响观感）
         if (checked) {
-            gd.setStroke(dp(1), UiKit.color(context, com.google.android.material.R.attr.colorPrimary));
+            gd.setStroke(dp(2), UiKit.color(context,
+                    com.google.android.material.R.attr.colorPrimary));
         }
         return gd;
     }

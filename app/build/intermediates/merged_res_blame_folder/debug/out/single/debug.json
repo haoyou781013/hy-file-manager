@@ -1,11 +1,11 @@
 [
     {
-        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/mipmap-xhdpi_ic_launcher.png.flat",
-        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/mipmap-xhdpi/ic_launcher.png"
-    },
-    {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_pause.xml.flat",
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_pause.xml"
+    },
+    {
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/mipmap-xhdpi_ic_launcher.png.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/mipmap-xhdpi/ic_launcher.png"
     },
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_rename.xml.flat",
@@ -104,8 +104,8 @@
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_audio.xml"
     },
     {
-        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_font.xml.flat",
-        "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_font.xml"
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_font.xml.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_font.xml"
     },
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/anim_popup_in.xml.flat",
@@ -226,6 +226,10 @@
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_trash.xml.flat",
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_trash.xml"
+    },
+    {
+        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_close.xml.flat",
+        "source": "com.aliya.hyfilemgr.app-main-37:/drawable/ic_close.xml"
     },
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_bg_player_scrim_top.xml.flat",
