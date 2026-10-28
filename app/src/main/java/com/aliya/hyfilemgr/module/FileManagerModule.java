@@ -1197,7 +1197,9 @@ public class FileManagerModule extends HyVqModule {
         bottomNav.setOrientation(LinearLayout.HORIZONTAL);
         bottomNav.setGravity(Gravity.CENTER);
         int bg = UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow);
-        bottomNav.setBackground(UiKit.rounded(ctx, 14, bg, 0));
+        // 加主色描边：与多选栏视觉统一，浮在列表上时也有清晰边界
+        int navStroke = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
+        bottomNav.setBackground(UiKit.rounded(ctx, 16, bg, navStroke));
         int pad = dp(4);
         bottomNav.setPadding(pad, dp(1), pad, dp(1));
         // LayoutParams 由外层 FrameLayout 指定（底部叠加，与 opBar 同位）
