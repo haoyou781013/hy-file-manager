@@ -393,7 +393,8 @@ public class FileManagerModule extends HyVqModule {
         contentWrap.setClipChildren(false);
         contentWrap.setClipToPadding(false);
         contentWrapRef = contentWrap;
-        contentWrap.addView(buildContent(), new FrameLayout.LayoutParams(
+        fileContentView = buildContent();
+        contentWrap.addView(fileContentView, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         body.addView(contentWrap, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -3145,16 +3146,21 @@ public class FileManagerModule extends HyVqModule {
         d.show();
     }
 
-    /** 内容区容器引用（终端面板等叠加层挂在这里） */
+    /** 内容区容器引用（文件视图 / 终端面板共存于此，靠 visibility 切换） */
     private FrameLayout contentWrapRef;
+
+    /** 文件列表主视图（切到终端时隐藏） */
+    private View fileContentView;
 
     /** 终端面板（内置，同一 Activity 内叠加显示） */
     private com.aliya.hyfilemgr.terminal.TerminalPanel terminalPanel;
 
     /**
-     * 打开内置终端面板（不切 Activity，直接叠在内容区上）。
+     * 切换终端视图（与文件列表互斥显示，不切 Activity）。
      *
-     * <p>工作目录继承活跃窗格当前路径；SAF 路径退回 /sdcard。</p>
+     * <p>与文件列表同处 contentWrap，通过 visibility 切换：
+     * 终端不是浮层，而是像文件列表一样占满内容区的独立视图。
+     * 顶栏由 TerminalPanel 自己提供（「终端 | 当前pwd」）。</p>
      */
     private void openTerminal() {
         try {
@@ -3162,7 +3168,7 @@ public class FileManagerModule extends HyVqModule {
                 UiKit.toast(ctx, "界面未就绪");
                 return;
             }
-            // 已打开 → 收起
+            // 已在终端 → 切回文件列表
             if (terminalPanel != null) {
                 closeTerminal();
                 return;
@@ -3173,46 +3179,48 @@ public class FileManagerModule extends HyVqModule {
             terminalPanel = new com.aliya.hyfilemgr.terminal.TerminalPanel(
                     ctx, dir, this::closeTerminal);
             View pv = terminalPanel.getView();
-            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+            contentWrapRef.addView(pv, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT);
-            pv.setAlpha(0f);
-            pv.setTranslationY(dp(16));
-            contentWrapRef.addView(pv, lp);
-            pv.getViewTreeObserver().addOnPreDrawListener(
-                    new android.view.ViewTreeObserver.OnPreDrawListener() {
-                @Override
-                public boolean onPreDraw() {
-                    android.view.ViewTreeObserver cur = pv.getViewTreeObserver();
-                    if (!cur.isAlive()) return true;
-                    cur.removeOnPreDrawListener(this);
-                    pv.setAlpha(0f);
-                    pv.setTranslationY(dp(16));
-                    pv.animate().alpha(1f).translationY(0f).setDuration(200)
-                            .setInterpolator(new android.view.animation.DecelerateInterpolator())
-                            .start();
-                    return true;
-                }
-            });
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+
+            // 互斥：隐藏文件视图 + 底部两栏
+            if (fileContentView != null) fileContentView.setVisibility(View.GONE);
+            if (opBar != null) opBar.setVisibility(View.GONE);
+            if (bottomNav != null) bottomNav.setVisibility(View.GONE);
+            if (fabNew != null) fabNew.setVisibility(View.GONE);
+
+            // 直接可见（不做位移动画，与文件列表同级切换）
+            pv.setAlpha(1f);
+            pv.setTranslationY(0f);
             terminalPanel.start();
+
+            // 立刻拉起键盘
+            pv.postDelayed(() -> {
+                if (terminalPanel != null) terminalPanel.requestInputFocus();
+            }, 150);
         } catch (Throwable t) {
             UiKit.toast(ctx, "无法打开终端：" + t.getMessage());
         }
     }
 
-    /** 关闭终端面板 */
+    /** 关闭终端，恢复文件列表视图 */
     private void closeTerminal() {
         if (terminalPanel == null || contentWrapRef == null) return;
         final com.aliya.hyfilemgr.terminal.TerminalPanel tp = terminalPanel;
         final View pv = tp.getView();
         terminalPanel = null;
-        pv.animate().alpha(0f).translationY(dp(16)).setDuration(160)
-                .withEndAction(() -> {
-                    contentWrapRef.removeView(pv);
-                    tp.close();
-                }).start();
-    }
+        tp.close();
+        contentWrapRef.removeView(pv);
 
+        if (fileContentView != null) fileContentView.setVisibility(View.VISIBLE);
+        if (bottomNav != null) {
+            bottomNav.setAlpha(1f);
+            bottomNav.setTranslationY(0f);
+            bottomNav.setVisibility(View.VISIBLE);
+        }
+        if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
+        if (multiMode) updateOpBar();
+    }
     /** 个性化设置页：显示密度(DPI) + 列表文件密度（均为进度条式） */
     private void showAppearanceSettings() {
         LinearLayout box = new LinearLayout(ctx);

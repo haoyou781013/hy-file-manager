@@ -308,6 +308,11 @@ public class TerminalPanel {
         }
     }
 
+    /** 供外部请求输入焦点（面板显示后自动弹键盘） */
+    public void requestInputFocus() {
+        keepFocus();
+    }
+
     /** 隐藏输入法（面板关闭前调用） */
     public void hideKeyboard() {
         if (input == null) return;
