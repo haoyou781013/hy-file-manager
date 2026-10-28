@@ -5679,7 +5679,58 @@ public class FileManagerModule extends HyVqModule {
                 });
             }
         } catch (Throwable t) {
-            parent.addView(hintText("读取系统应用失败：" + t.getMessage(), variant));
+            // 读不到文件本身（权限不足 / 路径不可访问）→ 明确告知 + 给申请入口
+            String msg = String.valueOf(t.getMessage());
+            boolean permIssue = msg.contains("Permission") || msg.contains("permission")
+                    || msg.contains("EACCES") || msg.contains("Failed to find configured root");
+            if (permIssue) {
+                parent.addView(hintText("无法读取该文件。系统打开方式需要先获得文件访问权限。", variant));
+                LinearLayout act = new LinearLayout(ctx);
+                act.setOrientation(LinearLayout.HORIZONTAL);
+                act.setGravity(android.view.Gravity.CENTER_VERTICAL);
+                LinearLayout.LayoutParams actLp = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT);
+                actLp.topMargin = dp(8);
+                parent.addView(act, actLp);
+                act.addView(textButton("申请所有文件访问", v -> {
+                    dialog.dismiss();
+                    requestAllFilesAccess();
+                }));
+                act.addView(textButton("去设置页授权", v -> {
+                    dialog.dismiss();
+                    openAppSettings();
+                }));
+            } else {
+                parent.addView(hintText("读取系统应用失败：" + msg, variant));
+                LinearLayout act = new LinearLayout(ctx);
+                act.setGravity(android.view.Gravity.CENTER_VERTICAL);
+                LinearLayout.LayoutParams actLp = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT);
+                actLp.topMargin = dp(8);
+                parent.addView(act, actLp);
+                act.addView(textButton("重试", v -> {
+                    dialog.dismiss();
+                    showOpenWithDialog(pathOrUri, name, isUri);
+                }));
+                act.addView(textButton("用内置方式打开", v -> {
+                    dialog.dismiss();
+                    openFile(new File(pathOrUri));
+                }));
+            }
+        }
+    }
+
+    /** 打开本应用的系统设置页（权限管理入口） */
+    private void openAppSettings() {
+        try {
+            Intent i = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            i.setData(Uri.parse("package:" + ctx.getPackageName()));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(i);
+        } catch (Throwable t) {
+            UiKit.toast(ctx, "无法打开系统设置：" + t.getMessage());
         }
     }
 

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 共享路径。
+  系统「打开方式」通过 content:// 把文件交给第三方应用，
+  必须覆盖用户可能打开的所有位置。
+-->
+<paths>
+    <!-- 内部存储根（/storage/emulated/0）及其子目录 -->
+    <external-path name="external" path="." />
+    <!-- 应用外部私有目录（Android/data/包名/files） -->
+    <external-files-path name="ext_files" path="." />
+    <!-- 应用缓存 -->
+    <external-cache-path name="ext_cache" path="." />
+    <!-- 应用内部 files / cache（root 中转到此） -->
+    <files-path name="files" path="." />
+    <cache-path name="cache" path="." />
+    <!-- 根目录（/，读取系统文件时用） -->
+    <root-path name="root" path="/" />
+</paths>

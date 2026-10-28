@@ -120,3 +120,4 @@ mipmap ic_launcher
 string app_name
 style AnimPopup
 style Theme.HYFileManager
+xml file_paths

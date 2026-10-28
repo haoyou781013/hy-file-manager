@@ -1,11 +1,11 @@
 [
     {
-        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/mipmap-xhdpi_ic_launcher.png.flat",
-        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/mipmap-xhdpi/ic_launcher.png"
-    },
-    {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_pause.xml.flat",
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_pause.xml"
+    },
+    {
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/mipmap-xhdpi_ic_launcher.png.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/mipmap-xhdpi/ic_launcher.png"
     },
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_rename.xml.flat",
@@ -50,6 +50,10 @@
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_terminal.xml.flat",
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_terminal.xml"
+    },
+    {
+        "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_bg_menu_card.xml.flat",
+        "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/bg_menu_card.xml"
     },
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_download.xml.flat",
@@ -220,6 +224,10 @@
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_trash.xml"
     },
     {
+        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/xml_file_paths.xml.flat",
+        "source": "com.aliya.hyfilemgr.app-main-37:/xml/file_paths.xml"
+    },
+    {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_bg_player_scrim_top.xml.flat",
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/bg_player_scrim_top.xml"
     },
@@ -286,10 +294,6 @@
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_pie_chart.xml.flat",
         "source": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-main-37:/drawable/ic_pie_chart.xml"
-    },
-    {
-        "merged": "com.aliya.hyfilemgr.app-merged_res-35:/drawable_bg_menu_card.xml.flat",
-        "source": "com.aliya.hyfilemgr.app-main-37:/drawable/bg_menu_card.xml"
     },
     {
         "merged": "/opt/toolchain/gradle-home/daemon/8.1.1/com.aliya.hyfilemgr.app-merged_res-35:/drawable_ic_grid.xml.flat",
