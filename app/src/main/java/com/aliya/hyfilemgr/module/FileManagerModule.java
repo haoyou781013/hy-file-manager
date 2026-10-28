@@ -8262,16 +8262,15 @@ public class FileManagerModule extends HyVqModule {
 
     private ImageView toolIcon(int res, View.OnClickListener onClick) {
         ImageView iv = new ImageView(ctx);
-        // 按钮盒 22 → 30 dp，容器 34 → 40 dp，间距收紧 4 dp：
-        // 此前只在原方框里调内边距，尺寸没变，看起来像没动过。这次改的是结构。
-        int size = dp(30);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(40), dp(40));
+        // 视觉：图标内容 22dp（原 30dp 偏大）；判定：容器仍 36dp（可点区域不缩）
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(36), dp(36));
         lp.setMarginStart(dp(1));
-        lp.topMargin = dp(-4);
-        lp.bottomMargin = dp(-4);
+        lp.topMargin = dp(-3);
+        lp.bottomMargin = dp(-3);
         iv.setLayoutParams(lp);
         iv.setImageResource(res);
-        iv.setPadding(dp(5), dp(5), dp(5), dp(5));
+        // 上下左右各 7dp 内边距 → 可见图标 36-14 = 22dp
+        iv.setPadding(dp(7), dp(7), dp(7), dp(7));
         iv.setColorFilter(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
         iv.setOnClickListener(onClick);
         return iv;
