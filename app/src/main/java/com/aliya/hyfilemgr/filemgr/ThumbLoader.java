@@ -150,7 +150,11 @@ public final class ThumbLoader {
         try {
             if (isImage(low)) return decodeImage(path);
             if (isVideo(low)) return decodeVideo(path);
-            if (low.endsWith(".apk")) return decodeApk(path);
+            if (low.endsWith(".apk")) {
+                Bitmap bm = decodeApk(path);
+                if (bm == null) bm = decodeApkDirect(path);
+                return bm;
+            }
         } catch (Throwable ignored) {
             // 解码失败静默（列表里保留类型图标即可，不弹错误打扰）
         }
@@ -243,6 +247,36 @@ public final class ThumbLoader {
         d.setBounds(0, 0, s, s);
         d.draw(c);
         return scaleTo(b, TARGET_PX);
+    }
+
+    /**
+     * 直接解析 APK 拿图标（不经 PackageManager）。
+     *
+     * <p>读取 AndroidManifest → android:icon 资源 id →
+     * resources.arsc 查路径 → 从 zip 取 PNG/WebP 字节解码。
+     * 当 {@link #decodeApk(String)} 失败（系统限制或包异常）时使用。</p>
+     */
+    private static Bitmap decodeApkDirect(String path) {
+        try {
+            com.aliya.hyfilemgr.apkicon.ApkIconParser.Result r =
+                    com.aliya.hyfilemgr.apkicon.ApkIconParser.parse(path);
+            if (r == null || r.data == null || r.data.length == 0) return null;
+            android.graphics.BitmapFactory.Options o =
+                    new android.graphics.BitmapFactory.Options();
+            o.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeByteArray(r.data, 0, r.data.length, o);
+            int sample = 1;
+            int big = Math.max(o.outWidth, o.outHeight);
+            while (big / (sample * 2) >= TARGET_PX) sample *= 2;
+            o.inJustDecodeBounds = false;
+            o.inSampleSize = sample;
+            Bitmap bm = android.graphics.BitmapFactory.decodeByteArray(
+                    r.data, 0, r.data.length, o);
+            if (bm == null) return null;
+            return scaleTo(bm, TARGET_PX);
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     private static Bitmap scaleTo(Bitmap src, int max) {
