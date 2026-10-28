@@ -2217,18 +2217,28 @@ public class FileManagerModule extends HyVqModule {
         // 首次进入才播进场动画（后续勾选不重播）
         if (!wasMulti && opBar != null) {
             opBar.animate().cancel();
-            opBar.setVisibility(View.VISIBLE);
             opBar.setAlpha(0f);
             opBar.setTranslationY(dp(24));
-            // 同 bottomNav：等布局完成后再动画，否则起始值被重置导致「无动画」
-            opBar.post(() -> {
-                if (opBar == null || opBar.getVisibility() != View.VISIBLE) return;
-                opBar.animate()
-                        .translationY(0f)
-                        .alpha(1f)
-                        .setDuration(220)
-                        .setInterpolator(new android.view.animation.DecelerateInterpolator())
-                        .start();
+            opBar.setVisibility(View.VISIBLE);
+            // 同 bottomNav：用 OnPreDrawListener 保证首帧就是 alpha≈0
+            final android.view.View opBarRef = opBar;
+            opBar.getViewTreeObserver().addOnPreDrawListener(
+                    new android.view.ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    android.view.ViewTreeObserver cur = opBarRef.getViewTreeObserver();
+                    if (!cur.isAlive()) return true;
+                    cur.removeOnPreDrawListener(this);
+                    opBarRef.setAlpha(0f);
+                    opBarRef.setTranslationY(dp(24));
+                    opBarRef.animate()
+                            .translationY(0f)
+                            .alpha(1f)
+                            .setDuration(220)
+                            .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                            .start();
+                    return true;
+                }
             });
         }
         // ⭐10 Material 规范：多选模式下隐藏 FAB（底部操作栏接管操作）
@@ -2272,23 +2282,37 @@ public class FileManagerModule extends HyVqModule {
     private void showBottomNavAnimated() {
         if (bottomNav == null) return;
         bottomNav.animate().cancel();
-        bottomNav.setVisibility(View.VISIBLE);
         bottomNav.setAlpha(0f);
         bottomNav.setTranslationY(dp(16));
-        // ⚠️ 必须等一帧再启动动画：
-        // setVisibility(VISIBLE) 会让 body(LinearLayout) 重新测量/布局，
-        // 布局流程会把 translationY 复位为 0、alpha 复位为 1，
-        // 若在同一帧内 animate() 会从「已归零」的状态开始，
-        // 表现为「无动画直接出现」。post 到下一帧可确保布局已完成。
-        bottomNav.post(() -> {
-            if (bottomNav == null || bottomNav.getVisibility() != View.VISIBLE) return;
-            bottomNav.animate()
-                    .translationY(0f)
-                    .alpha(1f)
-                    .setDuration(240)
-                    .setInterpolator(new android.view.animation.DecelerateInterpolator())
-                    .start();
-        });
+        bottomNav.setVisibility(View.VISIBLE);
+
+        // ⚠️ 用 OnPreDrawListener 而非 post()：
+        // setVisibility(VISIBLE) 会触发一次完整布局，布局会把 alpha/translationY
+        // 复位；而 post() 的回调可能在「布局完成后、绘制前」之外执行，
+        // 导致至少有一帧以 alpha=1 全白绘制出来（用户看到的「白色遮罩闪一下」）。
+        // OnPreDrawListener 在**绘制前**最后时刻执行：先补设初始值，再启动动画，
+        // 保证第一帧就是 alpha≈0，不会露出不透明背景。
+        final android.view.ViewTreeObserver vto = bottomNav.getViewTreeObserver();
+        final android.view.ViewTreeObserver.OnPreDrawListener[] holder =
+                new android.view.ViewTreeObserver.OnPreDrawListener[1];
+        holder[0] = new android.view.ViewTreeObserver.OnPreDrawListener() {
+            @Override
+            public boolean onPreDraw() {
+                android.view.ViewTreeObserver cur = bottomNav.getViewTreeObserver();
+                if (!cur.isAlive()) return true;
+                cur.removeOnPreDrawListener(this);
+                bottomNav.setAlpha(0f);
+                bottomNav.setTranslationY(dp(16));
+                bottomNav.animate()
+                        .translationY(0f)
+                        .alpha(1f)
+                        .setDuration(240)
+                        .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                        .start();
+                return true;   // 不取消这一帧绘制
+            }
+        };
+        vto.addOnPreDrawListener(holder[0]);
     }
 
     /** 清空选中并让列表回到非多选外观（退出多选的收尾动作） */
