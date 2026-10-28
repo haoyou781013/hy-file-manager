@@ -3746,8 +3746,9 @@ public class FileManagerModule extends HyVqModule {
         final LinearLayout localBody = new LinearLayout(ctx);
         localBody.setOrientation(LinearLayout.VERTICAL);
         localBody.setVisibility(navLocalExpanded ? View.VISIBLE : View.GONE);
-        content.addView(localBody);
+        // 顺序必须「先标题、后内容」，否则标题会出现在内容下方
         content.addView(buildCollapsibleHeader("本地", localBody, () -> navLocalExpanded));
+        content.addView(localBody);
 
         // ── 合并列表：根目录 + 内部存储 + SAF 授权目录（FCL 式"类挂载"，统一排序） ──
         List<MountEntry> entries = buildMountList();
@@ -3812,8 +3813,8 @@ public class FileManagerModule extends HyVqModule {
         toolsBody.addView(termRow, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        content.addView(toolsBody);
         content.addView(buildCollapsibleHeader("工具", toolsBody, () -> navToolsExpanded));
+        content.addView(toolsBody);
     }
 
     /** 侧边栏分组展开状态（重建时保持） */
