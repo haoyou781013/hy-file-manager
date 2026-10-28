@@ -392,6 +392,7 @@ public class FileManagerModule extends HyVqModule {
         // 「突然出现/消失」。禁用子 View 裁剪并让 contentWrap 保持单一图层可消除。
         contentWrap.setClipChildren(false);
         contentWrap.setClipToPadding(false);
+        contentWrapRef = contentWrap;
         contentWrap.addView(buildContent(), new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         body.addView(contentWrap, new LinearLayout.LayoutParams(
@@ -3144,22 +3145,72 @@ public class FileManagerModule extends HyVqModule {
         d.show();
     }
 
-    /** 打开内置终端，工作目录继承活跃窗格当前路径 */
+    /** 内容区容器引用（终端面板等叠加层挂在这里） */
+    private FrameLayout contentWrapRef;
+
+    /** 终端面板（内置，同一 Activity 内叠加显示） */
+    private com.aliya.hyfilemgr.terminal.TerminalPanel terminalPanel;
+
+    /**
+     * 打开内置终端面板（不切 Activity，直接叠在内容区上）。
+     *
+     * <p>工作目录继承活跃窗格当前路径；SAF 路径退回 /sdcard。</p>
+     */
     private void openTerminal() {
         try {
+            if (contentWrapRef == null) {
+                UiKit.toast(ctx, "界面未就绪");
+                return;
+            }
+            // 已打开 → 收起
+            if (terminalPanel != null) {
+                closeTerminal();
+                return;
+            }
             String dir = (active != null && active.path != null) ? active.path : "/sdcard";
-            // SAF 路径（content://）不能作为工作目录，退回 /sdcard
             if (dir.startsWith("content://")) dir = "/sdcard";
-            Intent i = new Intent(ctx, com.aliya.hyfilemgr.terminal.TerminalActivity.class);
-            i.putExtra(com.aliya.hyfilemgr.terminal.TerminalActivity.EXTRA_WORKDIR, dir);
-            i.putExtra(com.aliya.hyfilemgr.terminal.TerminalActivity.EXTRA_TITLE,
-                    dir.substring(dir.lastIndexOf('/') + 1).isEmpty()
-                            ? "终端" : "终端 · " + dir.substring(dir.lastIndexOf('/') + 1));
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            ctx.startActivity(i);
+
+            terminalPanel = new com.aliya.hyfilemgr.terminal.TerminalPanel(
+                    ctx, dir, this::closeTerminal);
+            View pv = terminalPanel.getView();
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT);
+            pv.setAlpha(0f);
+            pv.setTranslationY(dp(16));
+            contentWrapRef.addView(pv, lp);
+            pv.getViewTreeObserver().addOnPreDrawListener(
+                    new android.view.ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    android.view.ViewTreeObserver cur = pv.getViewTreeObserver();
+                    if (!cur.isAlive()) return true;
+                    cur.removeOnPreDrawListener(this);
+                    pv.setAlpha(0f);
+                    pv.setTranslationY(dp(16));
+                    pv.animate().alpha(1f).translationY(0f).setDuration(200)
+                            .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                            .start();
+                    return true;
+                }
+            });
+            terminalPanel.start();
         } catch (Throwable t) {
             UiKit.toast(ctx, "无法打开终端：" + t.getMessage());
         }
+    }
+
+    /** 关闭终端面板 */
+    private void closeTerminal() {
+        if (terminalPanel == null || contentWrapRef == null) return;
+        final com.aliya.hyfilemgr.terminal.TerminalPanel tp = terminalPanel;
+        final View pv = tp.getView();
+        terminalPanel = null;
+        pv.animate().alpha(0f).translationY(dp(16)).setDuration(160)
+                .withEndAction(() -> {
+                    contentWrapRef.removeView(pv);
+                    tp.close();
+                }).start();
     }
 
     /** 个性化设置页：显示密度(DPI) + 列表文件密度（均为进度条式） */

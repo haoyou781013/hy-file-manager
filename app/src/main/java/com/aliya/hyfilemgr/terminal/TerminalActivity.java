@@ -185,7 +185,16 @@ public class TerminalActivity extends Activity {
 
     private void runCommand() {
         String cmd = input.getText().toString();
+        // 清空但不失焦：setText 会让部分输入法收起，用 setSelection 保持焦点
         input.setText("");
+        input.setSelection(0);
+        input.requestFocus();
+        // 重新弹起输入法（执行后能继续输入）
+        android.view.inputmethod.InputMethodManager imm =
+                (android.view.inputmethod.InputMethodManager)
+                        getSystemService(INPUT_METHOD_SERVICE);
+        if (imm != null) imm.showSoftInput(input, 0);
+
         if (cmd.trim().isEmpty()) {
             appendOutput("$ \n");
             return;
