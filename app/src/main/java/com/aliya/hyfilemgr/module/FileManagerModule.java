@@ -5464,30 +5464,37 @@ public class FileManagerModule extends HyVqModule {
                         {"archive", "解压", "ZIP 压缩包", String.valueOf(isZipFile)},
                         {"apk", "安装", "Android 安装包", String.valueOf(isApk)},
                 };
-                // 自适应列数：横屏 4 列 / 竖屏 3 列（与长按菜单同一套规则）
-                int cols = openGridColumns();
-                LinearLayout row = new LinearLayout(ctx);
-                row.setOrientation(LinearLayout.HORIZONTAL);
-                row.setPadding(dp(-2), dp(-2), dp(-2), dp(-2));
-                int added = 0;
-                LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
-                        0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-                cardLp.setMargins(dp(2), dp(2), dp(2), dp(2));
-
-                for (String[] it : items) {
-                    if (added == cols) {
-                        listBox.addView(row);
+                // 与长按菜单同一套卡片式按键：每行 4 个，行数按数量自适应
+                final int PER_ROW = 4;
+                LinearLayout row = null;
+                for (int i = 0; i < items.length; i++) {
+                    if (i % PER_ROW == 0) {
                         row = new LinearLayout(ctx);
                         row.setOrientation(LinearLayout.HORIZONTAL);
-                        row.setPadding(dp(-2), dp(-2), dp(-2), dp(-2));
-                        added = 0;
+                        row.setGravity(android.view.Gravity.CENTER_VERTICAL);
+                        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT,
+                                LinearLayout.LayoutParams.WRAP_CONTENT);
+                        rowLp.topMargin = dp(1);
+                        listBox.addView(row, rowLp);
+                        // 补齐本行剩余空位，保证卡片等宽
+                        int remaining = Math.min(PER_ROW, items.length - i);
+                        for (int k = remaining; k < PER_ROW; k++) {
+                            View sp = new View(ctx);
+                            LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(0, 1, 1f);
+                            int gap = dp(5) / 2;
+                            spLp.setMargins(gap, gap, gap, gap);
+                            row.addView(sp, spLp);
+                        }
                     }
+                    final String[] it = items[i];
                     int res = "img".equals(it[0]) ? R.drawable.ic_img
                             : "video".equals(it[0]) ? R.drawable.ic_video
                             : "doc".equals(it[0]) ? R.drawable.ic_doc
                             : "archive".equals(it[0]) ? R.drawable.ic_archive : R.drawable.ic_apk;
-                    boolean en = Boolean.parseBoolean(it[3]);
-                    addOpenCard(row, d, res, it[1], it[2], en, () -> {
+                    final boolean en = Boolean.parseBoolean(it[3]);
+                    addGridItem(row, it[1], res, en, v -> {
+                        d.dismiss();
                         switch (it[0]) {
                             case "img": openImageViewer(pathOrUri, name, isUri); break;
                             case "video": openWithBuiltInPlayer(pathOrUri, name, isUri); break;
@@ -5496,9 +5503,7 @@ public class FileManagerModule extends HyVqModule {
                             default: installApkByName(pathOrUri, name, isUri); break;
                         }
                     });
-                    added++;
                 }
-                if (added > 0) listBox.addView(row);
             } else {
                 renderSystemOpeners(listBox, d, pathOrUri, name, isUri);
             }
@@ -5513,73 +5518,6 @@ public class FileManagerModule extends HyVqModule {
         d.show();
     }
 
-    /** 内置打开方式条目：可用则高亮可点，不适用则灰显并标注 */
-    /** 内置打开方式：自适应卡片网格（竖屏 3 列 / 横屏 4 列），与长按菜单同一套观感 */
-    private void addOpenCard(LinearLayout parent, final android.app.Dialog dialog,
-                            int iconRes, String title, String desc, boolean enabled,
-                            final Runnable action) {
-        int onSurface = UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurface);
-        int variant = UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurfaceVariant);
-        int primary = UiKit.color(ctx,
-                com.google.android.material.R.attr.colorPrimary);
-
-        LinearLayout card = new LinearLayout(ctx);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
-        card.setPadding(dp(10), dp(12), dp(10), dp(12));
-        card.setBackground(UiKit.rounded(ctx, 14,
-                enabled ? UiKit.color(ctx,
-                        com.google.android.material.R.attr.colorSurfaceContainerLow)
-                : UiKit.color(ctx,
-                        com.google.android.material.R.attr.colorSurface),
-                enabled ? UiKit.color(ctx,
-                        com.google.android.material.R.attr.colorOutlineVariant) : 0));
-
-        ImageView ic = new ImageView(ctx);
-        ic.setImageResource(iconRes);
-        int isz = dp(28);
-        ic.setLayoutParams(new LinearLayout.LayoutParams(isz, isz));
-        ic.setColorFilter(enabled ? primary : variant);
-        ic.setAlpha(enabled ? 1f : 0.35f);
-        card.addView(ic, new LinearLayout.LayoutParams(isz, isz));
-
-        TextView t = new TextView(ctx);
-        t.setText(title);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        t.setTextColor(enabled ? onSurface : variant);
-        t.setGravity(android.view.Gravity.CENTER);
-        t.setAlpha(enabled ? 1f : 0.5f);
-        t.setMaxLines(2);
-        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        card.addView(t, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        // 副标题只在不适用时显示（"不适用"），可用项不占纵向空间
-        if (!enabled) {
-            TextView dsc = new TextView(ctx);
-            dsc.setText("不适用");
-            dsc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
-            dsc.setTextColor(variant);
-            dsc.setGravity(android.view.Gravity.CENTER);
-            dsc.setAlpha(0.5f);
-            dsc.setSingleLine(true);
-            LinearLayout.LayoutParams dscLp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT);
-            dscLp.topMargin = dp(2);
-            card.addView(dsc, dscLp);
-        }
-
-        if (enabled) {
-            card.setOnClickListener(v -> {
-                dialog.dismiss();
-                action.run();
-            });
-        }
-        parent.addView(card);
-    }
 
     /** 判断网格列数：竖屏 3 列 / 横屏 4 列 */
     /**
