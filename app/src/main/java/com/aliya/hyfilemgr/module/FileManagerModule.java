@@ -2214,24 +2214,30 @@ public class FileManagerModule extends HyVqModule {
 
     private void exitMultiMode() {
         multiMode = false;
-        // ⚠️ 先播退场动画，动画结束再清选中 + 隐藏 opBar。
-        // 若先清选中，adapter.notifyDataSetChanged 会立刻改变行高/内容，
-        // 触发布局重组，与 translationY 动画叠加就会出现「先下沉再回弹」的抖动。
         final boolean animating = opBar != null && opBar.getVisibility() == View.VISIBLE;
         if (animating) {
+            // ⚠️ 关键：bottomNav 不能在动画前恢复。
+            // bottomNav 是 body(LinearLayout) 的子 View，设为 VISIBLE 会立刻
+            // 占用一行高度，把 contentWrap(weight=1) 压扁，锚在底部的 opBar
+            // 随之被顶到上方，形成「先弹上去再向下退场」的跳变。
+            // 因此：先播放位移动画（此时布局完全不变），
+            // 在动画结束的同一帧里再一次性完成所有布局变更。
             opBar.animate().translationY(dp(24)).alpha(0f).setDuration(160)
+                    .setInterpolator(new android.view.animation.AccelerateInterpolator())
                     .withEndAction(() -> {
                         opBar.setVisibility(View.GONE);
                         opBar.setTranslationY(0f);
                         opBar.setAlpha(1f);
+                        // 以下三项同一帧生效，避免中间的布局跳动被看到
+                        if (bottomNav != null) bottomNav.setVisibility(View.VISIBLE);
+                        if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
                         clearSelectionAndRefresh();
                     }).start();
         } else {
+            if (bottomNav != null) bottomNav.setVisibility(View.VISIBLE);
+            if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
             clearSelectionAndRefresh();
         }
-        // 底部导航与 FAB 同步恢复（与 opBar 的隐藏成对，不参与动画）
-        if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
-        if (bottomNav != null) bottomNav.setVisibility(View.VISIBLE);
     }
 
     /** 清空选中并让列表回到非多选外观（退出多选的收尾动作） */
