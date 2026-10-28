@@ -5505,12 +5505,14 @@ public class FileManagerModule extends HyVqModule {
             tvPage.setText(sysMode[0] ? "系统打开方式" : "内置打开方式");
             btnSwitch.setText(sysMode[0] ? "内置打开方式" : "系统打开方式");
             if (!sysMode[0]) {
+                // 全部解锁：不再按扩展名限制可用性，任何文件都可尝试任一内置方式；
+                // 打开失败时由 showOpenFailed() 弹统一提示弹窗。
                 String[][] items = {
-                        {"img", "图片查看", "双指缩放 · 拖动 · 双击还原", String.valueOf(isImg)},
-                        {"video", "播放器", "视频与音频 · 进度控制", String.valueOf(isMedia)},
-                        {"doc", "文本编辑", "查看与编辑文本、代码", String.valueOf(isText)},
-                        {"archive", "解压", "ZIP 压缩包", String.valueOf(isZipFile)},
-                        {"apk", "安装", "Android 安装包", String.valueOf(isApk)},
+                        {"img", "图片查看", "双指缩放 · 拖动 · 双击还原", "true"},
+                        {"video", "播放器", "视频与音频 · 进度控制", "true"},
+                        {"doc", "文本编辑", "查看与编辑文本、代码", "true"},
+                        {"archive", "解压", "ZIP 压缩包", "true"},
+                        {"apk", "安装", "Android 安装包", "true"},
                 };
                 // 与长按菜单同一套卡片式按键：每行 4 个，行数按数量自适应
                 final int PER_ROW = 4;
@@ -5534,12 +5536,25 @@ public class FileManagerModule extends HyVqModule {
                     final boolean en = Boolean.parseBoolean(it[3]);
                     addGridItem(row, it[1], res, en, v -> {
                         d.dismiss();
-                        switch (it[0]) {
-                            case "img": openImageViewer(pathOrUri, name, isUri); break;
-                            case "video": openWithBuiltInPlayer(pathOrUri, name, isUri); break;
-                            case "doc": openInEditorByName(pathOrUri, name, isUri); break;
-                            case "archive": unzipByName(pathOrUri, name, isUri); break;
-                            default: installApkByName(pathOrUri, name, isUri); break;
+                        String err = null;
+                        try {
+                            switch (it[0]) {
+                                case "img":
+                                    err = tryOpenImageViewer(pathOrUri, name, isUri); break;
+                                case "video":
+                                    err = tryOpenWithBuiltInPlayer(pathOrUri, name, isUri); break;
+                                case "doc":
+                                    err = tryOpenInEditor(pathOrUri, name, isUri); break;
+                                case "archive":
+                                    err = tryUnzip(pathOrUri, name, isUri); break;
+                                default:
+                                    err = tryInstallApk(pathOrUri, name, isUri); break;
+                            }
+                        } catch (Throwable t) {
+                            err = t.getClass().getSimpleName() + ": " + t.getMessage();
+                        }
+                        if (err != null && !err.isEmpty()) {
+                            showOpenFailed(it[1], name, err, pathOrUri, isUri);
                         }
                     });
                     // 行结束 → 末尾补空位，卡片保持左对齐等宽
@@ -5640,6 +5655,150 @@ public class FileManagerModule extends HyVqModule {
                 action.run();
             });
         }
+    }
+
+    // ══════════ 内置打开方式：解锁版（不加格式限制，失败返回错误信息）══════════
+
+    /**
+     * 尝试用内置图片查看器打开。
+     * @return null 表示已成功启动；非 null 为失败原因
+     */
+    private String tryOpenImageViewer(String pathOrUri, String name, boolean isUri) {
+        if (!isUri) {
+            File f = new File(pathOrUri);
+            if (!f.exists()) return "文件不存在或无法访问";
+            if (!f.canRead()) return "没有读取该文件的权限";
+        }
+        openImageViewer(pathOrUri, name, isUri);
+        return null;
+    }
+
+    /** 尝试用内置播放器打开。 */
+    private String tryOpenWithBuiltInPlayer(String pathOrUri, String name, boolean isUri) {
+        if (!isUri) {
+            File f = new File(pathOrUri);
+            if (!f.exists()) return "文件不存在或无法访问";
+            if (!f.canRead()) return "没有读取该文件的权限";
+        }
+        openWithBuiltInPlayer(pathOrUri, name, isUri);
+        return null;
+    }
+
+    /** 尝试用内置文本编辑器打开。 */
+    private String tryOpenInEditor(String pathOrUri, String name, boolean isUri) {
+        if (isUri) return "SAF 文件（content://）暂不支持内置编辑器";
+        File f = new File(pathOrUri);
+        if (!f.exists()) return "文件不存在或无法访问";
+        if (!f.canRead()) return "没有读取该文件的权限";
+        if (f.isDirectory()) return "这是一个文件夹，不能作为文本编辑";
+        if (f.length() > 12L * 1024 * 1024) {
+            return "文件过大（" + (f.length() / 1024 / 1024) + "MB），编辑器可能无法加载";
+        }
+        openInEditorByName(pathOrUri, name, false);
+        return null;
+    }
+
+    /** 尝试解压（仅 zip 有效）。 */
+    private String tryUnzip(String pathOrUri, String name, boolean isUri) {
+        if (isUri) return "SAF 文件（content://）暂不支持直接解压，请先复制到本地";
+        File f = new File(pathOrUri);
+        if (!f.exists()) return "文件不存在或无法访问";
+        if (!f.canRead()) return "没有读取该文件的权限";
+        String ext = extOf(name);
+        if (!"zip".equals(ext) && !"jar".equals(ext)) {
+            return "这不是压缩包（扩展名 ." + ext + "），无法解压";
+        }
+        try {
+            extractZip(FileEntry.file(f.getAbsolutePath(), f.length(), f.lastModified()));
+            return null;
+        } catch (Throwable t) {
+            return t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+    }
+
+    /** 尝试安装 APK。 */
+    private String tryInstallApk(String pathOrUri, String name, boolean isUri) {
+        if (!"apk".equals(extOf(name))) {
+            return "这不是 APK 安装包（扩展名 ." + extOf(name) + "）";
+        }
+        if (!isUri) {
+            File f = new File(pathOrUri);
+            if (!f.exists()) return "文件不存在或无法访问";
+            if (!f.canRead()) return "没有读取该文件的权限";
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            try {
+                if (!ctx.getPackageManager().canRequestPackageInstalls()) {
+                    return "未授予「安装未知应用」权限，请到 设置 → 权限管理 中开启";
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        try {
+            installApkByName(pathOrUri, name, isUri);
+            return null;
+        } catch (Throwable t) {
+            return t.getClass().getSimpleName() + ": " + t.getMessage();
+        }
+    }
+
+    /**
+     * 打开失败提示弹窗。
+     *
+     * <p>说明哪个方式失败、失败原因，并提供「换内置方式重试」「用系统应用打开」「复制错误信息」。</p>
+     */
+    private void showOpenFailed(String modeName, String fileName, String reason,
+                                String pathOrUri, boolean isUri) {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "打开失败"));
+
+        TextView tvWhat = new TextView(ctx);
+        tvWhat.setText("方式：" + modeName + "\n文件：" + fileName);
+        tvWhat.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tvWhat.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tvWhat.setPadding(dp(4), 0, dp(4), dp(6));
+        tvWhat.setMaxLines(3);
+        tvWhat.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        box.addView(tvWhat);
+
+        TextView tvReason = new TextView(ctx);
+        tvReason.setText(reason);
+        tvReason.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tvReason.setTextColor(0xFFFF6B6B);
+        tvReason.setPadding(dp(4), 0, dp(4), dp(10));
+        tvReason.setTextIsSelectable(true);
+        box.addView(tvReason);
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setOrientation(LinearLayout.HORIZONTAL);
+        btns.setGravity(Gravity.END);
+        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnsLp.topMargin = dp(8);
+        box.addView(btns, btnsLp);
+        btns.addView(textButton("复制原因", v -> {
+            try {
+                android.content.ClipboardManager cm =
+                        (android.content.ClipboardManager) ctx.getSystemService(
+                                Context.CLIPBOARD_SERVICE);
+                if (cm != null) {
+                    cm.setPrimaryClip(android.content.ClipData.newPlainText(
+                            "打开失败", modeName + " / " + fileName + "\n" + reason));
+                    UiKit.toast(ctx, "已复制");
+                }
+            } catch (Throwable ignored) {
+            }
+        }));
+        btns.addView(textButton("系统应用打开", v -> {
+            d.dismiss();
+            showOpenWithDialog(pathOrUri, fileName, isUri);
+        }));
+        btns.addView(textButton("好的", v -> d.dismiss()));
+        d.show();
     }
 
     /** 系统打开方式：列出系统已注册应用，点击直接由该应用打开（不弹系统选择器） */
@@ -5746,6 +5905,48 @@ public class FileManagerModule extends HyVqModule {
                 }
             });
 
+            // ── 诊断：结果同时写 logcat 与文件（logcat 缓冲区易被冲掉）──
+            try {
+                StringBuilder dbg = new StringBuilder();
+                dbg.append("=== 打开方式诊断 ").append(new java.util.Date()).append(" ===\n");
+                dbg.append("mime=").append(mime).append('\n');
+                dbg.append("canHandle.size=").append(canHandle.size()).append('\n');
+                dbg.append("canHandle=").append(canHandle).append('\n');
+                dbg.append("allApps.size=").append(allApps.size()).append('\n');
+                dbg.append("ordered.size=").append(ordered.size()).append('\n');
+                dbg.append("mt.canHandle=").append(canHandle.contains("bin.mt.plus")).append('\n');
+                dbg.append("mt.inOrdered=").append(handleMap.containsKey("bin.mt.plus")).append('\n');
+                // 单独探测 MT
+                try {
+                    android.content.pm.ApplicationInfo mt = pm.getApplicationInfo("bin.mt.plus", 0);
+                    dbg.append("mt.getApplicationInfo=OK label=")
+                            .append(pm.getApplicationLabel(mt)).append('\n');
+                    dbg.append("mt.launchIntent=")
+                            .append(pm.getLaunchIntentForPackage("bin.mt.plus")).append('\n');
+                    dbg.append("mt.flags=").append(mt.flags)
+                            .append(" enabled=").append(mt.enabled).append('\n');
+                } catch (Throwable t) {
+                    dbg.append("mt.getApplicationInfo=FAIL ").append(t).append('\n');
+                }
+                // 用 queries 方式探测
+                try {
+                    Intent q = new Intent(Intent.ACTION_VIEW);
+                    q.setDataAndType(uri, "*/*");
+                    dbg.append("queryIntentActivities(*/*).size=")
+                            .append(pm.queryIntentActivities(q, 0).size()).append('\n');
+                } catch (Throwable t) {
+                    dbg.append("query failed ").append(t).append('\n');
+                }
+                android.util.Log.d("HYOpenWith", dbg.toString());
+                // 落盘便于 adb 读取
+                java.io.File df = new java.io.File(
+                        ctx.getExternalFilesDir(null), "openwith_diag.txt");
+                java.io.FileOutputStream fo = new java.io.FileOutputStream(df, false);
+                fo.write(dbg.toString().getBytes("UTF-8"));
+                fo.close();
+            } catch (Throwable ignored) {
+            }
+
             if (ordered.isEmpty()) {
                 parent.addView(hintText("设备上没有找到可用的应用", variant));
                 return;
@@ -5786,7 +5987,12 @@ public class FileManagerModule extends HyVqModule {
                 int isz = dp(26);
                 ic.setLayoutParams(new LinearLayout.LayoutParams(isz, isz));
                 try {
-                    ic.setImageDrawable(ri.loadIcon(ctx.getPackageManager()));
+                    android.graphics.drawable.Drawable icon = null;
+                    if (ri.activityInfo != null && ri.activityInfo.applicationInfo != null) {
+                        icon = ri.activityInfo.applicationInfo.loadIcon(ctx.getPackageManager());
+                    }
+                    if (icon == null) icon = ri.loadIcon(ctx.getPackageManager());
+                    ic.setImageDrawable(icon);
                 } catch (Throwable ignored) {
                 }
                 row.addView(ic);
@@ -5797,9 +6003,20 @@ public class FileManagerModule extends HyVqModule {
                 TextView t1 = new TextView(ctx);
                 String label = "";
                 try {
-                    label = ri.loadLabel(ctx.getPackageManager()).toString();
+                    // 优先用 applicationInfo 的 label（我们自己构造的 ActivityInfo
+                    // 是空壳，ri.loadLabel() 会返回空串）
+                    if (ri.activityInfo != null && ri.activityInfo.applicationInfo != null) {
+                        CharSequence cs = ctx.getPackageManager()
+                                .getApplicationLabel(ri.activityInfo.applicationInfo);
+                        if (cs != null) label = cs.toString();
+                    }
+                    if (label.isEmpty() && ri.activityInfo != null) {
+                        CharSequence cs = ri.loadLabel(ctx.getPackageManager());
+                        if (cs != null) label = cs.toString();
+                    }
                 } catch (Throwable ignored) {
                 }
+                if (label.isEmpty()) label = ri.activityInfo.packageName;
                 t1.setText(label);
                 t1.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
                 t1.setTextColor(onSurface);
