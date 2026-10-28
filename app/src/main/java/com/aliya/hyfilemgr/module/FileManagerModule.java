@@ -2209,7 +2209,15 @@ public class FileManagerModule extends HyVqModule {
         if (fabNew != null) fabNew.setVisibility(View.GONE);
         // 多选底栏「替换」而非「叠加」底部导航栏：
         // 两者同为 body 的直接子 View，同时可见会看到两层底栏叠在一起。
-        if (bottomNav != null) bottomNav.setVisibility(View.GONE);
+        if (bottomNav != null && bottomNav.getVisibility() == View.VISIBLE) {
+            bottomNav.animate().translationY(dp(16)).alpha(0f).setDuration(140)
+                    .setInterpolator(new android.view.animation.AccelerateInterpolator())
+                    .withEndAction(() -> {
+                        bottomNav.setVisibility(View.GONE);
+                        bottomNav.setTranslationY(0f);
+                        bottomNav.setAlpha(1f);
+                    }).start();
+        }
     }
 
     private void exitMultiMode() {
@@ -2228,16 +2236,33 @@ public class FileManagerModule extends HyVqModule {
                         opBar.setVisibility(View.GONE);
                         opBar.setTranslationY(0f);
                         opBar.setAlpha(1f);
-                        // 以下三项同一帧生效，避免中间的布局跳动被看到
-                        if (bottomNav != null) bottomNav.setVisibility(View.VISIBLE);
-                        if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
                         clearSelectionAndRefresh();
+                        // bottomNav 改「瞬间出现」为「淡入 + 上移过渡」，
+                        // 与 opBar 退场交叉衔接，避免生硬的跳变
+                        showBottomNavAnimated();
+                        if (fabNew != null) {
+                            fabNew.setAlpha(0f);
+                            fabNew.setVisibility(View.VISIBLE);
+                            fabNew.animate().alpha(1f).setDuration(180).start();
+                        }
                     }).start();
         } else {
-            if (bottomNav != null) bottomNav.setVisibility(View.VISIBLE);
+            showBottomNavAnimated();
             if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
             clearSelectionAndRefresh();
         }
+    }
+
+    /** bottomNav 以「淡入 + 上移」出现（退出多选后的过渡） */
+    private void showBottomNavAnimated() {
+        if (bottomNav == null) return;
+        bottomNav.setTranslationY(dp(16));
+        bottomNav.setAlpha(0f);
+        bottomNav.setVisibility(View.VISIBLE);
+        bottomNav.animate().translationY(0f).alpha(1f)
+                .setDuration(220)
+                .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                .start();
     }
 
     /** 清空选中并让列表回到非多选外观（退出多选的收尾动作） */
