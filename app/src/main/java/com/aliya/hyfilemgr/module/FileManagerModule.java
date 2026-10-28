@@ -2701,7 +2701,53 @@ public class FileManagerModule extends HyVqModule {
                     }
                 });
 
-        // ③ SAF 授权目录
+        // ③ 安装未知应用（安装 APK 必需）
+        boolean canInstall = false;
+        try {
+            canInstall = ctx.getPackageManager().canRequestPackageInstalls();
+        } catch (Throwable ignored) {
+        }
+        final boolean installOk = canInstall;
+        addInfoRow(box, "安装未知应用",
+                installOk ? "已允许 · 可直接安装 APK" : "未允许 · 安装 APK 会被系统拦截",
+                installOk, v -> {
+                    if (android.os.Build.VERSION.SDK_INT >= 26) {
+                        try {
+                            Intent i = new Intent(
+                                    android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    Uri.parse("package:" + ctx.getPackageName()));
+                            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            ctx.startActivity(i);
+                        } catch (Throwable t) {
+                            openAppSettings();
+                        }
+                    } else {
+                        UiKit.toast(ctx, "当前系统无需单独授权");
+                    }
+                });
+
+        // ④ 通知权限（Android 13+ 崩溃通知/任务提示需要）
+        boolean notifOk = true;
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            notifOk = ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        }
+        addInfoRow(box, "通知权限",
+                notifOk ? "已授权" : "未授权（Android 13+ 需要）",
+                notifOk, v -> {
+                    if (android.os.Build.VERSION.SDK_INT >= 33) {
+                        if (ctx instanceof android.app.Activity) {
+                            ((android.app.Activity) ctx).requestPermissions(
+                                    new String[]{"android.permission.POST_NOTIFICATIONS"}, 0x2002);
+                        } else {
+                            UiKit.toast(ctx, "请在应用内授予通知权限");
+                        }
+                    } else {
+                        UiKit.toast(ctx, "当前系统无需通知权限");
+                    }
+                });
+
+        // ⑤ SAF 授权目录
         addInfoRow(box, "SAF 授权目录",
                 SHOW_SAF_MOUNTS ? "已在侧边栏显示" : "侧边栏暂不显示（授权数据保留）",
                 SHOW_SAF_MOUNTS, v -> {
@@ -5608,12 +5654,55 @@ public class FileManagerModule extends HyVqModule {
                     : FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider",
                     new File(pathOrUri));
             final String mime = mimeOf(extOf(name));
-            Intent probe = new Intent(Intent.ACTION_VIEW);
-            probe.setDataAndType(uri, mime == null ? "*/*" : mime);
-            java.util.List<android.content.pm.ResolveInfo> apps =
-                    ctx.getPackageManager().queryIntentActivities(probe, 0);
+            // ── 列出所有可能的打开方式（不局限于本文件 MIME）──
+            // 1) 先按文件真实 MIME 查（精确匹配）
+            // 2) 再按 */* 查（兜底，覆盖只声明通配的应用）
+            // 合并去重，排除本应用自身，交给用户自行选择。
+            java.util.LinkedHashMap<String, android.content.pm.ResolveInfo> merged =
+                    new java.util.LinkedHashMap<>();
+            java.util.List<Intent> probes = new java.util.ArrayList<>();
+            if (mime != null && !mime.isEmpty()) {
+                Intent exact = new Intent(Intent.ACTION_VIEW);
+                exact.setDataAndType(uri, mime);
+                probes.add(exact);
+            }
+            Intent any = new Intent(Intent.ACTION_VIEW);
+            any.setDataAndType(uri, "*/*");
+            probes.add(any);
+
+            for (Intent probe : probes) {
+                java.util.List<android.content.pm.ResolveInfo> list;
+                try {
+                    list = ctx.getPackageManager().queryIntentActivities(probe,
+                            android.content.pm.PackageManager.MATCH_DEFAULT_ONLY);
+                } catch (Throwable ignored) {
+                    list = ctx.getPackageManager().queryIntentActivities(probe, 0);
+                }
+                for (android.content.pm.ResolveInfo ri : list) {
+                    if (ri.activityInfo == null) continue;
+                    // 排除本应用（避免「用自己的内置方式打开」重复出现）
+                    if (ctx.getPackageName().equals(ri.activityInfo.packageName)) continue;
+                    String key = ri.activityInfo.packageName + "/" + ri.activityInfo.name;
+                    if (!merged.containsKey(key)) merged.put(key, ri);
+                }
+            }
+
+            final java.util.List<android.content.pm.ResolveInfo> apps =
+                    new java.util.ArrayList<>(merged.values());
             if (apps.isEmpty()) {
-                parent.addView(hintText("系统未找到可打开该文件的应用", variant));
+                parent.addView(hintText("系统未找到可打开文件的应用", variant));
+                parent.addView(hintText("可能尚未授予「所有文件访问」，或设备没有安装可处理该类型文件的应用。", variant));
+                LinearLayout act0 = new LinearLayout(ctx);
+                act0.setGravity(android.view.Gravity.CENTER_VERTICAL);
+                LinearLayout.LayoutParams act0Lp = new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT);
+                act0Lp.topMargin = dp(8);
+                parent.addView(act0, act0Lp);
+                act0.addView(textButton("申请所有文件访问", v -> {
+                    dialog.dismiss();
+                    requestAllFilesAccess();
+                }));
                 return;
             }
             for (final android.content.pm.ResolveInfo ri : apps) {
