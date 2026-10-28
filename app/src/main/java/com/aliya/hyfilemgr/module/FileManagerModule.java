@@ -2556,7 +2556,7 @@ public class FileManagerModule extends HyVqModule {
 
         // ── 权限管理 ──
         addSettingsRow(box, "权限管理",
-                "所有文件访问 · 存储权限 · SAF 授权", R.drawable.ic_root, v -> {
+                "所有文件访问 · 存储权限 · SAF 授权", R.drawable.ic_lock, v -> {
                     hideSettingsDialog();
                     showPermissionManager();
                 });

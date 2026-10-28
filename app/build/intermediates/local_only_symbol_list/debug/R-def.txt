@@ -51,6 +51,7 @@ drawable ic_img
 drawable ic_info
 drawable ic_layers
 drawable ic_list
+drawable ic_lock
 drawable ic_menu
 drawable ic_more_vert
 drawable ic_pause
@@ -61,7 +62,6 @@ drawable ic_redo
 drawable ic_refresh
 drawable ic_rename
 drawable ic_restore
-drawable ic_root
 drawable ic_save
 drawable ic_search
 drawable ic_settings
@@ -72,6 +72,7 @@ drawable ic_star
 drawable ic_star_add
 drawable ic_sync_arrow_back
 drawable ic_sync_arrow_fwd
+drawable ic_terminal
 drawable ic_thumbnail
 drawable ic_trash
 drawable ic_undo
