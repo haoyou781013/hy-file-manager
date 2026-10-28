@@ -3267,18 +3267,25 @@ public class FileManagerModule extends HyVqModule {
         wrap.addView(bar, barLp);
         lastSlider = bar;
 
-        // 刻度文字
+        // 刻度文字：与 SeekBar 轨道对齐
+        // SeekBar 的圆点在 [thumbRadius, width - thumbRadius] 区间移动，
+        // 而一个 LinearLayout 等分会把文字按 [0, width] 排布 —— 两者差一个
+        // thumb 半径，所以必须给刻度容器加左右同样的内边距，圆点才正好落在
+        // 对应文字的中央。
         if (tickLabels != null && tickLabels.length > 0) {
+            int thumbR = dp(8);   // SeekBar 默认 thumb 半径约 8dp（随主题略有差异）
             LinearLayout ticks = new LinearLayout(ctx);
             ticks.setOrientation(LinearLayout.HORIZONTAL);
-            for (String t : tickLabels) {
+            ticks.setPadding(thumbR, 0, thumbR, 0);
+            for (int i = 0; i < tickLabels.length; i++) {
                 TextView tv = new TextView(ctx);
-                tv.setText(t);
+                tv.setText(tickLabels[i]);
                 tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
                 tv.setTextColor(UiKit.color(ctx,
                         com.google.android.material.R.attr.colorOnSurfaceVariant));
                 tv.setAlpha(0.7f);
                 tv.setGravity(Gravity.CENTER);
+                // 首尾两项各占一档宽度，居中到端点；中间项等分
                 ticks.addView(tv, new LinearLayout.LayoutParams(
                         0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             }
