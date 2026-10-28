@@ -389,8 +389,22 @@ public class FileManagerModule extends HyVqModule {
         contentWrap.addView(op, opLp);
 
         body.addView(buildClipBar());
-        // ⭐10 底部导航栏（Amaze 风格：文件/分类/回收站/更多，全局视图切换）
-        body.addView(buildBottomNav());
+
+        // ── 底部导航栏：同样叠加在 contentWrap 内、与 opBar 同位 ──
+        // ⚠️ 绝不能再作为 body(LinearLayout) 的直接子 View：它会占用
+        // 「topMargin 6dp + 自身高度」的布局空间。退出多选时它一显示，
+        // contentWrap 立即被压矮，列表底部被截掉一块露出白底 ——
+        // 这就是「白色遮罩闪一下」的真正来源，与动画时序无关。
+        // 放进 contentWrap 后两者互斥显示、位置完全一致，切换零布局变化。
+        View nav = buildBottomNav();
+        FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM);
+        navLp.bottomMargin = dp(8);
+        navLp.leftMargin = dp(8);
+        navLp.rightMargin = dp(8);
+        contentWrap.addView(nav, navLp);
+
         rootContainer.addView(body);
 
         // ⭐10 FAB 悬浮新建（先于侧边栏叠加层加入：侧边栏打开时被遮罩覆盖，符合 Material 规范）
@@ -1186,10 +1200,7 @@ public class FileManagerModule extends HyVqModule {
         bottomNav.setBackground(UiKit.rounded(ctx, 14, bg, 0));
         int pad = dp(4);
         bottomNav.setPadding(pad, dp(1), pad, dp(1));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(6);
-        bottomNav.setLayoutParams(lp);
+        // LayoutParams 由外层 FrameLayout 指定（底部叠加，与 opBar 同位）
 
         // ① 后退 <
         navBackBtn = navButton(dp(20), v -> navBack(active));
