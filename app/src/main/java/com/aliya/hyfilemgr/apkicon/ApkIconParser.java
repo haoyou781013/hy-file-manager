@@ -68,7 +68,8 @@ public final class ApkIconParser {
             Result r = pickExisting(zf, commonIconPaths());
             if (r != null) return r;
             // ⑤ 兜底 B：扫描 res/ 下任意 launcher/icon 图片
-            return scanAnyIcon(zf);
+            Result sc = scanAnyIcon(zf);
+            return sc;
         } catch (Throwable t) {
             return null;
         }

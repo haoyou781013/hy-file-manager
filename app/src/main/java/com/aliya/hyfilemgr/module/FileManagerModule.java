@@ -2781,10 +2781,13 @@ public class FileManagerModule extends HyVqModule {
                 showHidden ? "正在显示" : "已隐藏",
                 showHidden, v -> {
                     showHidden = !showHidden;
-                    // 立即同步落盘，避免进程回收导致设置丢失
-                    fmPrefs().edit().putBoolean(PREF_SHOW_HIDDEN, showHidden).commit();
-                    reloadAll();
+                    // 落盘优先：先写偏好再刷新列表，避免 reloadAll 异常导致设置丢失
+                    savePrefBool(PREF_SHOW_HIDDEN, showHidden);
                     persistState();
+                    try {
+                        reloadAll();
+                    } catch (Throwable ignored) {
+                    }
                     UiKit.toast(ctx, showHidden ? "已显示隐藏文件" : "已隐藏 . 开头文件");
                 });
 
@@ -2792,7 +2795,8 @@ public class FileManagerModule extends HyVqModule {
                 thumbsEnabled ? "已开启（图片/视频/APK 预览）" : "已关闭（仅显示类型图标）",
                 thumbsEnabled, v -> {
                     thumbsEnabled = !thumbsEnabled;
-                    fmPrefs().edit().putBoolean(PREF_THUMBS, thumbsEnabled).commit();
+                    savePrefBool(PREF_THUMBS, thumbsEnabled);
+                    persistState();
                     for (Pane pp : panes) {
                         if (pp != null && pp.adapter != null) {
                             pp.adapter.setThumbsEnabled(thumbsEnabled);
@@ -3238,6 +3242,20 @@ public class FileManagerModule extends HyVqModule {
             this.deletable = deletable;
             this.enterable = enterable;
             this.target = target;
+        }
+    }
+
+    /**
+     * 同步写入单个布尔偏好（commit 而非 apply）。
+     *
+     * <p>写入失败会把异常打到 logcat，避免静默丢失设置。</p>
+     */
+    private void savePrefBool(String key, boolean value) {
+        try {
+            boolean ok = fmPrefs().edit().putBoolean(key, value).commit();
+            android.util.Log.i("HYPrefs", "save " + key + "=" + value + " ok=" + ok);
+        } catch (Throwable t) {
+            android.util.Log.e("HYPrefs", "save " + key + " failed", t);
         }
     }
 
@@ -6782,17 +6800,20 @@ public class FileManagerModule extends HyVqModule {
                 R.drawable.ic_visibility, v -> {
                     popup.dismiss();
                     showHidden = !showHidden;
-                    fmPrefs().edit().putBoolean(PREF_SHOW_HIDDEN, showHidden).commit();
-                    reloadAll();
+                    savePrefBool(PREF_SHOW_HIDDEN, showHidden);
                     persistState();
+                    try {
+                        reloadAll();
+                    } catch (Throwable ignored) {
+                    }
                     UiKit.toast(ctx, showHidden ? "已显示隐藏文件" : "已隐藏 . 开头文件");
-                    reloadAll();
                 });
         addMenuRow(panel, thumbsEnabled ? "缩略图：已开启" : "缩略图：已关闭",
                 R.drawable.ic_thumbnail, v -> {
                     popup.dismiss();
                     thumbsEnabled = !thumbsEnabled;
-                    fmPrefs().edit().putBoolean(PREF_THUMBS, thumbsEnabled).commit();
+                    savePrefBool(PREF_THUMBS, thumbsEnabled);
+                    persistState();
                     for (Pane pp : panes) {
                         if (pp != null && pp.adapter != null) {
                             pp.adapter.setThumbsEnabled(thumbsEnabled);

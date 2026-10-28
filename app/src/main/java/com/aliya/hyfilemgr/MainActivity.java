@@ -28,6 +28,10 @@ public class MainActivity extends AppCompatActivity {
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
         module = new FileManagerModule();
+        // ⚠️ 必须先 onAttach：它内部调用 restoreState() 读取用户偏好
+        // （隐藏文件 / 缩略图 / 排序 / 网格）。此前直接 createMainView 会跳过
+        // 恢复流程，导致所有设置写入成功却永远不会被读回，表现为重启后丢失。
+        module.onAttach(this, null);
         View v = module.createMainView(LayoutInflater.from(this), root);
         root.addView(v);
 
