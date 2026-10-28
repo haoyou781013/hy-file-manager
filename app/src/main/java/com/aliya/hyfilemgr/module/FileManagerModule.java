@@ -1786,16 +1786,14 @@ public class FileManagerModule extends HyVqModule {
 
     private void showItemMenu(final Pane p, final FileEntry e, View anchor) {
         boolean virt = e.virtual;
-        // SAF 授权条目（content://）可写（新建/重命名/删除/复制/剪切），与真实条目同菜单
+        // SAF 授权条目（content://）可写（新���/重命名/删除/复制/剪切），与真实条目同菜单
         boolean saf = e.path != null && e.path.startsWith("content://");
         boolean real = !virt && !saf;
         boolean inTrash = p.path.startsWith(PREFIX_TRASH);
         boolean inCat = false;   // 分类功能已移除，恒 false
         boolean parent = e.parent;
         boolean zip = real && isZip(e);
-        // 写操作可用条件：非".."、真实或SAF条目、不在回收站/分类只读视图
         boolean writable = !parent && (real || saf) && !inTrash && !inCat;
-        // 压缩/解压/书签可用条件：仅真实条目（java.io 直操作），且不在只读虚拟视图
         boolean realOnly = !parent && real && !inTrash && !inCat;
 
         LinearLayout box = new LinearLayout(ctx);
@@ -1804,83 +1802,97 @@ public class FileManagerModule extends HyVqModule {
 
         final android.app.Dialog dialog = UiKit.glassDialog(ctx, box);
 
-        // ── 网格布局：按宽度自适应列数（优先 4，放不下 3），图标上 / 文字下 ──
-        final int cols = openGridColumns();
+        // ── 按键定义：{文字, 图标, 是否可用, 点击动作} ──
+        // 按需追加，行数由数量自动决定（每行 4 个）
+        final List<Object[]> actions = new ArrayList<>();
 
-        // 第 1 行：打开方式 / 解到对侧 / 编辑 (+ 复制，4 列时)
-        LinearLayout r1 = itemMenuGridRow(box, Math.min(3, cols));
-        addGridItem(r1, "打开", R.drawable.ic_file, !parent, v -> {
+        actions.add(new Object[]{"打开方式", R.drawable.ic_file, !parent, (Runnable) () -> {
             dialog.dismiss();
-            showOpenWithDialog(e.path, e.name, e.path != null && e.path.startsWith("content://"));
-        });
-        addGridItem(r1, "解到对侧", R.drawable.ic_archive, zip, v -> {
+            showOpenWithDialog(e.path, e.name,
+                    e.path != null && e.path.startsWith("content://"));
+        }});
+        actions.add(new Object[]{"解到对侧", R.drawable.ic_archive, zip, (Runnable) () -> {
             dialog.dismiss();
             extractZipEntryToOtherPane(e);
-        });
-        addGridItem(r1, "编辑", R.drawable.ic_doc, realOnly && isTextFile(e.name), v -> {
+        }});
+        actions.add(new Object[]{"编辑", R.drawable.ic_doc,
+                realOnly && isTextFile(e.name), (Runnable) () -> {
+                    dialog.dismiss();
+                    openInEditorByName(e.path, e.name, false);
+                }});
+        actions.add(new Object[]{"复制", R.drawable.ic_copy, writable, (Runnable) () -> {
             dialog.dismiss();
-            openInEditorByName(e.path, e.name, false);
-        });
-        if (cols >= 4) {
-            addGridItem(r1, "复制", R.drawable.ic_copy, writable, v -> {
-                dialog.dismiss();
-                putClipboard(Collections.singletonList(e), false);
-            });
-        }
-
-        // 第 2 行：剪切 / 删除 / 重命名 (+ 复制，3 列时)
-        LinearLayout r2 = itemMenuGridRow(box, Math.min(3, cols));
-        if (cols < 4) {
-            addGridItem(r2, "复制", R.drawable.ic_copy, writable, v -> {
-                dialog.dismiss();
-                putClipboard(Collections.singletonList(e), false);
-            });
-        }
-        addGridItem(r2, "剪切", R.drawable.ic_cut, writable, v -> {
+            putClipboard(Collections.singletonList(e), false);
+        }});
+        actions.add(new Object[]{"剪切", R.drawable.ic_cut, writable, (Runnable) () -> {
             dialog.dismiss();
             putClipboard(Collections.singletonList(e), true);
-        });
-        addGridItem(r2, "删除", R.drawable.ic_trash, writable, v -> {
+        }});
+        actions.add(new Object[]{"删除", R.drawable.ic_trash, writable, (Runnable) () -> {
             dialog.dismiss();
             confirmDelete(Collections.singletonList(e));
-        });
-        addGridItem(r2, "重命名", R.drawable.ic_rename, writable, v -> {
+        }});
+        actions.add(new Object[]{"重命名", R.drawable.ic_rename, writable, (Runnable) () -> {
             dialog.dismiss();
             showRenameDialog(e);
-        });
-        addGridItem(r2, zip ? "解压" : "压缩",
-                zip ? R.drawable.ic_archive : R.drawable.ic_compress, realOnly, v -> {
+        }});
+        actions.add(new Object[]{zip ? "解压" : "压缩",
+                zip ? R.drawable.ic_archive : R.drawable.ic_compress,
+                realOnly, (Runnable) () -> {
                     dialog.dismiss();
                     if (zip) extractZip(e); else compressToZip(e);
-                });
-
-        // 第 3 行：属性 / 添加书签 / 多选模式
-        LinearLayout r3 = itemMenuGridRow(box, Math.min(3, cols));
-        addGridItem(r3, "属性", R.drawable.ic_info, !parent, v -> {
+                }});
+        actions.add(new Object[]{"属性", R.drawable.ic_info, !parent, (Runnable) () -> {
             dialog.dismiss();
             showPropertyDialog(e);
-        });
-        addGridItem(r3, "加书签", R.drawable.ic_star_add, realOnly, v -> {
+        }});
+        actions.add(new Object[]{"加书签", R.drawable.ic_star_add, realOnly, (Runnable) () -> {
             dialog.dismiss();
             addBookmarkPath(e.path);
-        });
-        addGridItem(r3, "多选", R.drawable.ic_checklist, !parent && !inCat, v -> {
-            dialog.dismiss();
-            p.selected.add(e);
-            enterMultiMode();
-        });
-
-        // 第 4 行（仅回收站）：恢复 / 彻底删除
+        }});
+        actions.add(new Object[]{"多选", R.drawable.ic_checklist,
+                !parent && !inCat, (Runnable) () -> {
+                    dialog.dismiss();
+                    p.selected.add(e);
+                    enterMultiMode();
+                }});
         if (inTrash) {
-            LinearLayout r4 = itemMenuGridRow(box, 2);
-            addGridItem(r4, "恢复", R.drawable.ic_restore, !parent, v -> {
+            actions.add(new Object[]{"恢复", R.drawable.ic_restore, !parent, (Runnable) () -> {
                 dialog.dismiss();
                 onItemMenu(p, e, "恢复");
-            });
-            addGridItem(r4, "彻底删", R.drawable.ic_trash, !parent, v -> {
+            }});
+            actions.add(new Object[]{"彻底删", R.drawable.ic_trash, !parent, (Runnable) () -> {
                 dialog.dismiss();
                 onItemMenu(p, e, "彻底删除");
-            });
+            }});
+        }
+
+        // ── 按每行 4 个自动分行；行数随按键数量自适应 ──
+        final int PER_ROW = 4;
+        LinearLayout row = null;
+        for (int i = 0; i < actions.size(); i++) {
+            if (i % PER_ROW == 0) {
+                row = new LinearLayout(ctx);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                rowLp.topMargin = dp(1);
+                box.addView(row, rowLp);
+                // 补齐本行剩余空位，保证卡片等宽
+                int remaining = Math.min(PER_ROW, actions.size() - i);
+                for (int k = remaining; k < PER_ROW; k++) {
+                    View sp = new View(ctx);
+                    LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(
+                            0, 1, 1f);
+                    int gap = dp(5) / 2;
+                    spLp.setMargins(gap, gap, gap, gap);
+                    row.addView(sp, spLp);
+                }
+            }
+            Object[] a = actions.get(i);
+            addGridItem(row, (String) a[0], (Integer) a[1],
+                    (Boolean) a[2], v -> ((Runnable) a[3]).run());
         }
 
         // 底部：取消
@@ -1889,7 +1901,7 @@ public class FileManagerModule extends HyVqModule {
         btns.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnsLp.topMargin = dp(10);
+        btnsLp.topMargin = dp(12);
         box.addView(btns, btnsLp);
         btns.addView(textButton("取消", v -> dialog.dismiss()));
 
@@ -2200,17 +2212,35 @@ public class FileManagerModule extends HyVqModule {
      * @param icon  图标资源
      * @param enabled false 时整格置灰（保留可见，提示功能存在但当前不可用）
      */
+    /**
+     * 长按菜单卡片式按键：独立圆角卡片（背景 + 描边），图标在上、文字在下。
+     *
+     * <p>外层包一层 margin 容器，卡片之间留 5dp 间隙，形成明显的卡片分离感。</p>
+     */
     private void addGridItem(LinearLayout grid, String text, int iconRes,
                              boolean enabled, View.OnClickListener onClick) {
-        LinearLayout cell = new LinearLayout(ctx);
-        cell.setOrientation(LinearLayout.VERTICAL);
-        cell.setGravity(Gravity.CENTER);
-        cell.setPadding(dp(4), dp(12), dp(4), dp(10));
-        cell.setClickable(enabled);
-        cell.setFocusable(enabled);
-        if (enabled) {
-            cell.setOnClickListener(v -> {
-                v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(80)
+        // ── 外层：负责间距 ──
+        LinearLayout wrap = new LinearLayout(ctx);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams wrapLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        int gap = dp(5) / 2;
+        wrapLp.setMargins(gap, gap, gap, gap);
+
+        // ── 卡片本体 ──
+        LinearLayout card = new LinearLayout(ctx);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER);
+        card.setPadding(dp(4), dp(14), dp(4), dp(12));
+        card.setMinimumHeight(dp(78));
+        card.setClickable(enabled);
+        card.setFocusable(enabled);
+        card.setBackgroundResource(R.drawable.bg_menu_card);
+        if (!enabled) {
+            card.setAlpha(0.35f);
+        } else {
+            card.setOnClickListener(v -> {
+                v.animate().scaleX(0.94f).scaleY(0.94f).setDuration(80)
                         .withEndAction(() -> v.animate().scaleX(1f).scaleY(1f)
                                 .setDuration(140)
                                 .setInterpolator(new android.view.animation.OvershootInterpolator(2f))
@@ -2219,19 +2249,19 @@ public class FileManagerModule extends HyVqModule {
                 onClick.onClick(v);
             });
         }
-        cell.setAlpha(enabled ? 1f : 0.35f);
-        cell.setBackgroundResource(R.drawable.bg_ripple_round);
+        wrap.addView(card, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         ImageView icon = new ImageView(ctx);
         icon.setImageResource(iconRes);
         icon.setColorFilter(UiKit.color(ctx, enabled
-                ? com.google.android.material.R.attr.colorOnSurfaceVariant
+                ? com.google.android.material.R.attr.colorPrimary
                 : com.google.android.material.R.attr.colorOutline));
-        cell.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
+        card.addView(icon, new LinearLayout.LayoutParams(dp(26), dp(26)));
 
         TextView label = new TextView(ctx);
         label.setText(text);
-        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         label.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
         label.setGravity(Gravity.CENTER);
         label.setMaxLines(2);
@@ -2239,11 +2269,10 @@ public class FileManagerModule extends HyVqModule {
         label.setLineSpacing(0, 0.95f);
         LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        labelLp.topMargin = dp(6);
-        cell.addView(label, labelLp);
+        labelLp.topMargin = dp(7);
+        card.addView(label, labelLp);
 
-        grid.addView(cell, new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        grid.addView(wrap, wrapLp);
     }
 
     /**

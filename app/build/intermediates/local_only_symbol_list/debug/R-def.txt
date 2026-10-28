@@ -14,6 +14,7 @@ color ripple_blue
 color text_primary
 color text_secondary
 color white
+drawable bg_menu_card
 drawable bg_player_btn
 drawable bg_player_btn_primary
 drawable bg_player_chip
