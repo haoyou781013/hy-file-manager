@@ -363,10 +363,27 @@ public class FileManagerModule extends HyVqModule {
         } else {
             permissionBar.setVisibility(View.GONE);
         }
-        body.addView(buildContent(), new LinearLayout.LayoutParams(
+        // ── 内容区 + 悬浮层 ──
+        // opBar 必须「浮」在列表之上而不是插在 LinearLayout 里：
+        // 插进流式布局会占据高度，退场下移时让出的空间变成空白（看不到文件），
+        // 同时布局重排还会与位移动画打架产生回弹。
+        FrameLayout contentWrap = new FrameLayout(ctx);
+        contentWrap.addView(buildContent(), new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        body.addView(contentWrap, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        // opBar 叠在内容区底部，不占空间
+        View op = buildOpBar();
+        FrameLayout.LayoutParams opLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM);
+        opLp.bottomMargin = dp(8);
+        opLp.leftMargin = dp(8);
+        opLp.rightMargin = dp(8);
+        contentWrap.addView(op, opLp);
+
         body.addView(buildClipBar());
-        body.addView(buildOpBar());
         // ⭐10 底部导航栏（Amaze 风格：文件/分类/回收站/更多，全局视图切换）
         body.addView(buildBottomNav());
         rootContainer.addView(body);
@@ -1053,12 +1070,9 @@ public class FileManagerModule extends HyVqModule {
         opBar.setBackground(UiKit.rounded(ctx, 16, surface, stroke));
         int pad = dp(10);
         opBar.setPadding(pad, dp(8), pad, dp(8));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(6);
-        opBar.setLayoutParams(lp);
+        // LayoutParams 由外层 FrameLayout 指定（底部对齐叠加）
         opBar.setVisibility(View.GONE);
-        opBar.setElevation(dp(6));
+        opBar.setElevation(dp(8));
 
         // ── 第一行：已选计数 ──
         opCount = new TextView(ctx);
