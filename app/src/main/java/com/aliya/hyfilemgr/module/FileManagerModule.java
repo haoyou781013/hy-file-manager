@@ -3137,32 +3137,66 @@ public class FileManagerModule extends HyVqModule {
         d.show();
     }
 
-    /** 个性化设置页：显示密度(DPI) + 列表文件密度 */
+    /** 个性化设置页：显示密度(DPI) + 列表文件密度（均为进度条式） */
     private void showAppearanceSettings() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "个性化"));
 
-        // ── 显示密度 DPI ──
+        // ── 显示密度（DPI）：SeekBar ──
+        final int[] dpiPresets = com.aliya.hyfilemgr.util.DpiUtils.PRESETS;
         int curDpi = com.aliya.hyfilemgr.util.DpiUtils.getOverrideDpi();
-        String dpiLabel = curDpi <= 0 ? "跟随系统" : (curDpi + " dpi");
-        addSettingsRow(box, "显示密度（DPI）",
-                dpiLabel + " · 仅本应用生效，修改后自动重启界面",
-                R.drawable.ic_sliders, v -> {
-                    hideSettingsDialog();
-                    showDpiPicker();
-                });
+        int dpiIdxTmp = 0;
+        for (int i = 0; i < dpiPresets.length; i++) {
+            if (dpiPresets[i] == curDpi) { dpiIdxTmp = i; break; }
+        }
+        final int dpiIdx = dpiIdxTmp;
 
-        // ── 列表文件密度 ──
-        String[] densityNames = {"紧凑", "标准", "宽松"};
-        int d = listDensity;
-        addSettingsRow(box, "列表文件密度",
-                densityNames[Math.max(0, Math.min(2, d - 1))]
-                        + " · 影响行高与图标大小",
-                R.drawable.ic_list, v -> {
-                    hideSettingsDialog();
-                    showDensityPicker();
-                });
+        final TextView dpiValue = addSliderRow(box, "显示密度（DPI）",
+                dpiLabel(dpiPresets[dpiIdx]),
+                dpiIdx, 0, dpiPresets.length - 1, 0, null);
+
+        final android.widget.SeekBar dpiBar = lastSlider;
+        dpiBar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            private int committed = dpiIdx;   // dpiIdx 已是 final
+
+            @Override
+            public void onProgressChanged(android.widget.SeekBar sb, int progress, boolean fromUser) {
+                dpiValue.setText(dpiLabel(dpiPresets[progress]));
+            }
+
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+
+            @Override
+            public void onStopTrackingTouch(android.widget.SeekBar sb) {
+                int idx = sb.getProgress();
+                if (idx == committed) return;
+                committed = idx;
+                applyDpi(dpiPresets[idx]);
+            }
+        });
+
+        // ── 列表文件密度：SeekBar（3 档） ──
+        final String[] densityNames = {"紧凑", "标准", "宽松"};
+        final TextView densityValue = addSliderRow(box, "列表文件密度",
+                densityNames[Math.max(0, Math.min(2, listDensity - 1))],
+                listDensity - 1, 0, 2, 1,
+                new String[]{"紧凑", "标准", "宽松"});
+
+        final android.widget.SeekBar densityBar = lastSlider;
+        densityBar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(android.widget.SeekBar sb, int progress, boolean fromUser) {
+                densityValue.setText(densityNames[Math.max(0, Math.min(2, progress))]);
+            }
+
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+
+            @Override
+            public void onStopTrackingTouch(android.widget.SeekBar sb) {
+                applyDensity(sb.getProgress() + 1);
+            }
+        });
 
         final android.app.Dialog dlg = UiKit.glassDialog(ctx, box);
         LinearLayout btns = new LinearLayout(ctx);
@@ -3180,99 +3214,101 @@ public class FileManagerModule extends HyVqModule {
         dlg.show();
     }
 
-    /** DPI 选择弹窗 */
-    private void showDpiPicker() {
-        LinearLayout box = new LinearLayout(ctx);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(UiKit.sectionHeader(ctx, "显示密度（DPI）"));
+    /** addSliderRow 最近创建的 SeekBar（供调用方挂监听） */
+    private android.widget.SeekBar lastSlider;
 
-        TextView hint = new TextView(ctx);
-        hint.setText("数值越大，界面元素越大（相当于系统「显示大小」）。\n"
-                + "仅影响本应用，选择后界面会自动重建。");
-        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        hint.setTextColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurfaceVariant));
-        hint.setPadding(dp(4), 0, dp(4), dp(8));
-        box.addView(hint);
+    /**
+     * 添加一行「标题 + 当前值 + 进度条」设置项。
+     *
+     * @param tickLabels 进度条下方的档位文字；null 表示不显示刻度
+     * @return 右侧显示当前值的 TextView
+     */
+    private TextView addSliderRow(LinearLayout parent, String title, String initValue,
+                                  int progress, int min, int max, int step,
+                                  String[] tickLabels) {
+        LinearLayout wrap = new LinearLayout(ctx);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setPadding(dp(4), dp(10), dp(4), dp(6));
+        LinearLayout.LayoutParams wrapLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        wrapLp.topMargin = dp(4);
+        parent.addView(wrap, wrapLp);
 
-        final android.app.Dialog dlg = UiKit.glassDialog(ctx, box);
-        int cur = com.aliya.hyfilemgr.util.DpiUtils.getOverrideDpi();
-        for (final int dpi : com.aliya.hyfilemgr.util.DpiUtils.PRESETS) {
-            String label = dpi == 0 ? "跟随系统" : (dpi + " dpi");
-            boolean active = (cur == dpi);
-            addInfoRow(box, label,
-                    active ? "当前使用中" : (dpi == 0 ? "使用系统默认密度" : "点按切换"),
-                    active, v -> {
-                        UiKit.dismissWithAnim(dlg);
-                        applyDpi(dpi);
-                    });
+        // 标题行：左标题，右当前值
+        LinearLayout titleRow = new LinearLayout(ctx);
+        titleRow.setOrientation(LinearLayout.HORIZONTAL);
+        titleRow.setGravity(Gravity.CENTER_VERTICAL);
+        wrap.addView(titleRow, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        TextView tvTitle = new TextView(ctx);
+        tvTitle.setText(title);
+        tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tvTitle.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        titleRow.addView(tvTitle, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView tvValue = new TextView(ctx);
+        tvValue.setText(initValue);
+        tvValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tvValue.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvValue.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimary));
+        titleRow.addView(tvValue);
+
+        // 进度条
+        android.widget.SeekBar bar = new android.widget.SeekBar(ctx);
+        bar.setMax(max - min);
+        bar.setProgress(Math.max(0, Math.min(max - min, progress - min)));
+        LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        barLp.topMargin = dp(6);
+        wrap.addView(bar, barLp);
+        lastSlider = bar;
+
+        // 刻度文字
+        if (tickLabels != null && tickLabels.length > 0) {
+            LinearLayout ticks = new LinearLayout(ctx);
+            ticks.setOrientation(LinearLayout.HORIZONTAL);
+            for (String t : tickLabels) {
+                TextView tv = new TextView(ctx);
+                tv.setText(t);
+                tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+                tv.setTextColor(UiKit.color(ctx,
+                        com.google.android.material.R.attr.colorOnSurfaceVariant));
+                tv.setAlpha(0.7f);
+                tv.setGravity(Gravity.CENTER);
+                ticks.addView(tv, new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            }
+            LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            tLp.topMargin = dp(2);
+            wrap.addView(ticks, tLp);
         }
 
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setGravity(Gravity.END);
-        box.addView(btns, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim(dlg)));
-        dlg.show();
+        return tvValue;
     }
 
     /** 应用 DPI：落盘 + 重建界面 */
     private void applyDpi(int dpi) {
         com.aliya.hyfilemgr.util.DpiUtils.setOverrideDpi(dpi);
         savePrefInt(PREF_DPI, dpi);
-        UiKit.toast(ctx, "已切换到 " + (dpi == 0 ? "跟随系统" : dpi + " dpi")
-                + "，界面即将重建");
+        UiKit.toast(ctx, "已切换到 " + dpiLabel(dpi) + "，界面即将重建");
         // DPI 改变需要重建 Activity（updateConfiguration 不影响已创建的 View）
         final android.app.Activity act = hostActivity;
         if (act != null) {
-            // 用 Handler 而非 View.postDelayed：Activity 本身不是 View
             new android.os.Handler(android.os.Looper.getMainLooper())
                     .postDelayed(new Runnable() {
                         @Override
                         public void run() {
                             act.recreate();
                         }
-                    }, 350);
+                    }, 400);
         } else {
             UiKit.toast(ctx, "重启应用后生效");
         }
-    }
-
-    /** 列表密度选择弹窗 */
-    private void showDensityPicker() {
-        LinearLayout box = new LinearLayout(ctx);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(UiKit.sectionHeader(ctx, "列表文件密度"));
-
-        TextView hint = new TextView(ctx);
-        hint.setText("紧凑 ≈ 一屏多显示 3~4 行；宽松 ≈ 行与行更舒展。");
-        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        hint.setTextColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurfaceVariant));
-        hint.setPadding(dp(4), 0, dp(4), dp(8));
-        box.addView(hint);
-
-        final android.app.Dialog dlg = UiKit.glassDialog(ctx, box);
-        String[] names = {"紧凑", "标准", "宽松"};
-        String[] descs = {"行高最小，信息密度最高",
-                "默认，均衡",
-                "行高最大，触控更舒适"};
-        for (int i = 0; i < 3; i++) {
-            final int val = i + 1;
-            boolean active = (listDensity == val);
-            addInfoRow(box, names[i],
-                    active ? "当前使用中" : descs[i], active, v -> {
-                        UiKit.dismissWithAnim(dlg);
-                        applyDensity(val);
-                    });
-        }
-
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setGravity(Gravity.END);
-        box.addView(btns, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim(dlg)));
-        dlg.show();
     }
 
     /** 应用列表密度（立即生效，无需重启） */
@@ -3284,6 +3320,11 @@ public class FileManagerModule extends HyVqModule {
         }
         String[] names = {"紧凑", "标准", "宽松"};
         UiKit.toast(ctx, "列表密度：" + names[listDensity - 1]);
+    }
+
+    /** DPI 档位显示文字 */
+    private String dpiLabel(int dpi) {
+        return dpi <= 0 ? "跟随系统" : (dpi + " dpi");
     }
 
     /** 文件管理设置页：隐藏文件 / 缩略图 / 排序 */
