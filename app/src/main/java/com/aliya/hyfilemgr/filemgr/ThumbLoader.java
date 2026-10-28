@@ -173,20 +173,53 @@ public final class ThumbLoader {
         }
     }
 
+    /**
+     * 解出 APK 的应用图标。
+     *
+     * <p>要点：Android 9+ 必须在 {@code getPackageArchiveInfo} 传
+     * {@link android.content.pm.PackageManager#GET_ACTIVITIES}（非 0），
+     * 否则返回的 ApplicationInfo 不含资源路径，{@code loadIcon()} 拿不到图；
+     * 同时对 ApplicationInfo 显式设置 sourceDir / publicSourceDir。</p>
+     */
     private static Bitmap decodeApk(String path) {
         Context app = HOLDER;
         if (app == null) return null;
         android.content.pm.PackageManager pm = app.getPackageManager();
-        android.content.pm.PackageInfo pi =
-                pm.getPackageArchiveInfo(path, 0);
+        android.content.pm.PackageInfo pi = null;
+        // 先试带 GET_ACTIVITIES（Android 9+ 加载图标必需），退回 0
+        try {
+            pi = pm.getPackageArchiveInfo(path,
+                    android.content.pm.PackageManager.GET_ACTIVITIES);
+        } catch (Throwable ignored) {
+        }
+        if (pi == null) {
+            try {
+                pi = pm.getPackageArchiveInfo(path, 0);
+            } catch (Throwable ignored) {
+            }
+        }
         if (pi == null || pi.applicationInfo == null) return null;
         android.content.pm.ApplicationInfo ai = pi.applicationInfo;
-        // API 8+ 需要显式给 sourceDir 才能加载未安装包图标
+        // 未安装包：必须显式给路径，loadIcon 才能定位资源
         ai.sourceDir = path;
         ai.publicSourceDir = path;
-        android.graphics.drawable.Drawable d = ai.loadIcon(pm);
+
+        android.graphics.drawable.Drawable d = null;
+        try {
+            d = ai.loadIcon(pm);
+        } catch (Throwable ignored) {
+        }
+        if (d == null) {
+            try {
+                d = pm.getApplicationIcon(ai);
+            } catch (Throwable ignored) {
+            }
+        }
         if (d == null) return null;
-        int s = Math.max(d.getIntrinsicWidth(), TARGET_PX);
+
+        // 按目标尺寸渲染（考虑 intrinsic 可能为 0 或负数）
+        int s = Math.max(TARGET_PX, Math.max(d.getIntrinsicWidth(), d.getIntrinsicHeight()));
+        if (s <= 0) s = TARGET_PX;
         Bitmap b = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888);
         android.graphics.Canvas c = new android.graphics.Canvas(b);
         d.setBounds(0, 0, s, s);
