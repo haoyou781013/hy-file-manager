@@ -1879,20 +1879,22 @@ public class FileManagerModule extends HyVqModule {
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                 rowLp.topMargin = dp(1);
                 box.addView(row, rowLp);
-                // 补齐本行剩余空位，保证卡片等宽
-                int remaining = Math.min(PER_ROW, actions.size() - i);
-                for (int k = remaining; k < PER_ROW; k++) {
+            }
+            Object[] a = actions.get(i);
+            addGridItem(row, (String) a[0], (Integer) a[1],
+                    (Boolean) a[2], v -> ((Runnable) a[3]).run());
+            // 本行结束（下一个是新行或已是最后一个）→ 在**末尾**补空位，保证卡片等宽
+            boolean rowEnd = (i % PER_ROW == PER_ROW - 1) || (i == actions.size() - 1);
+            if (rowEnd) {
+                int filled = i % PER_ROW + 1;
+                for (int k = filled; k < PER_ROW; k++) {
                     View sp = new View(ctx);
-                    LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(
-                            0, 1, 1f);
+                    LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(0, 1, 1f);
                     int gap = dp(5) / 2;
                     spLp.setMargins(gap, gap, gap, gap);
                     row.addView(sp, spLp);
                 }
             }
-            Object[] a = actions.get(i);
-            addGridItem(row, (String) a[0], (Integer) a[1],
-                    (Boolean) a[2], v -> ((Runnable) a[3]).run());
         }
 
         // 底部：取消
@@ -5477,15 +5479,6 @@ public class FileManagerModule extends HyVqModule {
                                 LinearLayout.LayoutParams.WRAP_CONTENT);
                         rowLp.topMargin = dp(1);
                         listBox.addView(row, rowLp);
-                        // 补齐本行剩余空位，保证卡片等宽
-                        int remaining = Math.min(PER_ROW, items.length - i);
-                        for (int k = remaining; k < PER_ROW; k++) {
-                            View sp = new View(ctx);
-                            LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(0, 1, 1f);
-                            int gap = dp(5) / 2;
-                            spLp.setMargins(gap, gap, gap, gap);
-                            row.addView(sp, spLp);
-                        }
                     }
                     final String[] it = items[i];
                     int res = "img".equals(it[0]) ? R.drawable.ic_img
@@ -5503,6 +5496,18 @@ public class FileManagerModule extends HyVqModule {
                             default: installApkByName(pathOrUri, name, isUri); break;
                         }
                     });
+                    // 行结束 → 末尾补空位，卡片保持左对齐等宽
+                    boolean rowEnd = (i % PER_ROW == PER_ROW - 1) || (i == items.length - 1);
+                    if (rowEnd) {
+                        int filled = i % PER_ROW + 1;
+                        for (int k = filled; k < PER_ROW; k++) {
+                            View sp = new View(ctx);
+                            LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(0, 1, 1f);
+                            int gap = dp(5) / 2;
+                            spLp.setMargins(gap, gap, gap, gap);
+                            row.addView(sp, spLp);
+                        }
+                    }
                 }
             } else {
                 renderSystemOpeners(listBox, d, pathOrUri, name, isUri);
