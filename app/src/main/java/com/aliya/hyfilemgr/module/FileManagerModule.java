@@ -8330,13 +8330,9 @@ public class FileManagerModule extends HyVqModule {
         tvFormat.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorPrimary));
         box.addView(tvFormat);
-
-        // 格式列表：内嵌展开（不新开 Dialog——叠加全屏 Dialog 会在首帧
-        // 出现背景未就绪的黑闪）
-        // 格式下拉：独立浮层，向下覆盖在后续控件之上。
-        // 不占布局空间，因此展开/收起都不改变弹窗高度。
-        final FrameLayout fmtOverlay = new FrameLayout(ctx);
-        fmtOverlay.setVisibility(View.GONE);
+        // 格式下拉：PopupWindow 独立窗口，不参与弹窗布局，
+        // 展开/收起弹窗高度完全不变，也不受父容器裁剪影响。
+        final PopupWindow fmtPopup = new PopupWindow(ctx);
         final ScrollView fmtScroll = new ScrollView(ctx);
         fmtScroll.setVerticalScrollBarEnabled(true);
         fmtScroll.setBackground(UiKit.rounded(ctx, dp(10),
@@ -8347,13 +8343,10 @@ public class FileManagerModule extends HyVqModule {
         fmtList.setPadding(dp(4), dp(4), dp(4), dp(4));
         fmtScroll.addView(fmtList, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        // 小列表：最多 5 项高，超出滚动
-        FrameLayout.LayoutParams fsLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(44 * 5));
-        fsLp.topMargin = dp(4);
-        fmtOverlay.addView(fmtScroll, fsLp);
-        box.addView(fmtOverlay, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0));
+        fmtPopup.setContentView(fmtScroll);
+        fmtPopup.setFocusable(true);
+        fmtPopup.setOutsideTouchable(true);
+        fmtPopup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0));
 
         // ── 压缩等级 ──
         final TextView tvLevel = labelText("压缩等级");
@@ -8417,14 +8410,16 @@ public class FileManagerModule extends HyVqModule {
             tvLevelHint.setVisibility(supportLevel ? View.VISIBLE : View.GONE);
         };
         tvFormat.setOnClickListener(v -> {
-            boolean show = fmtOverlay.getVisibility() != View.VISIBLE;
-            if (show && fmtList.getChildCount() == 0) {
+            if (fmtPopup.isShowing()) {
+                fmtPopup.dismiss();
+                return;
+            }
+            if (fmtList.getChildCount() == 0) {
                 for (int i = 0; i < COMPRESS_FORMATS.length; i++) {
                     final int idx = i;
                     TextView row = new TextView(ctx);
                     StringBuilder rowText = new StringBuilder(COMPRESS_FORMATS[i][1]);
                     if ("1".equals(COMPRESS_FORMATS[i][2])) rowText.append("   · 支持密码");
-                    if ("0".equals(COMPRESS_FORMATS[i][4])) rowText.append("   · 仅解压");
                     row.setText(rowText);
                     row.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
                     row.setPadding(dp(14), dp(11), dp(14), dp(11));
@@ -8433,17 +8428,8 @@ public class FileManagerModule extends HyVqModule {
                     row.setTextColor(UiKit.color(ctx,
                             com.google.android.material.R.attr.colorOnSurface));
                     row.setOnClickListener(v2 -> {
-                        if ("0".equals(COMPRESS_FORMATS[idx][4])) {
-                            // RAR 只能解压：给出明确说明，不静默降级
-                            UiKit.toast(ctx,
-                                    "RAR 是专有压缩格式，只能解压不能创建。\n"
-                                            + "如需压缩请选 ZIP 或 7Z");
-                            return;
-                        }
                         fmtIdx[0] = idx;
-                        fmtList.animate().alpha(0f).setDuration(120)
-                                
-                                .withEndAction(() -> fmtList.setVisibility(View.GONE)).start();
+                        fmtPopup.dismiss();
                         applyFormat.run();
                     });
                     fmtList.addView(row, new LinearLayout.LayoutParams(
@@ -8451,14 +8437,17 @@ public class FileManagerModule extends HyVqModule {
                             ViewGroup.LayoutParams.WRAP_CONTENT));
                 }
             }
-            if (show) {
-                fmtOverlay.setVisibility(View.VISIBLE);
-                fmtOverlay.setAlpha(0f);
-                fmtOverlay.animate().alpha(1f).setDuration(140).start();
-            } else {
-                fmtOverlay.animate().alpha(0f).setDuration(120)
-                        .withEndAction(() -> fmtOverlay.setVisibility(View.GONE)).start();
-            }
+            fmtPopup.setWidth(Math.max(dp(180), tvFormat.getWidth()));
+            // 高度自适应，最多 5 项（超出滚动）
+            fmtPopup.setHeight(ViewGroup.LayoutParams.WRAP_CONTENT);
+            fmtScroll.setMinimumHeight(0);
+            int maxH = dp(44 * 5);
+            fmtList.measure(
+                    View.MeasureSpec.makeMeasureSpec(Math.max(dp(180), tvFormat.getWidth()),
+                            View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(maxH, View.MeasureSpec.AT_MOST));
+            fmtPopup.setHeight(Math.min(fmtList.getMeasuredHeight() + dp(8), maxH));
+            fmtPopup.showAsDropDown(tvFormat, 0, dp(2));
         });
         applyFormat.run();
 
