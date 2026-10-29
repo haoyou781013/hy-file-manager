@@ -203,6 +203,21 @@ public class FileManagerModule extends HyVqModule {
     private static final String PREF_NAV_LOCAL_OPEN = "nav_local_open";
     /** 侧边栏「工具」分组是否展开 */
     private static final String PREF_NAV_TOOLS_OPEN = "nav_tools_open";
+    /** 回收站启用开关 */
+    private static final String PREF_TRASH_ENABLED = "trash_enabled";
+    /** 是否默认移入回收站（关闭则直接物理删除） */
+    private static final String PREF_TRASH_DEFAULT = "trash_default";
+    /** 回收站自动清理天数（0 = 不自动清理） */
+    private static final String PREF_TRASH_KEEP_DAYS = "trash_keep_days";
+
+    /** 回收站是否启用（关闭后侧边栏不显示回收站入口） */
+    private static boolean trashEnabled = true;
+    /** 删除时是否默认移入回收站 */
+    private static boolean trashDefault = true;
+    /** 回收站保留天数，0 表示不自动清理 */
+    private static int trashKeepDays = 30;
+    /** 设置页「回收站」分组是否展开（仅界面状态） */
+    private boolean trashExpanded = true;
 
     /** 列表文件密度：1=紧凑 2=标准 3=宽松 */
     private static int listDensity = 2;
@@ -338,6 +353,9 @@ public class FileManagerModule extends HyVqModule {
         listDensity = Math.max(1, Math.min(3, sp.getInt(PREF_DENSITY, 2)));
         navLocalExpanded = sp.getBoolean(PREF_NAV_LOCAL_OPEN, true);
         navToolsExpanded = sp.getBoolean(PREF_NAV_TOOLS_OPEN, true);
+        trashEnabled = sp.getBoolean(PREF_TRASH_ENABLED, true);
+        trashDefault = sp.getBoolean(PREF_TRASH_DEFAULT, true);
+        trashKeepDays = Math.max(0, sp.getInt(PREF_TRASH_KEEP_DAYS, 30));
         com.aliya.hyfilemgr.util.DpiUtils.setOverrideDpi(sp.getInt(PREF_DPI, 0));
         recentFiles.clear();
         String rf = sp.getString(PREF_RECENT_FILES, "");
@@ -364,6 +382,9 @@ public class FileManagerModule extends HyVqModule {
                 .putInt(PREF_DENSITY, listDensity)
                 .putBoolean(PREF_NAV_LOCAL_OPEN, navLocalExpanded)
                 .putBoolean(PREF_NAV_TOOLS_OPEN, navToolsExpanded)
+                .putBoolean(PREF_TRASH_ENABLED, trashEnabled)
+                .putBoolean(PREF_TRASH_DEFAULT, trashDefault)
+                .putInt(PREF_TRASH_KEEP_DAYS, trashKeepDays)
                 .putInt(PREF_DPI, com.aliya.hyfilemgr.util.DpiUtils.getOverrideDpi())
                 .commit();
     }
@@ -447,6 +468,12 @@ public class FileManagerModule extends HyVqModule {
         // ⭐10 FAB 悬浮新建（先于侧边栏叠加层加入：侧边栏打开时被遮罩覆盖，符合 Material 规范）
         buildFab();
         buildNavOverlay();
+
+        // 启动时清理过期回收站文件（对比记录时间）
+        try {
+            purgeExpiredTrash();
+        } catch (Throwable ignored) {
+        }
 
         reloadAll();
         return rootContainer;
@@ -2984,6 +3011,83 @@ public class FileManagerModule extends HyVqModule {
                     showFileSettings();
                 });
 
+        // ── 回收站（展开项）──
+        final LinearLayout trashBox = new LinearLayout(ctx);
+        trashBox.setOrientation(LinearLayout.VERTICAL);
+        trashBox.setVisibility(trashExpanded ? View.VISIBLE : View.GONE);
+
+        addInfoRow(trashBox, "启用回收站",
+                trashEnabled ? "开启 · 侧边栏显示回收站入口" : "关闭 · 删除直接物理删除",
+                trashEnabled, v -> {
+                    trashEnabled = !trashEnabled;
+                    savePrefBool(PREF_TRASH_ENABLED, trashEnabled);
+                    persistState();
+                    hideSettingsDialog();
+                    showFileSettings();
+                    UiKit.toast(ctx, trashEnabled ? "回收站已启用" : "回收站已关闭");
+                });
+
+        addInfoRow(trashBox, "默认移入回收站",
+                trashDefault ? "开启 · 删除时移到回收站，可恢复" : "关闭 · 删除时直接物理删除",
+                trashDefault, v -> {
+                    if (!trashEnabled) {
+                        UiKit.toast(ctx, "请先启用回收站");
+                        return;
+                    }
+                    trashDefault = !trashDefault;
+                    savePrefBool(PREF_TRASH_DEFAULT, trashDefault);
+                    persistState();
+                    hideSettingsDialog();
+                    showFileSettings();
+                    UiKit.toast(ctx, trashDefault ? "删除将移入回收站" : "删除将直接清除");
+                });
+
+        addInfoRow(trashBox, "自动清理周期",
+                trashKeepDays <= 0 ? "不自动清理"
+                        : ("保留 " + trashKeepDays + " 天 · 启动时检查"),
+                trashKeepDays > 0, v -> {
+                    showTrashKeepDaysPicker();
+                });
+
+        final LinearLayout trashHeader = new LinearLayout(ctx);
+        trashHeader.setOrientation(LinearLayout.HORIZONTAL);
+        trashHeader.setGravity(Gravity.CENTER_VERTICAL);
+        trashHeader.setPadding(dp(4), dp(10), dp(4), dp(6));
+        trashHeader.setBackgroundResource(R.drawable.bg_ripple_round);
+        trashHeader.setClickable(true);
+        ImageView trashArrow = new ImageView(ctx);
+        trashArrow.setImageResource(R.drawable.ic_chevron_right);
+        trashArrow.setColorFilter(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        trashArrow.setLayoutParams(new LinearLayout.LayoutParams(dp(14), dp(14)));
+        trashArrow.setRotation(trashExpanded ? 90f : 0f);
+        trashHeader.addView(trashArrow);
+        TextView trashTitle = new TextView(ctx);
+        trashTitle.setText("回收站");
+        trashTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        trashTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        trashTitle.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        LinearLayout.LayoutParams ttLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        ttLp.leftMargin = dp(8);
+        trashHeader.addView(trashTitle, ttLp);
+        trashHeader.setOnClickListener(v -> {
+            trashExpanded = !trashExpanded;
+            trashArrow.animate().rotation(trashExpanded ? 90f : 0f).setDuration(180).start();
+            if (trashExpanded) {
+                trashBox.setVisibility(View.VISIBLE);
+                trashBox.setAlpha(0f);
+                trashBox.animate().alpha(1f).setDuration(180).start();
+            } else {
+                trashBox.animate().alpha(0f).setDuration(150)
+                        .withEndAction(() -> trashBox.setVisibility(View.GONE)).start();
+            }
+        });
+        box.addView(trashHeader, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        box.addView(trashBox);
+
         // ── 个性化 ──
         addSettingsRow(box, "个性化",
                 "显示密度(DPI) · 列表文件密度", R.drawable.ic_sliders, v -> {
@@ -3205,9 +3309,27 @@ public class FileManagerModule extends HyVqModule {
             if (bottomNav != null) bottomNav.setVisibility(View.GONE);
             if (fabNew != null) fabNew.setVisibility(View.GONE);
 
-            // 直接可见（不做位移动画，与文件列表同级切换）
-            pv.setAlpha(1f);
-            pv.setTranslationY(0f);
+            // 进场动画：自下而上淡入（与文件列表同级切换，不需要位移叠加层）
+            pv.setAlpha(0f);
+            pv.setTranslationY(dp(28));
+            pv.getViewTreeObserver().addOnPreDrawListener(
+                    new android.view.ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    android.view.ViewTreeObserver cur = pv.getViewTreeObserver();
+                    if (!cur.isAlive()) return true;
+                    cur.removeOnPreDrawListener(this);
+                    pv.setAlpha(0f);
+                    pv.setTranslationY(dp(28));
+                    pv.animate()
+                            .alpha(1f)
+                            .translationY(0f)
+                            .setDuration(220)
+                            .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                            .start();
+                    return true;
+                }
+            });
             terminalPanel.start();
 
             // 立刻拉起键盘
@@ -3225,18 +3347,73 @@ public class FileManagerModule extends HyVqModule {
         final com.aliya.hyfilemgr.terminal.TerminalPanel tp = terminalPanel;
         final View pv = tp.getView();
         terminalPanel = null;
-        tp.close();
-        contentWrapRef.removeView(pv);
-
-        if (fileContentView != null) fileContentView.setVisibility(View.VISIBLE);
-        if (bottomNav != null) {
-            bottomNav.setAlpha(1f);
-            bottomNav.setTranslationY(0f);
-            bottomNav.setVisibility(View.VISIBLE);
-        }
-        if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
-        if (multiMode) updateOpBar();
+        tp.hideKeyboard();
+        // 退场动画结束后再移除视图并恢复文件列表
+        pv.animate()
+                .alpha(0f)
+                .translationY(dp(28))
+                .setDuration(180)
+                .setInterpolator(new android.view.animation.AccelerateInterpolator())
+                .withEndAction(() -> {
+                    tp.close();
+                    if (contentWrapRef != null) contentWrapRef.removeView(pv);
+                    if (fileContentView != null) {
+                        fileContentView.setAlpha(0f);
+                        fileContentView.setVisibility(View.VISIBLE);
+                        fileContentView.animate().alpha(1f).setDuration(200).start();
+                    }
+                    if (bottomNav != null) {
+                        bottomNav.setAlpha(1f);
+                        bottomNav.setTranslationY(0f);
+                        bottomNav.setVisibility(View.VISIBLE);
+                    }
+                    if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
+                    if (multiMode) updateOpBar();
+                })
+                .start();
     }
+    /** 回收站保留天数选择 */
+    private void showTrashKeepDaysPicker() {
+        final int[] opts = {0, 1, 3, 7, 15, 30, 60, 90, 180};
+        String[] labels = {"不自动清理", "1 天", "3 天", "7 天", "15 天",
+                "30 天", "60 天", "90 天", "180 天"};
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "自动清理周期"));
+
+        TextView hint = new TextView(ctx);
+        hint.setText("启动时对比回收站文件的记录时间，超过周期自动清除。\n"
+                + "记录时间 = 文件移入回收站的时刻。");
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hint.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        hint.setPadding(dp(4), 0, dp(4), dp(8));
+        box.addView(hint);
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        for (int i = 0; i < opts.length; i++) {
+            final int days = opts[i];
+            boolean active = (trashKeepDays == days);
+            addInfoRow(box, labels[i],
+                    active ? "当前设置" : "点按选择", active, v -> {
+                        trashKeepDays = days;
+                        savePrefInt(PREF_TRASH_KEEP_DAYS, days);
+                        persistState();
+                        UiKit.dismissWithAnim(d);
+                        hideSettingsDialog();
+                        showFileSettings();
+                        UiKit.toast(ctx, days <= 0 ? "已关闭自动清理"
+                                : "回收站保留 " + days + " 天");
+                    });
+        }
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        box.addView(btns, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim(d)));
+        d.show();
+    }
+
     /** 个性化设置页：显示密度(DPI) + 列表文件密度（均为进度条式） */
     private void showAppearanceSettings() {
         LinearLayout box = new LinearLayout(ctx);
@@ -4024,8 +4201,10 @@ public class FileManagerModule extends HyVqModule {
         list.add(new MountEntry("storage", "内部存储", storageInfo(storePath),
                 R.drawable.ic_folder, false, true, storePath));
         // 回收站（用户规划 2026-08-16：回收站 → 左侧边栏）；虚拟路径 trash://
+        if (trashEnabled) {
         list.add(new MountEntry(PREFIX_TRASH, "回收站", "已删除文件，可恢复",
                 android.R.drawable.ic_menu_delete, false, false, PREFIX_TRASH));
+        }
         // SAF 授权目录（临时开关 SHOW_SAF_MOUNTS=false 时隐藏，授权数据保留，改回 true 恢复）
         if (SHOW_SAF_MOUNTS) {
             for (String[] m : listGrantedMounts()) {
@@ -4680,7 +4859,9 @@ public class FileManagerModule extends HyVqModule {
                             deleteTree(f); // 回收站：物理删除
                         } else {
                             // 移入回收站（保留原路径层级，恢复=移回原位置）
-                            if (!moveToTrash(f)) {
+                            // trashEnabled 且 trashDefault 才移入回收站；否则直接物理删除
+                            boolean useTrash = trashEnabled && trashDefault;
+                            if (!useTrash || !moveToTrash(f)) {
                                 // 跨分区/权限失败回退物理删除（数据可能已部分移动）
                                 deleteTree(f);
                             }
@@ -8588,6 +8769,49 @@ public class FileManagerModule extends HyVqModule {
             if (f.isDirectory()) collectTrash(f, out);
             else out.add(FileEntry.file(f.getAbsolutePath(), f.length(), f.lastModified()));
         }
+    }
+
+    /**
+     * 回收站自动清理。
+     *
+     * <p>启动时对比回收站内每个文件的「记录时间」（lastModified，即移入时刻）
+     * 与保留天数，超过则物理删除。trashKeepDays == 0 表示不清理。</p>
+     *
+     * @return 本次清理的文件数
+     */
+    private int purgeExpiredTrash() {
+        if (!trashEnabled || trashKeepDays <= 0) return 0;
+        File trash = new File(TRASH_DIR);
+        if (!trash.exists()) return 0;
+        long deadline = System.currentTimeMillis()
+                - trashKeepDays * 24L * 60L * 60L * 1000L;
+        int removed = purgeExpiredIn(trash, deadline);
+        if (removed > 0) {
+            android.util.Log.i("HYTrash", "auto purged " + removed
+                    + " items older than " + trashKeepDays + " days");
+        }
+        return removed;
+    }
+
+    /** 递归清理过期文件；顺带清掉变空的目录 */
+    private int purgeExpiredIn(File dir, long deadline) {
+        File[] fs = dir.listFiles();
+        if (fs == null) return 0;
+        int n = 0;
+        for (File f : fs) {
+            if (f.isDirectory()) {
+                n += purgeExpiredIn(f, deadline);
+                // 子目录空了就删掉（不删除 TRASH_DIR 自身）
+                File[] left = f.listFiles();
+                if (left != null && left.length == 0 && !f.equals(new File(TRASH_DIR))) {
+                    //noinspection ResultOfMethodCallIgnored
+                    f.delete();
+                }
+            } else if (f.lastModified() < deadline) {
+                if (f.delete()) n++;
+            }
+        }
+        return n;
     }
 
     /** 移入回收站：目标 = TRASH_DIR + 原绝对路径（保留层级，恢复=移回原位置）；重名加时间戳 */
