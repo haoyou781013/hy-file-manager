@@ -25,3 +25,9 @@
 *手抄单*
 *secret*
 *token*
+
+# 构建产物
+app/build/
+build/
+.gradle/
+local.properties
