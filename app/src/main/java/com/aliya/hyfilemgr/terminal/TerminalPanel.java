@@ -1,5 +1,7 @@
 package com.aliya.hyfilemgr.terminal;
 
+import com.aliya.hyfilemgr.R;
+
 import android.content.Context;
 import android.graphics.Typeface;
 import android.text.method.ScrollingMovementMethod;
@@ -9,6 +11,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
+import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -107,6 +110,41 @@ public class TerminalPanel {
             if (onClose != null) onClose.onClose();
         }));
 
+        // ── 快捷键工具栏（Ctrl / 方向键 / Esc / Tab）──
+        // 真实终端常用控制键在这里一键发送，避免长按软键盘找符号。
+        HorizontalScrollView toolScroll = new HorizontalScrollView(ctx);
+        toolScroll.setHorizontalScrollBarEnabled(false);
+        toolScroll.setBackgroundColor(0xFF161B22);
+        LinearLayout tools = new LinearLayout(ctx);
+        tools.setOrientation(LinearLayout.HORIZONTAL);
+        tools.setPadding(dp(6), dp(4), dp(6), dp(4));
+
+        // 方向键（vi/less 等场景常用）
+        tools.addView(termKey("←", "\u001b[D"));
+        tools.addView(termKey("↑", "\u001b[A"));
+        tools.addView(termKey("↓", "\u001b[B"));
+        tools.addView(termKey("→", "\u001b[C"));
+        tools.addView(termKey("Tab", "\t"));
+        tools.addView(termKey("Esc", "\u001b"));
+        tools.addView(termKey("Ctrl+C", "\u0003"));
+        tools.addView(termKey("Ctrl+D", "\u0004"));
+        tools.addView(termKey("Ctrl+Z", "\u001a"));
+        tools.addView(termKey("Ctrl+L", "\u000c"));
+        tools.addView(termKey("Ctrl+A", "\u0001"));
+        tools.addView(termKey("Ctrl+E", "\u0005"));
+        tools.addView(termKey("Home", "\u0001"));
+        tools.addView(termKey("End", "\u0005"));
+        tools.addView(termKey("|", "|"));
+        tools.addView(termKey("~", "~"));
+        tools.addView(termKey("/", "/"));
+        tools.addView(termKey("-", "-"));
+        tools.addView(termKey("_", "_"));
+
+        toolScroll.addView(tools, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        box.addView(toolScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         // ── 终端视图（Termux 同款：直接在其上输入）──
         termView = new TerminalView(ctx);
         termView.setSink(new TerminalView.Sink() {
@@ -150,6 +188,42 @@ public class TerminalPanel {
         }, 200);
 
         return box;
+    }
+
+    /**
+     * 工具栏按键：发送控制字符/转义序列给 shell。
+     *
+     * <p>方向键发送 ANSI 转义序列（ESC[A 等），Ctrl+X 发送对应控制码，
+     * 与真实终端行为一致，可在 vim/less 等程序中使用。</p>
+     */
+    private TextView termKey(String label, final String seq) {
+        TextView tv = new TextView(ctx);
+        tv.setText(label);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        tv.setTypeface(Typeface.MONOSPACE);
+        tv.setTextColor(0xFFC9D1D9);
+        tv.setGravity(Gravity.CENTER);
+        tv.setPadding(dp(10), dp(6), dp(10), dp(6));
+        tv.setBackgroundResource(R.drawable.bg_ripple_round);
+        tv.setClickable(true);
+        tv.setOnClickListener(v -> {
+            v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(60)
+                    .withEndAction(() -> v.animate().scaleX(1f).scaleY(1f)
+                            .setDuration(120).start()).start();
+            if (session != null && session.isRunning()) {
+                session.send(seq);
+                // 可打印字符本地回显；控制字符不回显（由 shell 自行响应）
+                if (seq.length() == 1 && seq.charAt(0) >= ' ') {
+                    termView.echo(seq);
+                }
+            }
+            termView.requestFocus();
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.rightMargin = dp(4);
+        tv.setLayoutParams(lp);
+        return tv;
     }
 
     private TextView btn(String text, View.OnClickListener onClick) {

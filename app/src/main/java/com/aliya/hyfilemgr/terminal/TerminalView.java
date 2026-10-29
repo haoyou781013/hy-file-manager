@@ -45,8 +45,22 @@ public class TerminalView extends ScrollView {
 
     /** 提示符（如 "$ "）。null 表示不显示 */
     private String promptStr = "$ ";
-    /** 光标字符 */
-    private static final String CURSOR = "_";
+    /** 光标字符（闪烁显示/隐藏） */
+    private static final String CURSOR_ON = "▏";
+    private static final String CURSOR_OFF = " ";
+    /** 光标当前是否可见 */
+    private boolean cursorVisible = true;
+    /** 光标闪烁定时器（500ms 一次，贴近真实终端） */
+    private final android.os.Handler cursorHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable cursorBlink = new Runnable() {
+        @Override
+        public void run() {
+            cursorVisible = !cursorVisible;
+            repaint();
+            cursorHandler.postDelayed(this, 530);
+        }
+    };
     /** 当前行已输入的字符（用于重绘提示符 + 输入 + 光标） */
     private final StringBuilder lineBuf = new StringBuilder();
     /** 屏幕已刷出的内容（不含当前行） */
@@ -191,7 +205,7 @@ public class TerminalView extends ScrollView {
         StringBuilder all = new StringBuilder(flushed);
         if (promptStr != null) all.append(promptStr);
         all.append(lineBuf);
-        all.append(CURSOR);
+        all.append(cursorVisible ? CURSOR_ON : CURSOR_OFF);
         inner.setText(all.toString());
         post(() -> fullScroll(FOCUS_DOWN));
     }
@@ -270,6 +284,31 @@ public class TerminalView extends ScrollView {
         if (promptStr != null) all.append(promptStr);
         all.append(lineBuf);
         return all.toString();
+    }
+
+    /** 开始光标闪烁（视图可见时调用） */
+    public void startCursorBlink() {
+        cursorHandler.removeCallbacks(cursorBlink);
+        cursorVisible = true;
+        cursorHandler.postDelayed(cursorBlink, 530);
+    }
+
+    /** 停止光标闪烁（视图不可见/销毁时调用） */
+    public void stopCursorBlink() {
+        cursorHandler.removeCallbacks(cursorBlink);
+        cursorVisible = true;
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        startCursorBlink();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        stopCursorBlink();
+        super.onDetachedFromWindow();
     }
 
     public void showIme() {

@@ -5806,7 +5806,9 @@ public class FileManagerModule extends HyVqModule {
         final String ext = currentEditTab.file.getName().toLowerCase();
         final boolean isHtml = ext.endsWith(".html") || ext.endsWith(".htm")
                 || ext.endsWith(".xhtml") || ext.endsWith(".mht");
-        final boolean isMd = ext.endsWith(".md") || ext.endsWith(".markdown") || ext.endsWith(".txt");
+        final boolean isMd = ext.endsWith(".md") || ext.endsWith(".markdown")
+                || ext.endsWith(".mdown") || ext.endsWith(".mkd")
+                || ext.endsWith(".txt");
         if (!isHtml && !isMd) {
             UiKit.toast(ctx, "仅支持 HTML / Markdown / TXT 预览");
             return;
@@ -5823,9 +5825,9 @@ public class FileManagerModule extends HyVqModule {
         final String html;
         if (isHtml) {
             html = content;
-        } else if (isMd && !ext.endsWith(".txt")) {
-            // 用共享 MarkdownUtils（与更新详情页一致）；CSS 沿用编辑器调色板
-            String body = android.text.TextUtils.htmlEncode(content).replace("\n", "<br>");
+        } else if (isMd) {
+            // 真正的 Markdown 渲染（零依赖自实现，见 util/MarkdownUtils）
+            String body = com.aliya.hyfilemgr.util.MarkdownUtils.toHtml(content);
             html = "<html><head><meta charset=\"utf-8\">" + css + "</head><body>"
                     + body + "</body></html>";
         } else {
