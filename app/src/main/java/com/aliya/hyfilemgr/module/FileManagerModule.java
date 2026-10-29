@@ -168,6 +168,11 @@ public class FileManagerModule extends HyVqModule {
     /** 编辑器对话框与控件（ensureEditorDialog 构建，会话内复用） */
     private android.app.Dialog editorDialog = null;
     private EditText editorEdit = null;
+
+    /** 编辑器：回车自动缩进（可在「编辑器设置」中关闭） */
+    private boolean editorAutoIndent = true;
+    /** 编辑器：Tab / 一级缩进宽度（空格数） */
+    private int editorTabWidth = 4;
     private TextView editorStat = null;
     private TextView editorHeader = null;
     private LinearLayout editorTabBar = null;
@@ -5004,6 +5009,7 @@ public class FileManagerModule extends HyVqModule {
                 }
             }
         };
+        attachAutoIndent(editorEdit);
         editorEdit.addTextChangedListener(editorWatcher);
         renderEditorTabs();
     }
@@ -5818,6 +5824,182 @@ public class FileManagerModule extends HyVqModule {
 
     /** 打开编辑器侧边栏：左侧抽屉（78% 屏宽）+ 遮罩，面板左滑入 + 遮罩淡入同步
      *  （动画对齐主界面侧边栏 250ms） */
+    /** 编辑器：另存为（复制到新路径，原文件不变） */
+    private void showEditorSaveAsDialog() {
+        if (currentEditTab == null) {
+            UiKit.toast(ctx, "没有打开的编辑标签");
+            return;
+        }
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "另存为"));
+
+        TextView hint = new TextView(ctx);
+        hint.setText("输入目标路径（支持绝对路径，或相对当前文件所在目录）");
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hint.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        hint.setPadding(dp(4), 0, dp(4), dp(8));
+        box.addView(hint);
+
+        final EditText et = new EditText(ctx);
+        File cur = currentEditTab.file;
+        String dir = (cur != null && cur.getParent() != null)
+                ? cur.getParent() : "/sdcard";
+        et.setText(dir + "/" + (cur != null ? cur.getName() : "untitled.txt"));
+        et.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        et.setSingleLine(true);
+        box.addView(et);
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        box.addView(btns, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        btns.addView(textButton("取消", v -> d.dismiss()));
+        btns.addView(textButton("保存", v -> {
+            String path = et.getText().toString().trim();
+            if (path.isEmpty()) {
+                UiKit.toast(ctx, "路径不能为空");
+                return;
+            }
+            File target = new File(path);
+            if (!target.isAbsolute()) target = new File(dir, path);
+            d.dismiss();
+            doSaveAs(target);
+        }));
+        d.show();
+        et.postDelayed(() -> {
+            et.requestFocus();
+            et.setSelection(et.getText().length());
+            android.view.inputmethod.InputMethodManager imm =
+                    (android.view.inputmethod.InputMethodManager)
+                            ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) imm.showSoftInput(et, 0);
+        }, 150);
+    }
+
+    /** 执行另存为：写文件，成功后提示（不切换当前标签） */
+    private void doSaveAs(File target) {
+        if (currentEditTab == null) return;
+        try {
+            File parent = target.getParentFile();
+            if (parent != null && !parent.exists() && !parent.mkdirs()) {
+                UiKit.toast(ctx, "无法创建目录：" + parent);
+                return;
+            }
+            String text = editorEdit != null ? editorEdit.getText().toString()
+                    : String.valueOf(currentEditTab.content);
+            try (java.io.OutputStream os = new java.io.FileOutputStream(target)) {
+                os.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                os.flush();
+            }
+            UiKit.toast(ctx, "已另存为：" + target.getName());
+            reloadAll();
+        } catch (Throwable t) {
+            UiKit.toast(ctx, "另存为失败：" + t.getMessage());
+        }
+    }
+
+    /** 编辑器：复制全部文本到剪贴板 */
+    private void copyEditorAllText() {
+        try {
+            String text = editorEdit != null
+                    ? editorEdit.getText().toString()
+                    : (currentEditTab != null
+                        ? String.valueOf(currentEditTab.content) : "");
+            if (text.isEmpty()) {
+                UiKit.toast(ctx, "编辑器内容为空");
+                return;
+            }
+            android.content.ClipboardManager cm =
+                    (android.content.ClipboardManager)
+                            ctx.getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null) {
+                cm.setPrimaryClip(android.content.ClipData.newPlainText(
+                        "编辑器内容", text));
+                UiKit.toast(ctx, "已复制 " + text.length() + " 字符");
+            }
+        } catch (Throwable t) {
+            UiKit.toast(ctx, "复制失败：" + t.getMessage());
+        }
+    }
+
+    /**
+     * 编辑器自动缩进。
+     *
+     * <p>回车时：
+     * ① 继承上一行的前导空白（空格 / Tab 原样复制）
+     * ② 若上一行以 <code>{ [ ( :</code> 结尾，再追加一级缩进（Tab 宽度的空格）</p>
+     *
+     * <p>用 TextWatcher 而非 OnKeyListener 实现：软键盘回车不一定产生
+     * KEYCODE_ENTER，但一定会产生文本变化（换行符）。</p>
+     */
+    private void attachAutoIndent(final EditText et) {
+        if (et == null) return;
+        et.addTextChangedListener(new android.text.TextWatcher() {
+            /** 上一次的文本，用于判断「刚插入了一个换行」 */
+            private String prev = "";
+            /** 自增标记，本轮插入是我们自己做的不再重复处理 */
+            private boolean selfEdit = false;
+
+            @Override
+            public void beforeTextChanged(CharSequence s2, int start, int count, int after) { }
+
+            @Override
+            public void onTextChanged(CharSequence s2, int start, int before, int count) { }
+
+            @Override
+            public void afterTextChanged(android.text.Editable e2) {
+                if (selfEdit) {
+                    prev = e2.toString();
+                    return;
+                }
+                String now = e2.toString();
+                String old = prev;
+                prev = now;
+                if (!editorAutoIndent) return;
+                if (now.length() != old.length() + 1) return;   // 只处理插入 1 字符
+
+                // 找到插入位置并确认是换行
+                int cur = et.getSelectionStart();
+                if (cur <= 0 || cur > now.length()) return;
+                char inserted = now.charAt(cur - 1);
+                if (inserted != '\n') return;
+
+                // 上一行（不含刚插入的换行）
+                int lineStart = now.lastIndexOf('\n', cur - 2);
+                String prevLine = now.substring(lineStart + 1, cur - 1);
+
+                // ① 前导空白
+                StringBuilder indent = new StringBuilder();
+                for (int i = 0; i < prevLine.length(); i++) {
+                    char ch = prevLine.charAt(i);
+                    if (ch == ' ' || ch == '\t') indent.append(ch);
+                    else break;
+                }
+                // ② 结构缩进
+                String trimmed = prevLine.trim();
+                if (!trimmed.isEmpty()) {
+                    char last = trimmed.charAt(trimmed.length() - 1);
+                    if (last == '{' || last == '[' || last == '(' || last == ':') {
+                        indent.append(" ".repeat(Math.max(1, editorTabWidth)));
+                    }
+                }
+                if (indent.length() == 0) return;
+
+                selfEdit = true;
+                try {
+                    e2.insert(cur, indent.toString());
+                    et.setSelection(cur + indent.length());
+                } catch (Throwable ignored) {
+                }
+                selfEdit = false;
+                prev = e2.toString();
+            }
+        });
+    }
+
     private void showEditorDrawer() {
         if (currentEditTab == null) return;
         if (editorDrawer != null && editorDrawer.isShowing()) {
@@ -5890,6 +6072,14 @@ public class FileManagerModule extends HyVqModule {
         addDrawerMenuRow(menu, "HTML/Markdown 预览", R.drawable.ic_preview, v -> {
             closeEditorDrawer();
             showPreviewDialog();
+        });
+        addDrawerMenuRow(menu, "另存为…", R.drawable.ic_save, v -> {
+            closeEditorDrawer();
+            showEditorSaveAsDialog();
+        });
+        addDrawerMenuRow(menu, "复制全部文本", R.drawable.ic_copy, v -> {
+            closeEditorDrawer();
+            copyEditorAllText();
         });
         addDrawerMenuRow(menu, "保存当前文件", R.drawable.ic_save, v -> {
             closeEditorDrawer();

@@ -35,10 +35,7 @@ public class TerminalPanel {
     private final LinearLayout root;
 
     private TerminalSession session;
-    private TextView output;
-    private EditText input;      // 0 宽隐藏输入框，仅接管键盘
-    private TextView inputDisplay; // 可见的输入回显
-    private ScrollView scroll;
+    private TerminalView termView;
     private TextView pwdView;
     private final StringBuilder buffer = new StringBuilder();
 
@@ -63,7 +60,6 @@ public class TerminalPanel {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setBackgroundColor(0xFF0D1117);
-        // 拦截触摸：避免触摸穿透到下层（已隐藏的文件列表仍占位）
         box.setClickable(true);
         box.setFocusable(true);
         box.setFocusableInTouchMode(true);
@@ -103,102 +99,43 @@ public class TerminalPanel {
 
         top.addView(btn("清屏", v -> clearOutput()));
         top.addView(btn("复制", v -> copyOutput()));
-        top.addView(btn("中断", v -> {
+        top.addView(btn("Ctrl+C", v -> {
             if (session != null) session.sendInterrupt();
+            termView.append("^C\n");
         }));
         top.addView(btn("关闭", v -> {
             if (onClose != null) onClose.onClose();
         }));
 
-        // ── 输出区 ──
-        scroll = new ScrollView(ctx);
-        scroll.setFillViewport(true);
-        output = new TextView(ctx);
-        output.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        output.setTypeface(Typeface.MONOSPACE);
-        output.setTextColor(0xFFC9D1D9);
-        output.setTextIsSelectable(true);
-        output.setMovementMethod(new ScrollingMovementMethod());
-        output.setPadding(dp(12), dp(10), dp(12), dp(10));
-        output.setText(banner());
-        scroll.setOnClickListener(v -> keepFocus());
-        output.setOnClickListener(v -> keepFocus());
-        scroll.addView(output, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        box.addView(scroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        // ── 终端视图（Termux 同款：直接在其上输入）──
+        termView = new TerminalView(ctx);
+        termView.setSink(new TerminalView.Sink() {
+            @Override
+            public void onText(String text) {
+                // 本地回显 + 送给 shell
+                termView.append(text);
+                if (session != null && session.isRunning()) session.send(text);
+            }
 
-        // ── 输入行 ──
-        LinearLayout inputRow = new LinearLayout(ctx);
-        inputRow.setOrientation(LinearLayout.HORIZONTAL);
-        inputRow.setGravity(Gravity.CENTER_VERTICAL);
-        inputRow.setPadding(dp(10), dp(4), dp(8), dp(8));
-        inputRow.setBackgroundColor(0xFF161B22);
-        inputRow.setClickable(true);
-        inputRow.setOnClickListener(v -> keepFocus());
-        box.addView(inputRow, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            @Override
+            public void onEnter() {
+                termView.append("\n");
+                if (session != null && session.isRunning()) session.send("\n");
+            }
 
-        TextView prompt = new TextView(ctx);
-        prompt.setText("$ ");
-        prompt.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        prompt.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        prompt.setTextColor(0xFF7EE787);
-        inputRow.addView(prompt);
-
-        // ── Termux 同款输入方案 ──
-        // 不用可见 EditText 承载输入（它一旦 setText 就会触发焦点/IME 重算，
-        // 部分 ROM 上直接收起键盘）。改为：
-        //   ① 一个 0 宽度的隐藏 EditText 只负责「接住」输入法事件
-        //   ② 可见的是一行自绘 TextView（显示当前输入缓冲）
-        //   ③ 隐藏 EditText 始终持有焦点，键盘自然常驻
-        inputDisplay = new TextView(ctx);
-        inputDisplay.setText("");
-        inputDisplay.setHint("输入命令…");
-        inputDisplay.setHintTextColor(0xFF484F58);
-        inputDisplay.setTextColor(0xFFC9D1D9);
-        inputDisplay.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        inputDisplay.setTypeface(Typeface.MONOSPACE);
-        inputDisplay.setSingleLine(true);
-        inputDisplay.setPadding(0, dp(8), dp(6), dp(8));
-        inputDisplay.setOnClickListener(v -> keepFocus());
-        inputDisplay.setClickable(true);
-        inputDisplay.setFocusable(false);
-        inputRow.addView(inputDisplay, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        // 0 宽隐藏输入框：只用来接管键盘
-        input = new EditText(ctx);
-        input.setBackgroundColor(0x00000000);
-        input.setAlpha(0f);
-        input.setImeOptions(EditorInfo.IME_ACTION_SEND
-                | EditorInfo.IME_FLAG_NO_FULLSCREEN
-                | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
-        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT
-                | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        input.addTextChangedListener(new android.text.TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s2, int a, int b, int c) { }
-            @Override public void onTextChanged(CharSequence s2, int a, int b, int c) { }
-            @Override public void afterTextChanged(android.text.Editable e2) {
-                inputDisplay.setText(e2.toString());
+            @Override
+            public void onBackspace() {
+                if (session != null && session.isRunning()) session.send("\b");
             }
         });
-        input.setOnEditorActionListener((v, actionId, event) -> {
-            runCommand();
-            return true;
-        });
-        // 1dp×1dp：0 尺寸在部分 ROM 上无法获得输入焦点，1dp 足够且不可见
-        inputRow.addView(input, new LinearLayout.LayoutParams(dp(1), dp(1)));
+        termView.clear(banner());
+        box.addView(termView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        inputRow.addView(btn("执行", v -> runCommand()));
-
-        // 启动后自动聚焦并弹起输入法
-        input.postDelayed(() -> {
-            input.requestFocus();
-            android.view.inputmethod.InputMethodManager imm =
-                    (android.view.inputmethod.InputMethodManager)
-                            ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
-            if (imm != null) imm.showSoftInput(input, 0);
+        // 打开即聚焦并弹键盘
+        termView.postDelayed(() -> {
+            termView.requestFocus();
+            termView.showIme();
         }, 200);
 
         return box;
@@ -245,71 +182,24 @@ public class TerminalPanel {
         session.start();
     }
 
-    private void runCommand() {
-        String cmd = input.getText().toString();
-        // 只清空内容，不动焦点：隐藏输入框始终保持 focus，键盘不会收起
-        input.setText("");
-        inputDisplay.setText("");
-        if (cmd.trim().isEmpty()) {
-            appendOutput("$ \n");
-            keepFocus();
-            return;
-        }
-        appendOutput("$ " + cmd + "\n");
-        if (session != null) session.sendLine(cmd);
-        // cd 后同步顶栏 pwd 显示
-        if (cmd.trim().startsWith("cd ")) {
-            String arg = cmd.trim().substring(3).trim();
-            if (!arg.isEmpty() && !arg.startsWith("-")) {
-                workDir = arg.startsWith("/") ? arg
-                        : (workDir.endsWith("/") ? workDir + arg : workDir + "/" + arg);
-                pwdView.setText(workDir);
-            }
-        }
-        keepFocus();
-    }
-
-    /** 保持输入框焦点并让输入法继续显示，避免执行后键盘收起 */
-    private void keepFocus() {
-        if (input == null) return;
-        if (!input.hasFocus()) input.requestFocus();
-        android.view.inputmethod.InputMethodManager imm =
-                (android.view.inputmethod.InputMethodManager)
-                        ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
-        if (imm != null) {
-            // 已显示就不重复调用（重复调用在某些 ROM 上反而会闪收）
-            if (!imm.isActive(input)) {
-                imm.showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
-            }
-        }
-    }
-
+    /** 输出追加（来自 shell） */
     private void appendOutput(String text) {
-        buffer.append(text);
-        if (buffer.length() > MAX_LINES * 80) {
-            int cut = buffer.length() - MAX_LINES * 60;
-            int nl = buffer.indexOf("\n", Math.max(0, cut));
-            if (nl > 0) buffer.delete(0, nl + 1);
-        }
-        output.setText(buffer.toString());
-        scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+        if (termView == null) return;
+        termView.append(text);
     }
 
     private void clearOutput() {
-        buffer.setLength(0);
-        buffer.append(banner());
-        output.setText(buffer.toString());
-        keepFocus();
+        if (termView != null) termView.clear(banner());
     }
 
     private void copyOutput() {
         try {
+            String text = termView != null ? termView.dump() : "";
             android.content.ClipboardManager cm =
                     (android.content.ClipboardManager) ctx.getSystemService(
                             Context.CLIPBOARD_SERVICE);
             if (cm != null) {
-                cm.setPrimaryClip(android.content.ClipData.newPlainText(
-                        "终端输出", buffer.toString()));
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("终端输出", text));
                 android.widget.Toast.makeText(ctx, "已复制全部输出",
                         android.widget.Toast.LENGTH_SHORT).show();
             }
@@ -319,18 +209,16 @@ public class TerminalPanel {
         }
     }
 
-    /** 供外部请求输入焦点（面板显示后自动弹键盘） */
+    /** 供宿主在面板显示后调用，聚焦终端并弹键盘 */
     public void requestInputFocus() {
-        keepFocus();
+        if (termView != null) {
+            termView.requestFocus();
+            termView.showIme();
+        }
     }
 
-    /** 隐藏输入法（面板关闭前调用） */
     public void hideKeyboard() {
-        if (input == null) return;
-        android.view.inputmethod.InputMethodManager imm =
-                (android.view.inputmethod.InputMethodManager)
-                        ctx.getSystemService(Context.INPUT_METHOD_SERVICE);
-        if (imm != null) imm.hideSoftInputFromWindow(input.getWindowToken(), 0);
+        if (termView != null) termView.hideIme();
     }
 
     public void close() {
