@@ -112,19 +112,30 @@ public class TerminalPanel {
         termView.setSink(new TerminalView.Sink() {
             @Override
             public void onText(String text) {
-                // 本地回显 + 送给 shell
-                termView.append(text);
+                // 本地回显（带提示符 + 光标） + 送给 shell
+                termView.echo(text);
                 if (session != null && session.isRunning()) session.send(text);
             }
 
             @Override
             public void onEnter() {
-                termView.append("\n");
+                termView.newlineEcho();
                 if (session != null && session.isRunning()) session.send("\n");
+                // cd 后同步顶栏 pwd
+                String line = termView.currentLine();
+                if (line.trim().startsWith("cd ")) {
+                    String arg = line.trim().substring(3).trim();
+                    if (!arg.isEmpty() && !arg.startsWith("-")) {
+                        workDir = arg.startsWith("/") ? arg
+                                : (workDir.endsWith("/") ? workDir + arg : workDir + "/" + arg);
+                        pwdView.setText(workDir);
+                    }
+                }
             }
 
             @Override
             public void onBackspace() {
+                termView.backspaceEcho();
                 if (session != null && session.isRunning()) session.send("\b");
             }
         });

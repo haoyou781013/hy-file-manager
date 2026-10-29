@@ -43,6 +43,15 @@ public class TerminalView extends ScrollView {
     private final StringBuilder screen = new StringBuilder();
     private int maxLines = 3000;
 
+    /** 提示符（如 "$ "）。null 表示不显示 */
+    private String promptStr = "$ ";
+    /** 光标字符 */
+    private static final String CURSOR = "_";
+    /** 当前行已输入的字符（用于重绘提示符 + 输入 + 光标） */
+    private final StringBuilder lineBuf = new StringBuilder();
+    /** 屏幕已刷出的内容（不含当前行） */
+    private final StringBuilder flushed = new StringBuilder();
+
     public TerminalView(Context context) {
         super(context);
         setBackgroundColor(0xFF0D1117);
@@ -167,8 +176,67 @@ public class TerminalView extends ScrollView {
 
     // ── 显示 ──
 
+    /** 设置提示符（如 "$ "、"> "） */
+    public void setPrompt(String prompt) {
+        this.promptStr = prompt;
+        repaint();
+    }
+
+    /**
+     * 重绘：已刷出内容 + 当前行（提示符 + 输入 + 光标）。
+     *
+     * <p>光标用下划线字符表示，与真正的终端一致；每次输入/退格都重画当前行。</p>
+     */
+    private void repaint() {
+        StringBuilder all = new StringBuilder(flushed);
+        if (promptStr != null) all.append(promptStr);
+        all.append(lineBuf);
+        all.append(CURSOR);
+        inner.setText(all.toString());
+        post(() -> fullScroll(FOCUS_DOWN));
+    }
+
+    /** 本地回显一个字符（追加到当前行） */
+    public void echo(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '\r') continue;
+            if (c == '\n') {
+                flushed.append(promptStr == null ? "" : promptStr)
+                        .append(lineBuf).append("\n");
+                lineBuf.setLength(0);
+            } else {
+                lineBuf.append(c);
+            }
+        }
+        repaint();
+    }
+
+    /** 退格：从当前行尾删一个字符 */
+    public void backspaceEcho() {
+        if (lineBuf.length() > 0) {
+            lineBuf.deleteCharAt(lineBuf.length() - 1);
+        }
+        repaint();
+    }
+
+    /** 回车：提交当前行到已刷出区，重置输入缓冲 */
+    public void newlineEcho() {
+        flushed.append(promptStr == null ? "" : promptStr)
+                .append(lineBuf).append("\n");
+        lineBuf.setLength(0);
+        repaint();
+    }
+
     /** 追加输出并自动滚到底部 */
     public void append(String text) {
+        // shell 输出直接进 flushed，末尾补提示符 + 光标
+        flushed.append(text);
+        repaint();
+        return;
+    }
+
+    private void appendLegacy(String text) {
         screen.append(text);
         int lines = 0;
         for (int i = 0; i < screen.length(); i++) if (screen.charAt(i) == '\n') lines++;
@@ -183,12 +251,25 @@ public class TerminalView extends ScrollView {
 
     public void clear(String banner) {
         screen.setLength(0);
-        if (banner != null) screen.append(banner);
-        inner.setText(screen.toString());
+        flushed.setLength(0);
+        lineBuf.setLength(0);
+        if (banner != null) {
+            flushed.append(banner);
+            screen.append(banner);
+        }
+        repaint();
+    }
+
+    /** 当前行已输入的内容（不含提示符） */
+    public String currentLine() {
+        return lineBuf.toString();
     }
 
     public String dump() {
-        return screen.toString();
+        StringBuilder all = new StringBuilder(flushed);
+        if (promptStr != null) all.append(promptStr);
+        all.append(lineBuf);
+        return all.toString();
     }
 
     public void showIme() {
