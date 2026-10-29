@@ -3011,83 +3011,6 @@ public class FileManagerModule extends HyVqModule {
                     showFileSettings();
                 });
 
-        // ── 回收站（展开项）──
-        final LinearLayout trashBox = new LinearLayout(ctx);
-        trashBox.setOrientation(LinearLayout.VERTICAL);
-        trashBox.setVisibility(trashExpanded ? View.VISIBLE : View.GONE);
-
-        addInfoRow(trashBox, "启用回收站",
-                trashEnabled ? "开启 · 侧边栏显示回收站入口" : "关闭 · 删除直接物理删除",
-                trashEnabled, v -> {
-                    trashEnabled = !trashEnabled;
-                    savePrefBool(PREF_TRASH_ENABLED, trashEnabled);
-                    persistState();
-                    hideSettingsDialog();
-                    showFileSettings();
-                    UiKit.toast(ctx, trashEnabled ? "回收站已启用" : "回收站已关闭");
-                });
-
-        addInfoRow(trashBox, "默认移入回收站",
-                trashDefault ? "开启 · 删除时移到回收站，可恢复" : "关闭 · 删除时直接物理删除",
-                trashDefault, v -> {
-                    if (!trashEnabled) {
-                        UiKit.toast(ctx, "请先启用回收站");
-                        return;
-                    }
-                    trashDefault = !trashDefault;
-                    savePrefBool(PREF_TRASH_DEFAULT, trashDefault);
-                    persistState();
-                    hideSettingsDialog();
-                    showFileSettings();
-                    UiKit.toast(ctx, trashDefault ? "删除将移入回收站" : "删除将直接清除");
-                });
-
-        addInfoRow(trashBox, "自动清理周期",
-                trashKeepDays <= 0 ? "不自动清理"
-                        : ("保留 " + trashKeepDays + " 天 · 启动时检查"),
-                trashKeepDays > 0, v -> {
-                    showTrashKeepDaysPicker();
-                });
-
-        final LinearLayout trashHeader = new LinearLayout(ctx);
-        trashHeader.setOrientation(LinearLayout.HORIZONTAL);
-        trashHeader.setGravity(Gravity.CENTER_VERTICAL);
-        trashHeader.setPadding(dp(4), dp(10), dp(4), dp(6));
-        trashHeader.setBackgroundResource(R.drawable.bg_ripple_round);
-        trashHeader.setClickable(true);
-        ImageView trashArrow = new ImageView(ctx);
-        trashArrow.setImageResource(R.drawable.ic_chevron_right);
-        trashArrow.setColorFilter(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurfaceVariant));
-        trashArrow.setLayoutParams(new LinearLayout.LayoutParams(dp(14), dp(14)));
-        trashArrow.setRotation(trashExpanded ? 90f : 0f);
-        trashHeader.addView(trashArrow);
-        TextView trashTitle = new TextView(ctx);
-        trashTitle.setText("回收站");
-        trashTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        trashTitle.setTypeface(null, android.graphics.Typeface.BOLD);
-        trashTitle.setTextColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurfaceVariant));
-        LinearLayout.LayoutParams ttLp = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        ttLp.leftMargin = dp(8);
-        trashHeader.addView(trashTitle, ttLp);
-        trashHeader.setOnClickListener(v -> {
-            trashExpanded = !trashExpanded;
-            trashArrow.animate().rotation(trashExpanded ? 90f : 0f).setDuration(180).start();
-            if (trashExpanded) {
-                trashBox.setVisibility(View.VISIBLE);
-                trashBox.setAlpha(0f);
-                trashBox.animate().alpha(1f).setDuration(180).start();
-            } else {
-                trashBox.animate().alpha(0f).setDuration(150)
-                        .withEndAction(() -> trashBox.setVisibility(View.GONE)).start();
-            }
-        });
-        box.addView(trashHeader, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        box.addView(trashBox);
-
         // ── 个性化 ──
         addSettingsRow(box, "个性化",
                 "显示密度(DPI) · 列表文件密度", R.drawable.ic_sliders, v -> {
@@ -3644,6 +3567,83 @@ public class FileManagerModule extends HyVqModule {
                     }
                     UiKit.toast(ctx, thumbsEnabled ? "已开启缩略图" : "已关闭缩略图");
                 });
+
+        // ── 回收站（展开项）──
+        final LinearLayout trashBox = new LinearLayout(ctx);
+        trashBox.setOrientation(LinearLayout.VERTICAL);
+        trashBox.setVisibility(trashExpanded ? View.VISIBLE : View.GONE);
+
+        addInfoRow(trashBox, "启用回收站",
+                trashEnabled ? "开启 · 侧边栏显示回收站入口" : "关闭 · 删除直接物理删除",
+                trashEnabled, v -> {
+                    trashEnabled = !trashEnabled;
+                    savePrefBool(PREF_TRASH_ENABLED, trashEnabled);
+                    persistState();
+                    hideSettingsDialog();
+                    showFileSettings();
+                    UiKit.toast(ctx, trashEnabled ? "回收站已启用" : "回收站已关闭");
+                });
+
+        addInfoRow(trashBox, "默认移入回收站",
+                trashDefault ? "开启 · 删除时移到回收站，可恢复" : "关闭 · 删除时直接物理删除",
+                trashDefault, v -> {
+                    if (!trashEnabled) {
+                        UiKit.toast(ctx, "请先启用回收站");
+                        return;
+                    }
+                    trashDefault = !trashDefault;
+                    savePrefBool(PREF_TRASH_DEFAULT, trashDefault);
+                    persistState();
+                    hideSettingsDialog();
+                    showFileSettings();
+                    UiKit.toast(ctx, trashDefault ? "删除将移入回收站" : "删除将直接清除");
+                });
+
+        addInfoRow(trashBox, "自动清理周期",
+                trashKeepDays <= 0 ? "不自动清理"
+                        : ("保留 " + trashKeepDays + " 天 · 启动时检查"),
+                trashKeepDays > 0, v -> {
+                    showTrashKeepDaysPicker();
+                });
+
+        final LinearLayout trashHeader = new LinearLayout(ctx);
+        trashHeader.setOrientation(LinearLayout.HORIZONTAL);
+        trashHeader.setGravity(Gravity.CENTER_VERTICAL);
+        trashHeader.setPadding(dp(4), dp(10), dp(4), dp(6));
+        trashHeader.setBackgroundResource(R.drawable.bg_ripple_round);
+        trashHeader.setClickable(true);
+        ImageView trashArrow = new ImageView(ctx);
+        trashArrow.setImageResource(R.drawable.ic_chevron_right);
+        trashArrow.setColorFilter(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        trashArrow.setLayoutParams(new LinearLayout.LayoutParams(dp(14), dp(14)));
+        trashArrow.setRotation(trashExpanded ? 90f : 0f);
+        trashHeader.addView(trashArrow);
+        TextView trashTitle = new TextView(ctx);
+        trashTitle.setText("回收站");
+        trashTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        trashTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        trashTitle.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        LinearLayout.LayoutParams ttLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        ttLp.leftMargin = dp(8);
+        trashHeader.addView(trashTitle, ttLp);
+        trashHeader.setOnClickListener(v -> {
+            trashExpanded = !trashExpanded;
+            trashArrow.animate().rotation(trashExpanded ? 90f : 0f).setDuration(180).start();
+            if (trashExpanded) {
+                trashBox.setVisibility(View.VISIBLE);
+                trashBox.setAlpha(0f);
+                trashBox.animate().alpha(1f).setDuration(180).start();
+            } else {
+                trashBox.animate().alpha(0f).setDuration(150)
+                        .withEndAction(() -> trashBox.setVisibility(View.GONE)).start();
+            }
+        });
+        box.addView(trashHeader, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        box.addView(trashBox);
 
         final android.app.Dialog d = UiKit.glassDialog(ctx, box);
         LinearLayout btns = new LinearLayout(ctx);
@@ -4831,6 +4831,35 @@ public class FileManagerModule extends HyVqModule {
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, inTrash ? "⚠ 彻底删除确认" : "⚠ 删除确认"));
         box.addView(tv);
+
+        // ── 单次生效的「移入回收站」选项 ──
+        // 默认值跟随设置页的「默认移入回收站」；改动只对本次删除生效，
+        // 不改写 Pref（避免一次临时选择被永久记住）。
+        final boolean[] thisTimeTrash = {trashEnabled && trashDefault};
+        if (!inTrash && trashEnabled) {
+            final android.widget.CheckBox cb = new android.widget.CheckBox(ctx);
+            cb.setText("移入回收站（可恢复）");
+            cb.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            cb.setTextColor(UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorOnSurface));
+            cb.setChecked(thisTimeTrash[0]);
+            cb.setPadding(dp(4), dp(6), dp(4), dp(2));
+            cb.setOnCheckedChangeListener((b, checked) -> thisTimeTrash[0] = checked);
+            LinearLayout.LayoutParams cbLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            cbLp.topMargin = dp(6);
+            box.addView(cb, cbLp);
+
+            TextView tip = new TextView(ctx);
+            tip.setText("仅本次生效，默认值在 设置 → 文件管理 → 回收站 中调整");
+            tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            tip.setTextColor(UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorOnSurfaceVariant));
+            tip.setAlpha(0.7f);
+            tip.setPadding(dp(4), 0, dp(4), dp(4));
+            box.addView(tip);
+        }
+
         LinearLayout btns = new LinearLayout(ctx);
         btns.setOrientation(LinearLayout.HORIZONTAL);
         btns.setGravity(Gravity.END);
@@ -4859,8 +4888,8 @@ public class FileManagerModule extends HyVqModule {
                             deleteTree(f); // 回收站：物理删除
                         } else {
                             // 移入回收站（保留原路径层级，恢复=移回原位置）
-                            // trashEnabled 且 trashDefault 才移入回收站；否则直接物理删除
-                            boolean useTrash = trashEnabled && trashDefault;
+                            // 采用本次确认页上的勾选（默认跟随设置，改动仅本次生效）
+                            boolean useTrash = trashEnabled && thisTimeTrash[0];
                             if (!useTrash || !moveToTrash(f)) {
                                 // 跨分区/权限失败回退物理删除（数据可能已部分移动）
                                 deleteTree(f);
