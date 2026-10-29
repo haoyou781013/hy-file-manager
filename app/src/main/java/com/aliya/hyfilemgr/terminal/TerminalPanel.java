@@ -39,6 +39,10 @@ public class TerminalPanel {
 
     private TerminalSession session;
     private TerminalView termView;
+    /** Ctrl 锁定状态 */
+    private boolean ctrlLocked = false;
+    /** Ctrl 键视图（用于高亮） */
+    private TextView ctrlKey;
     private TextView pwdView;
     private final StringBuilder buffer = new StringBuilder();
 
@@ -110,41 +114,6 @@ public class TerminalPanel {
             if (onClose != null) onClose.onClose();
         }));
 
-        // ── 快捷键工具栏（Ctrl / 方向键 / Esc / Tab）──
-        // 真实终端常用控制键在这里一键发送，避免长按软键盘找符号。
-        HorizontalScrollView toolScroll = new HorizontalScrollView(ctx);
-        toolScroll.setHorizontalScrollBarEnabled(false);
-        toolScroll.setBackgroundColor(0xFF161B22);
-        LinearLayout tools = new LinearLayout(ctx);
-        tools.setOrientation(LinearLayout.HORIZONTAL);
-        tools.setPadding(dp(6), dp(4), dp(6), dp(4));
-
-        // 方向键（vi/less 等场景常用）
-        tools.addView(termKey("←", "\u001b[D"));
-        tools.addView(termKey("↑", "\u001b[A"));
-        tools.addView(termKey("↓", "\u001b[B"));
-        tools.addView(termKey("→", "\u001b[C"));
-        tools.addView(termKey("Tab", "\t"));
-        tools.addView(termKey("Esc", "\u001b"));
-        tools.addView(termKey("Ctrl+C", "\u0003"));
-        tools.addView(termKey("Ctrl+D", "\u0004"));
-        tools.addView(termKey("Ctrl+Z", "\u001a"));
-        tools.addView(termKey("Ctrl+L", "\u000c"));
-        tools.addView(termKey("Ctrl+A", "\u0001"));
-        tools.addView(termKey("Ctrl+E", "\u0005"));
-        tools.addView(termKey("Home", "\u0001"));
-        tools.addView(termKey("End", "\u0005"));
-        tools.addView(termKey("|", "|"));
-        tools.addView(termKey("~", "~"));
-        tools.addView(termKey("/", "/"));
-        tools.addView(termKey("-", "-"));
-        tools.addView(termKey("_", "_"));
-
-        toolScroll.addView(tools, new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        box.addView(toolScroll, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
         // ── 终端视图（Termux 同款：直接在其上输入）──
         termView = new TerminalView(ctx);
         termView.setSink(new TerminalView.Sink() {
@@ -180,6 +149,63 @@ public class TerminalPanel {
         termView.clear(banner());
         box.addView(termView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        // ── 底部快捷键工具栏（带顶部分隔边框）──
+        // Ctrl 为「点击保持」锁定键：点亮后再按字母即发送 Ctrl+字母，
+        // 与真实键盘的 Ctrl 行为一致，而不是每个组合键一个按钮。
+        LinearLayout toolBarWrap = new LinearLayout(ctx);
+        toolBarWrap.setOrientation(LinearLayout.VERTICAL);
+        // 分隔线：与上方终端输出区明确区分
+        View toolDivider = new View(ctx);
+        toolDivider.setBackgroundColor(0xFF30363D);
+        toolBarWrap.addView(toolDivider, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1))));
+
+        HorizontalScrollView toolScroll = new HorizontalScrollView(ctx);
+        toolScroll.setHorizontalScrollBarEnabled(false);
+        toolScroll.setBackgroundColor(0xFF161B22);
+        LinearLayout tools = new LinearLayout(ctx);
+        tools.setOrientation(LinearLayout.HORIZONTAL);
+        tools.setGravity(Gravity.CENTER_VERTICAL);
+        tools.setPadding(dp(6), dp(4), dp(6), dp(4));
+
+        // Ctrl 锁定键（点击切换，点亮表示生效）
+        ctrlKey = termKey("Ctrl", "", null);
+        ctrlKey.setOnClickListener(v -> {
+            ctrlLocked = !ctrlLocked;
+            updateCtrlKeyState();
+            termView.requestFocus();
+        });
+        tools.addView(ctrlKey);
+
+        tools.addView(termKey("←", "\u001b[D", null));
+        tools.addView(termKey("↑", "\u001b[A", null));
+        tools.addView(termKey("↓", "\u001b[B", null));
+        tools.addView(termKey("→", "\u001b[C", null));
+        tools.addView(termKey("Tab", "\t", null));
+        tools.addView(termKey("Esc", "\u001b", null));
+        tools.addView(termKey("|", "|", null));
+        tools.addView(termKey("~", "~", null));
+        tools.addView(termKey("/", "/", null));
+        tools.addView(termKey("-", "-", null));
+        tools.addView(termKey("_", "_", null));
+        tools.addView(termKey("$", "$", null));
+        tools.addView(termKey("*", "*", null));
+        // 字母键：配合 Ctrl 锁定使用（Ctrl 亮起后按这些键 = Ctrl+字母）
+        for (char c = 'a'; c <= 'z'; c++) {
+            final String ch = String.valueOf(c);
+            tools.addView(termKey(ch, ch, null));
+        }
+
+        toolScroll.addView(tools, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        toolBarWrap.addView(toolScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        box.addView(toolBarWrap, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        updateCtrlKeyState();
+
 
         // 打开即聚焦并弹键盘
         termView.postDelayed(() -> {
@@ -191,12 +217,16 @@ public class TerminalPanel {
     }
 
     /**
-     * 工具栏按键：发送控制字符/转义序列给 shell。
+     * 工具栏按键。
      *
-     * <p>方向键发送 ANSI 转义序列（ESC[A 等），Ctrl+X 发送对应控制码，
-     * 与真实终端行为一致，可在 vim/less 等程序中使用。</p>
+     * <p>若 Ctrl 处于锁定状态且按下的是单个字母，则发送对应控制码
+     * （k = letter &amp; 0x1F），与真实键盘的 Ctrl+字母 等价；
+     * 同时解除 Ctrl 锁定（跟真实键盘一样，组合完成后释放）。</p>
+     *
+     * @param seq 固定要发送的转义序列（如方向键 ESC[A）；null 表示按标签处理
      */
-    private TextView termKey(String label, final String seq) {
+    private TextView termKey(String label, final String seq,
+                             View.OnClickListener extra) {
         TextView tv = new TextView(ctx);
         tv.setText(label);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
@@ -210,12 +240,31 @@ public class TerminalPanel {
             v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(60)
                     .withEndAction(() -> v.animate().scaleX(1f).scaleY(1f)
                             .setDuration(120).start()).start();
-            if (session != null && session.isRunning()) {
-                session.send(seq);
-                // 可打印字符本地回显；控制字符不回显（由 shell 自行响应）
-                if (seq.length() == 1 && seq.charAt(0) >= ' ') {
-                    termView.echo(seq);
+            if (extra != null) {
+                extra.onClick(v);
+                return;
+            }
+            if (session == null || !session.isRunning()) return;
+
+            String out = seq;
+            boolean ctrlConsumed = false;
+            // Ctrl 锁定 + 单字母 → 发送控制码
+            if (ctrlLocked && label.length() == 1) {
+                char c = Character.toLowerCase(label.charAt(0));
+                if (c >= 'a' && c <= 'z') {
+                    out = String.valueOf((char) (c & 0x1f));
+                    ctrlConsumed = true;
                 }
+            }
+            if (out == null || out.isEmpty()) return;
+            session.send(out);
+            // 可打印字符本地回显（控制字符不回显）
+            if (!ctrlConsumed && out.length() == 1 && out.charAt(0) >= ' ') {
+                termView.echo(out);
+            }
+            if (ctrlConsumed) {
+                ctrlLocked = false;
+                updateCtrlKeyState();
             }
             termView.requestFocus();
         });
@@ -224,6 +273,21 @@ public class TerminalPanel {
         lp.rightMargin = dp(4);
         tv.setLayoutParams(lp);
         return tv;
+    }
+
+    /** 刷新 Ctrl 键高亮（锁定=主色底，未锁定=普通） */
+    private void updateCtrlKeyState() {
+        if (ctrlKey == null) return;
+        if (ctrlLocked) {
+            ctrlKey.setTextColor(0xFF0D1117);
+            ctrlKey.setBackground(com.aliya.hyfilemgr.ui.UiKit.rounded(
+                    ctx, dp(6), 0xFF58A6FF, 0));
+            ctrlKey.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        } else {
+            ctrlKey.setTextColor(0xFFC9D1D9);
+            ctrlKey.setBackgroundResource(R.drawable.bg_ripple_round);
+            ctrlKey.setTypeface(Typeface.MONOSPACE, Typeface.NORMAL);
+        }
     }
 
     private TextView btn(String text, View.OnClickListener onClick) {
