@@ -199,6 +199,10 @@ public class FileManagerModule extends HyVqModule {
     private static final String PREF_SHOW_HIDDEN = "show_hidden";
     private static final String PREF_DPI = "ui_dpi";
     private static final String PREF_DENSITY = "list_density";
+    /** 侧边栏「本地」分组是否展开 */
+    private static final String PREF_NAV_LOCAL_OPEN = "nav_local_open";
+    /** 侧边栏「工具」分组是否展开 */
+    private static final String PREF_NAV_TOOLS_OPEN = "nav_tools_open";
 
     /** 列表文件密度：1=紧凑 2=标准 3=宽松 */
     private static int listDensity = 2;
@@ -332,6 +336,8 @@ public class FileManagerModule extends HyVqModule {
         gridMode = sp.getBoolean(PREF_GRID_MODE, false);
         thumbsEnabled = sp.getBoolean(PREF_THUMBS, true);
         listDensity = Math.max(1, Math.min(3, sp.getInt(PREF_DENSITY, 2)));
+        navLocalExpanded = sp.getBoolean(PREF_NAV_LOCAL_OPEN, true);
+        navToolsExpanded = sp.getBoolean(PREF_NAV_TOOLS_OPEN, true);
         com.aliya.hyfilemgr.util.DpiUtils.setOverrideDpi(sp.getInt(PREF_DPI, 0));
         recentFiles.clear();
         String rf = sp.getString(PREF_RECENT_FILES, "");
@@ -356,6 +362,8 @@ public class FileManagerModule extends HyVqModule {
                 .putBoolean(PREF_SHOW_HIDDEN, showHidden)
                 .putBoolean(PREF_THUMBS, thumbsEnabled)
                 .putInt(PREF_DENSITY, listDensity)
+                .putBoolean(PREF_NAV_LOCAL_OPEN, navLocalExpanded)
+                .putBoolean(PREF_NAV_TOOLS_OPEN, navToolsExpanded)
                 .putInt(PREF_DPI, com.aliya.hyfilemgr.util.DpiUtils.getOverrideDpi())
                 .commit();
     }
@@ -3834,7 +3842,9 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 侧边栏分组展开状态（重建时保持） */
+    /** 侧边栏「本地」分组展开状态（持久化：nav_local_open） */
     private boolean navLocalExpanded = true;
+    /** 侧边栏「工具」分组展开状态（持久化：nav_tools_open） */
     private boolean navToolsExpanded = true;
 
     /**
@@ -3897,8 +3907,13 @@ public class FileManagerModule extends HyVqModule {
                         }).start();
             }
             // 写回状态（标题是「本地」还是「工具」由 title 判定）
-            if ("本地".equals(title)) navLocalExpanded = nowVisible;
-            else navToolsExpanded = nowVisible;
+            if ("本地".equals(title)) {
+                navLocalExpanded = nowVisible;
+                savePrefBool(PREF_NAV_LOCAL_OPEN, nowVisible);
+            } else {
+                navToolsExpanded = nowVisible;
+                savePrefBool(PREF_NAV_TOOLS_OPEN, nowVisible);
+            }
         });
         return head;
     }
