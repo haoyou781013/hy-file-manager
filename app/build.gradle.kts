@@ -75,4 +75,6 @@ dependencies {
 
     // ZIP 加密解出（从 HY_VQ 剥离）
     implementation("net.lingala.zip4j:zip4j:2.11.5")
+    // TAR / TAR.GZ / GZ 真实支持（zip4j 只覆盖 ZIPC/7Z）
+    implementation("org.apache.commons:commons-compress:1.20")
 }

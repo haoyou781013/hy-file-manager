@@ -8458,6 +8458,31 @@ public class FileManagerModule extends HyVqModule {
             boolean ok = false;
             String err = null;
             try {
+                // TAR / TAR.GZ / GZ 走 commons-compress（zip4j 不支持）
+                if ("tar".equals(ext) || "tar.gz".equals(ext) || "gz".equals(ext)) {
+                    final boolean tarOk;
+                    try {
+                        tarOk = compressWithCommons(src, out, ext, single);
+                    } catch (Throwable tt) {
+                        //noinspection ResultOfMethodCallIgnored
+                        out.delete();
+                        final String terr = tt.getClass().getSimpleName()
+                                + ": " + tt.getMessage();
+                        handler.post(() -> UiKit.toast(ctx, "压缩失败：" + terr));
+                        return;
+                    }
+                    handler.post(() -> {
+                        if (tarOk) {
+                            UiKit.toast(ctx, "已压缩：" + out.getName());
+                            if (delSource) deleteSourceQuietly(src);
+                            reloadAll();
+                        } else {
+                            UiKit.toast(ctx, "压缩失败");
+                        }
+                    });
+                    return;
+                }
+
                 net.lingala.zip4j.model.ZipParameters params =
                         new net.lingala.zip4j.model.ZipParameters();
                 params.setCompressionLevel(level <= 0
@@ -8514,6 +8539,97 @@ public class FileManagerModule extends HyVqModule {
                 }
             });
         });
+    }
+
+    /**
+     * TAR / TAR.GZ / GZ 压缩（commons-compress）。
+     *
+     * <p>tar 与 tar.gz 把整个目录树写入归档；
+     * gz 只压缩单个文件（对目录会先打成 tar 再 gz）。</p>
+     *
+     * @param single 目录场景下是否把目录自身作为顶层条目
+     */
+    private boolean compressWithCommons(File src, File out, String ext, boolean single)
+            throws java.io.IOException {
+        if ("gz".equals(ext) && !src.isDirectory()) {
+            // 单文件 gzip（无归档结构）
+            try (java.io.InputStream in = new java.io.BufferedInputStream(
+                        new java.io.FileInputStream(src));
+                 java.io.OutputStream os = new java.io.BufferedOutputStream(
+                        new java.io.FileOutputStream(out));
+                 org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream gz =
+                        new org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream(os)) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) gz.write(buf, 0, n);
+            }
+            return true;
+        }
+
+        java.io.OutputStream base = new java.io.BufferedOutputStream(
+                new java.io.FileOutputStream(out));
+        try {
+            boolean isGz = "tar.gz".equals(ext) || "gz".equals(ext);
+            java.io.OutputStream chain = isGz
+                    ? new org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream(base)
+                    : base;
+            org.apache.commons.compress.archivers.tar.TarArchiveOutputStream tar =
+                    new org.apache.commons.compress.archivers.tar.TarArchiveOutputStream(chain);
+            try {
+                String rootName = single ? src.getName() : "";
+                if (src.isDirectory()) {
+                    addTarDir(tar, src, rootName);
+                } else {
+                    addTarFile(tar, src, single ? src.getName() : src.getName());
+                }
+                tar.finish();
+            } finally {
+                tar.close();
+            }
+            return true;
+        } finally {
+            try { base.close(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /** 递归写入 TAR：prefix 为空时直接写目录内容 */
+    private void addTarDir(org.apache.commons.compress.archivers.tar.TarArchiveOutputStream tar,
+                           File dir, String prefix) throws java.io.IOException {
+        File[] fs = dir.listFiles();
+        if (fs == null) return;
+        for (File f : fs) {
+            String entry = prefix.isEmpty() ? f.getName() : prefix + "/" + f.getName();
+            if (f.isDirectory()) {
+                addTarDir(tar, f, entry);
+            } else {
+                addTarFile(tar, f, entry);
+            }
+        }
+    }
+
+    /** 写入单个文件到 TAR */
+    private void addTarFile(org.apache.commons.compress.archivers.tar.TarArchiveOutputStream tar,
+                            File f, String entryName) throws java.io.IOException {
+        org.apache.commons.compress.archivers.tar.TarArchiveEntry entry =
+                new org.apache.commons.compress.archivers.tar.TarArchiveEntry(f, entryName);
+        tar.putArchiveEntry(entry);
+        try (java.io.InputStream in = new java.io.BufferedInputStream(
+                new java.io.FileInputStream(f))) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) tar.write(buf, 0, n);
+        }
+        tar.closeArchiveEntry();
+    }
+
+    /** 删除源文件/目录（失败静默，不阻断压缩结果提示） */
+    private void deleteSourceQuietly(File src) {
+        try {
+            if (src.isDirectory()) deleteTree(src);
+            else //noinspection ResultOfMethodCallIgnored
+                src.delete();
+        } catch (Throwable ignored) {
+        }
     }
 
     private void compressToZipLegacy(final FileEntry e) {
