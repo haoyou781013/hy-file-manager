@@ -9,7 +9,6 @@ import android.view.View;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * 基础弹幕引擎（纯自绘，无第三方依赖）。

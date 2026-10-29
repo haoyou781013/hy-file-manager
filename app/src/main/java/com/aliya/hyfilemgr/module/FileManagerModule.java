@@ -6928,15 +6928,52 @@ public class FileManagerModule extends HyVqModule {
         if (!f.exists()) return "文件不存在或无法访问";
         if (!f.canRead()) return "没有读取该文件的权限";
         String ext = extOf(name);
-        if (!"zip".equals(ext) && !"jar".equals(ext)) {
-            return "这不是压缩包（扩展名 ." + ext + "），无法解压";
+        if (!com.aliya.hyfilemgr.archive.ArchiveExtractor.canExtract(name)) {
+            return "不支持的压缩格式：." + ext;
         }
-        try {
-            extractZip(FileEntry.file(f.getAbsolutePath(), f.length(), f.lastModified()));
-            return null;
-        } catch (Throwable t) {
-            return t.getClass().getSimpleName() + ": " + t.getMessage();
+        // 目标目录：与压缩包同级的同名文件夹（去掉压缩扩展名）
+        File parentDir = f.getParentFile();
+        if (parentDir == null || !parentDir.canWrite()) return "目录不可写，无法解压";
+        String base = name;
+        String lower = name.toLowerCase();
+        for (String suffix : new String[]{".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst",
+                ".tgz", ".tbz2", ".txz", ".tzst", ".zip", ".jar", ".apk", ".7z",
+                ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst"}) {
+            if (lower.endsWith(suffix)) {
+                base = name.substring(0, name.length() - suffix.length());
+                break;
+            }
         }
+        if (base.isEmpty()) base = "extracted";
+        final File destDir = new File(parentDir,
+                uniqueName(parentDir.getAbsolutePath(), base, null));
+        if (!destDir.mkdirs() && !destDir.isDirectory()) return "无法创建解压目录";
+
+        // 后台解压，避免大包阻塞 UI
+        final File srcFile = f;
+        runTask(() -> {
+            com.aliya.hyfilemgr.archive.ArchiveExtractor.Result res =
+                    com.aliya.hyfilemgr.archive.ArchiveExtractor.extract(
+                            srcFile, destDir, null, null);
+            handler.post(() -> {
+                if (res.ok) {
+                    UiKit.toast(ctx, "已解压 " + res.files + " 个文件到 " + destDir.getName());
+                    reloadAll();
+                } else {
+                    UiKit.toast(ctx, "解压失败：" + res.error);
+                    // 失败清理空目录
+                    try {
+                        String[] left = destDir.list();
+                        if (left != null && left.length == 0) {
+                            //noinspection ResultOfMethodCallIgnored
+                            destDir.delete();
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+        });
+        return null;   // 已转后台，无即时错误
     }
 
     /** 尝试安装 APK。 */
@@ -8296,21 +8333,27 @@ public class FileManagerModule extends HyVqModule {
 
         // 格式列表：内嵌展开（不新开 Dialog——叠加全屏 Dialog 会在首帧
         // 出现背景未就绪的黑闪）
+        // 格式下拉：独立浮层，向下覆盖在后续控件之上。
+        // 不占布局空间，因此展开/收起都不改变弹窗高度。
+        final FrameLayout fmtOverlay = new FrameLayout(ctx);
+        fmtOverlay.setVisibility(View.GONE);
         final ScrollView fmtScroll = new ScrollView(ctx);
         fmtScroll.setVerticalScrollBarEnabled(true);
-        final LinearLayout fmtList = new LinearLayout(ctx);
-        fmtList.setOrientation(LinearLayout.VERTICAL);
-        fmtList.setBackground(UiKit.rounded(ctx, dp(10),
+        fmtScroll.setBackground(UiKit.rounded(ctx, dp(10),
                 UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHigh),
                 UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
+        final LinearLayout fmtList = new LinearLayout(ctx);
+        fmtList.setOrientation(LinearLayout.VERTICAL);
+        fmtList.setPadding(dp(4), dp(4), dp(4), dp(4));
         fmtScroll.addView(fmtList, new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        // 固定高度占位：展开前后弹窗总高不变（INVISIBLE 仍参与布局）
-        fmtScroll.setVisibility(View.INVISIBLE);
-        LinearLayout.LayoutParams fsLp = new LinearLayout.LayoutParams(
+        // 小列表：最多 5 项高，超出滚动
+        FrameLayout.LayoutParams fsLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(44 * 5));
-        fsLp.topMargin = dp(6);
-        box.addView(fmtScroll, fsLp);
+        fsLp.topMargin = dp(4);
+        fmtOverlay.addView(fmtScroll, fsLp);
+        box.addView(fmtOverlay, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0));
 
         // ── 压缩等级 ──
         final TextView tvLevel = labelText("压缩等级");
@@ -8374,7 +8417,7 @@ public class FileManagerModule extends HyVqModule {
             tvLevelHint.setVisibility(supportLevel ? View.VISIBLE : View.GONE);
         };
         tvFormat.setOnClickListener(v -> {
-            boolean show = fmtScroll.getVisibility() != View.VISIBLE;
+            boolean show = fmtOverlay.getVisibility() != View.VISIBLE;
             if (show && fmtList.getChildCount() == 0) {
                 for (int i = 0; i < COMPRESS_FORMATS.length; i++) {
                     final int idx = i;
@@ -8409,12 +8452,12 @@ public class FileManagerModule extends HyVqModule {
                 }
             }
             if (show) {
-                fmtScroll.setVisibility(View.VISIBLE);
-                fmtScroll.setAlpha(0f);
-                fmtScroll.animate().alpha(1f).setDuration(140).start();
+                fmtOverlay.setVisibility(View.VISIBLE);
+                fmtOverlay.setAlpha(0f);
+                fmtOverlay.animate().alpha(1f).setDuration(140).start();
             } else {
-                fmtScroll.animate().alpha(0f).setDuration(120)
-                        .withEndAction(() -> fmtScroll.setVisibility(View.INVISIBLE)).start();
+                fmtOverlay.animate().alpha(0f).setDuration(120)
+                        .withEndAction(() -> fmtOverlay.setVisibility(View.GONE)).start();
             }
         });
         applyFormat.run();
