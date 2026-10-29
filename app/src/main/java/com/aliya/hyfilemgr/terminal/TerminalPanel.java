@@ -63,6 +63,10 @@ public class TerminalPanel {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setBackgroundColor(0xFF0D1117);
+        // 拦截触摸：避免触摸穿透到下层（已隐藏的文件列表仍占位）
+        box.setClickable(true);
+        box.setFocusable(true);
+        box.setFocusableInTouchMode(true);
 
         // ── 顶栏：终端 | pwd ──
         LinearLayout top = new LinearLayout(ctx);
@@ -117,6 +121,8 @@ public class TerminalPanel {
         output.setMovementMethod(new ScrollingMovementMethod());
         output.setPadding(dp(12), dp(10), dp(12), dp(10));
         output.setText(banner());
+        scroll.setOnClickListener(v -> keepFocus());
+        output.setOnClickListener(v -> keepFocus());
         scroll.addView(output, new ScrollView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         box.addView(scroll, new LinearLayout.LayoutParams(
@@ -128,6 +134,8 @@ public class TerminalPanel {
         inputRow.setGravity(Gravity.CENTER_VERTICAL);
         inputRow.setPadding(dp(10), dp(4), dp(8), dp(8));
         inputRow.setBackgroundColor(0xFF161B22);
+        inputRow.setClickable(true);
+        inputRow.setOnClickListener(v -> keepFocus());
         box.addView(inputRow, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
@@ -154,6 +162,8 @@ public class TerminalPanel {
         inputDisplay.setSingleLine(true);
         inputDisplay.setPadding(0, dp(8), dp(6), dp(8));
         inputDisplay.setOnClickListener(v -> keepFocus());
+        inputDisplay.setClickable(true);
+        inputDisplay.setFocusable(false);
         inputRow.addView(inputDisplay, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
@@ -177,7 +187,8 @@ public class TerminalPanel {
             runCommand();
             return true;
         });
-        inputRow.addView(input, new LinearLayout.LayoutParams(0, dp(1)));
+        // 1dp×1dp：0 尺寸在部分 ROM 上无法获得输入焦点，1dp 足够且不可见
+        inputRow.addView(input, new LinearLayout.LayoutParams(dp(1), dp(1)));
 
         inputRow.addView(btn("执行", v -> runCommand()));
 
