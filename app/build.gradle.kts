@@ -77,4 +77,6 @@ dependencies {
     implementation("net.lingala.zip4j:zip4j:2.11.5")
     // TAR / TAR.GZ / GZ 真实支持（zip4j 只覆盖 ZIPC/7Z）
     implementation("org.apache.commons:commons-compress:1.20")
+    // RAR 解压（RAR 压缩格式专有，无开源压缩实现）
+    implementation("com.github.junrar:junrar:7.5.5")
 }

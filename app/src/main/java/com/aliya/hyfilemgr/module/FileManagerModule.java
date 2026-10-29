@@ -8250,11 +8250,14 @@ public class FileManagerModule extends HyVqModule {
 
     /** 压缩格式定义：扩展名 / 显示名 / 是否支持密码 / 是否支持等级 */
     private static final String[][] COMPRESS_FORMATS = {
-            {"zip", "ZIP", "1", "1"},
-            {"7z",  "7Z",  "1", "1"},
-            {"tar", "TAR", "0", "0"},
-            {"tar.gz", "TAR.GZ", "0", "0"},
-            {"gz",  "GZ",  "0", "0"},
+            // 扩展名 / 显示名 / 支持密码 / 支持等级 / 可否创建
+            {"zip", "ZIP", "1", "1", "1"},
+            {"7z",  "7Z",  "1", "1", "1"},
+            {"tar", "TAR", "0", "0", "1"},
+            {"tar.gz", "TAR.GZ", "0", "0", "1"},
+            {"gz",  "GZ",  "0", "0", "1"},
+            // RAR 为专有压缩算法，无开源实现，只能解压不能创建
+            {"rar", "RAR", "0", "0", "0"},
     };
 
     /** 创建压缩文件对话框 */
@@ -8292,6 +8295,16 @@ public class FileManagerModule extends HyVqModule {
         tvFormat.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorPrimary));
         box.addView(tvFormat);
+
+        // 格式列表：内嵌展开（不新开 Dialog——叠加全屏 Dialog 会在首帧
+        // 出现背景未就绪的黑闪）
+        final LinearLayout fmtList = new LinearLayout(ctx);
+        fmtList.setOrientation(LinearLayout.VERTICAL);
+        fmtList.setVisibility(View.GONE);
+        fmtList.setBackground(UiKit.rounded(ctx, dp(10),
+                UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHigh),
+                UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
+        box.addView(fmtList);
 
         // ── 压缩等级 ──
         final TextView tvLevel = labelText("压缩等级");
@@ -8355,26 +8368,48 @@ public class FileManagerModule extends HyVqModule {
             tvLevelHint.setVisibility(supportLevel ? View.VISIBLE : View.GONE);
         };
         tvFormat.setOnClickListener(v -> {
-            LinearLayout list = new LinearLayout(ctx);
-            list.setOrientation(LinearLayout.VERTICAL);
-            list.addView(UiKit.sectionHeader(ctx, "选择格式"));
-            final android.app.Dialog pick = UiKit.glassDialog(ctx, list);
-            for (int i = 0; i < COMPRESS_FORMATS.length; i++) {
-                final int idx = i;
-                addInfoRow(list, COMPRESS_FORMATS[i][1],
-                        COMPRESS_FORMATS[i][1] + " 格式"
-                                + ("1".equals(COMPRESS_FORMATS[i][2]) ? " · 支持密码" : ""),
-                        fmtIdx[0] == i, v2 -> {
-                            fmtIdx[0] = idx;
-                            UiKit.dismissWithAnim(pick);
-                            applyFormat.run();
-                        });
+            boolean show = fmtList.getVisibility() != View.VISIBLE;
+            if (show && fmtList.getChildCount() == 0) {
+                for (int i = 0; i < COMPRESS_FORMATS.length; i++) {
+                    final int idx = i;
+                    TextView row = new TextView(ctx);
+                    StringBuilder rowText = new StringBuilder(COMPRESS_FORMATS[i][1]);
+                    if ("1".equals(COMPRESS_FORMATS[i][2])) rowText.append("   · 支持密码");
+                    if ("0".equals(COMPRESS_FORMATS[i][4])) rowText.append("   · 仅解压");
+                    row.setText(rowText);
+                    row.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+                    row.setPadding(dp(14), dp(11), dp(14), dp(11));
+                    row.setBackgroundResource(R.drawable.bg_ripple_round);
+                    row.setClickable(true);
+                    row.setTextColor(UiKit.color(ctx,
+                            com.google.android.material.R.attr.colorOnSurface));
+                    row.setOnClickListener(v2 -> {
+                        if ("0".equals(COMPRESS_FORMATS[idx][4])) {
+                            // RAR 只能解压：给出明确说明，不静默降级
+                            UiKit.toast(ctx,
+                                    "RAR 是专有压缩格式，只能解压不能创建。\n"
+                                            + "如需压缩请选 ZIP 或 7Z");
+                            return;
+                        }
+                        fmtIdx[0] = idx;
+                        fmtList.animate().alpha(0f).setDuration(120)
+                                
+                                .withEndAction(() -> fmtList.setVisibility(View.GONE)).start();
+                        applyFormat.run();
+                    });
+                    fmtList.addView(row, new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT));
+                }
             }
-            LinearLayout pb = new LinearLayout(ctx);
-            pb.setGravity(Gravity.END);
-            list.addView(pb);
-            pb.addView(textButton("取消", v2 -> UiKit.dismissWithAnim(pick)));
-            pick.show();
+            if (show) {
+                fmtList.setVisibility(View.VISIBLE);
+                fmtList.setAlpha(0f);
+                fmtList.animate().alpha(1f).setDuration(140).start();
+            } else {
+                fmtList.animate().alpha(0f).setDuration(120)
+                        .withEndAction(() -> fmtList.setVisibility(View.GONE)).start();
+            }
         });
         applyFormat.run();
 
