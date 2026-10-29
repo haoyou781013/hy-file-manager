@@ -169,6 +169,9 @@ public class FileManagerModule extends HyVqModule {
     private android.app.Dialog editorDialog = null;
     private EditText editorEdit = null;
 
+    /** 编辑器左侧行号栏 */
+    private TextView editorLineNumbers;
+
     /** 编辑器：回车自动缩进（可在「编辑器设置」中关闭） */
     private boolean editorAutoIndent = true;
     /** 编辑器：Tab / 一级缩进宽度（空格数） */
@@ -4952,7 +4955,37 @@ public class FileManagerModule extends HyVqModule {
         editorEdit.setBackground(UiKit.rounded(ctx, dp(8), pal[3], 0));
         int ep = dp(8);
         editorEdit.setPadding(ep, ep, ep, ep);
-        box.addView(editorEdit, new LinearLayout.LayoutParams(
+
+        // ── 行号栏 + 编辑区 ──
+        // 结构：[行号 TextView (固定宽)] [EditText (weight=1)]
+        // 行号在每次文本变化时重算，行数与内容一致；与编辑区共用同一字号/行距，
+        // 才能保证纵向对齐（行高必须严格相等）。
+        LinearLayout editorArea = new LinearLayout(ctx);
+        editorArea.setOrientation(LinearLayout.HORIZONTAL);
+
+        editorLineNumbers = new TextView(ctx);
+        editorLineNumbers.setTextSize(TypedValue.COMPLEX_UNIT_SP, editorFontSizePref());
+        editorLineNumbers.setTypeface(editorMonoPref()
+                ? android.graphics.Typeface.MONOSPACE
+                : android.graphics.Typeface.DEFAULT);
+        editorLineNumbers.setTextColor(pal[2]);
+        editorLineNumbers.setAlpha(0.55f);
+        editorLineNumbers.setGravity(Gravity.TOP | Gravity.END);
+        // 与 EditText 相同的内边距，首行才能对齐
+        editorLineNumbers.setPadding(dp(6), ep, dp(6), ep);
+        editorLineNumbers.setIncludeFontPadding(false);
+        editorLineNumbers.setLineSpacing(0f, 1f);
+        editorLineNumbers.setBackgroundColor(pal[5] & 0x22FFFFFF);
+        LinearLayout.LayoutParams lnLp = new LinearLayout.LayoutParams(
+                dp(38), ViewGroup.LayoutParams.MATCH_PARENT);
+        editorArea.addView(editorLineNumbers, lnLp);
+
+        editorEdit.setIncludeFontPadding(false);
+        editorEdit.setLineSpacing(0f, 1f);
+        editorArea.addView(editorEdit, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+
+        box.addView(editorArea, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         // 状态行：编码 · 行尾 · 行/列 · 字符实时统计
@@ -5240,12 +5273,31 @@ public class FileManagerModule extends HyVqModule {
         if (editorStat == null || editorEdit == null) return;
         String t = editorEdit.getText().toString();
         int lines = countLines(t);
+        refreshLineNumbers(t, lines);
         int sel = Math.max(0, editorEdit.getSelectionStart());
         int lineStart = t.lastIndexOf('\n', Math.max(0, sel - 1)) + 1;
         int col = sel - lineStart + 1;
         editorStat.setText((currentEditTab == null ? "" : currentEditTab.encoding + " · "
                 + currentEditTab.lineEnding + " · ")
                 + "行 " + lines + " · 列 " + col + " · 字符 " + t.length());
+    }
+
+    /**
+     * 刷新行号栏。
+     *
+     * <p>行号与内容同行数，右侧对齐；与 EditText 使用相同字号、
+     * 相同 lineSpacing 与 includeFontPadding=false，保证逐行纵向对齐。</p>
+     */
+    private void refreshLineNumbers(String text, int lines) {
+        if (editorLineNumbers == null) return;
+        StringBuilder sb = new StringBuilder(lines * 3);
+        for (int i = 1; i <= lines; i++) {
+            if (i > 1) sb.append('\n');
+            sb.append(i);
+        }
+        if (!sb.toString().contentEquals(editorLineNumbers.getText())) {
+            editorLineNumbers.setText(sb.toString());
+        }
     }
 
     /** 符号栏按键：点击在光标处插入文本（参考 ZeroTermux symbol input；颜色统一走主题调色板） */
