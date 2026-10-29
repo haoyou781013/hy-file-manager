@@ -8231,7 +8231,292 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 单条目压缩为 zip：同目录 <原名>.zip（重名自动 (1)）；目录递归打包 */
+    /**
+     * 压缩入口：弹出「创建压缩文件」对话框。
+     *
+     * <p>可配置：文件名（默认 x.zip，可改）、格式（zip/7z/tar/…）、
+     * 压缩等级（存储/快速/标准/极限）、密码（仅 zip/7z 支持）、
+     * 是否单独压缩、压缩后删除源文件、输出到另一窗格。</p>
+     */
     private void compressToZip(final FileEntry e) {
+        if (e == null || e.path == null) return;
+        final File src = new File(e.path);
+        if (!src.exists()) {
+            UiKit.toast(ctx, "文件不存在");
+            return;
+        }
+        showCompressDialog(e, src);
+    }
+
+    /** 压缩格式定义：扩展名 / 显示名 / 是否支持密码 / 是否支持等级 */
+    private static final String[][] COMPRESS_FORMATS = {
+            {"zip", "ZIP", "1", "1"},
+            {"7z",  "7Z",  "1", "1"},
+            {"tar", "TAR", "0", "0"},
+            {"tar.gz", "TAR.GZ", "0", "0"},
+            {"gz",  "GZ",  "0", "0"},
+    };
+
+    /** 创建压缩文件对话框 */
+    private void showCompressDialog(final FileEntry e, final File src) {
+        final File parentDir = src.getParentFile();
+        final String baseName = src.isDirectory()
+                ? src.getName()
+                : (src.getName().contains(".")
+                    ? src.getName().substring(0, src.getName().lastIndexOf('.'))
+                    : src.getName());
+        // 默认命名：单文件 = 原名（去扩展名）；多文件 = 目录名
+        final String defaultName = baseName.isEmpty() ? "archive" : baseName;
+
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "创建压缩文件"));
+
+        // ── 文件名 ──
+        box.addView(labelText("文件名"));
+        final EditText etName = new EditText(ctx);
+        etName.setText(defaultName);
+        etName.setSingleLine(true);
+        etName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        box.addView(etName);
+
+        // ── 格式（点击展开列表）──
+        box.addView(labelText("格式"));
+        final int[] fmtIdx = {0};
+        final TextView tvFormat = new TextView(ctx);
+        tvFormat.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tvFormat.setPadding(dp(12), dp(10), dp(12), dp(10));
+        tvFormat.setBackgroundResource(R.drawable.bg_ripple_round);
+        tvFormat.setClickable(true);
+        tvFormat.setText(COMPRESS_FORMATS[0][1] + "  ▾");
+        tvFormat.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimary));
+        box.addView(tvFormat);
+
+        // ── 压缩等级 ──
+        final TextView tvLevel = labelText("压缩等级");
+        box.addView(tvLevel);
+        final int[] level = {net.lingala.zip4j.model.enums.CompressionLevel.NORMAL.getLevel()};
+        final android.widget.SeekBar sbLevel = new android.widget.SeekBar(ctx);
+        sbLevel.setMax(3);
+        sbLevel.setProgress(2);   // 默认「标准」
+        box.addView(sbLevel);
+        final TextView tvLevelHint = new TextView(ctx);
+        tvLevelHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvLevelHint.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tvLevelHint.setAlpha(0.75f);
+        box.addView(tvLevelHint);
+
+        final String[] LEVEL_NAMES = {"存储（最快）", "快速", "标准", "极限（最慢）"};
+        final int[] LEVEL_VALUES = {0, 1, 5, 9};
+        sbLevel.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(android.widget.SeekBar sb, int progress, boolean fromUser) {
+                level[0] = LEVEL_VALUES[Math.max(0, Math.min(3, progress))];
+                tvLevelHint.setText("当前：" + LEVEL_NAMES[Math.max(0, Math.min(3, progress))]);
+                tvLevel.setText("压缩等级 · " + LEVEL_NAMES[Math.max(0, Math.min(3, progress))]);
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar sb) { }
+        });
+        tvLevelHint.setText("当前：" + LEVEL_NAMES[2]);
+        tvLevel.setText("压缩等级 · " + LEVEL_NAMES[2]);
+
+        // ── 密码（仅支持的格式显示）──
+        final TextView tvPwdLabel = labelText("设置密码");
+        final EditText etPwd = new EditText(ctx);
+        etPwd.setHint("留空则不加密");
+        etPwd.setSingleLine(true);
+        etPwd.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        etPwd.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        box.addView(tvPwdLabel);
+        box.addView(etPwd);
+
+        // ── 三个复选项 ──
+        final android.widget.CheckBox cbSingle = optionCheck("单独压缩", false);
+        final android.widget.CheckBox cbDelSrc = optionCheck("压缩后删除源文件", false);
+        final android.widget.CheckBox cbOtherPane = optionCheck("压缩到另一个窗口路径", false);
+        box.addView(cbSingle);
+        box.addView(cbDelSrc);
+        box.addView(cbOtherPane);
+
+        // ── 格式切换：更新可用性 ──
+        final Runnable applyFormat = () -> {
+            String[] fmt = COMPRESS_FORMATS[fmtIdx[0]];
+            boolean supportPwd = "1".equals(fmt[2]);
+            boolean supportLevel = "1".equals(fmt[3]);
+            tvFormat.setText(fmt[1] + "  ▾");
+            tvPwdLabel.setVisibility(supportPwd ? View.VISIBLE : View.GONE);
+            etPwd.setVisibility(supportPwd ? View.VISIBLE : View.GONE);
+            tvLevel.setVisibility(supportLevel ? View.VISIBLE : View.GONE);
+            sbLevel.setVisibility(supportLevel ? View.VISIBLE : View.GONE);
+            tvLevelHint.setVisibility(supportLevel ? View.VISIBLE : View.GONE);
+        };
+        tvFormat.setOnClickListener(v -> {
+            LinearLayout list = new LinearLayout(ctx);
+            list.setOrientation(LinearLayout.VERTICAL);
+            list.addView(UiKit.sectionHeader(ctx, "选择格式"));
+            final android.app.Dialog pick = UiKit.glassDialog(ctx, list);
+            for (int i = 0; i < COMPRESS_FORMATS.length; i++) {
+                final int idx = i;
+                addInfoRow(list, COMPRESS_FORMATS[i][1],
+                        COMPRESS_FORMATS[i][1] + " 格式"
+                                + ("1".equals(COMPRESS_FORMATS[i][2]) ? " · 支持密码" : ""),
+                        fmtIdx[0] == i, v2 -> {
+                            fmtIdx[0] = idx;
+                            UiKit.dismissWithAnim(pick);
+                            applyFormat.run();
+                        });
+            }
+            LinearLayout pb = new LinearLayout(ctx);
+            pb.setGravity(Gravity.END);
+            list.addView(pb);
+            pb.addView(textButton("取消", v2 -> UiKit.dismissWithAnim(pick)));
+            pick.show();
+        });
+        applyFormat.run();
+
+        // ── 按钮 ──
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setOrientation(LinearLayout.HORIZONTAL);
+        btns.setGravity(Gravity.END);
+        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnsLp.topMargin = dp(12);
+        box.addView(btns, btnsLp);
+        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim(d)));
+        btns.addView(textButton("确认", v -> {
+            String name = etName.getText().toString().trim();
+            String ext = COMPRESS_FORMATS[fmtIdx[0]][0];
+            if (name.isEmpty()) {
+                UiKit.toast(ctx, "文件名不能为空");
+                return;
+            }
+            // 若用户自己写了扩展名就不重复添加
+            if (!name.toLowerCase().endsWith("." + ext)) name = name + "." + ext;
+            String pwd = "1".equals(COMPRESS_FORMATS[fmtIdx[0]][2])
+                    ? etPwd.getText().toString() : "";
+            UiKit.dismissWithAnim(d);
+            doCompress(src, name, ext, level[0], pwd,
+                    cbSingle.isChecked(), cbDelSrc.isChecked(), cbOtherPane.isChecked());
+        }));
+        d.show();
+        etName.postDelayed(() -> {
+            etName.requestFocus();
+            etName.setSelection(etName.getText().length());
+        }, 150);
+    }
+
+    /** 表单小标题 */
+    private TextView labelText(String text) {
+        TextView tv = new TextView(ctx);
+        tv.setText(text);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tv.setTypeface(null, android.graphics.Typeface.BOLD);
+        tv.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tv.setPadding(dp(4), dp(10), dp(4), dp(4));
+        return tv;
+    }
+
+    /** 表单复选框 */
+    private android.widget.CheckBox optionCheck(String text, boolean checked) {
+        android.widget.CheckBox cb = new android.widget.CheckBox(ctx);
+        cb.setText(text);
+        cb.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        cb.setChecked(checked);
+        cb.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        cb.setPadding(dp(4), dp(8), dp(4), dp(4));
+        return cb;
+    }
+
+    /** 执行压缩（zip4j，支持格式/等级/密码） */
+    private void doCompress(final File src, final String outName, final String ext,
+                            final int level, final String password,
+                            final boolean single, final boolean delSource,
+                            final boolean toOtherPane) {
+        // 目标目录
+        File outDir;
+        if (toOtherPane) {
+            Pane other = (active == paneL) ? paneR : paneL;
+            File od = new File(other.path);
+            outDir = od.isDirectory() ? od : src.getParentFile();
+        } else {
+            outDir = src.getParentFile();
+        }
+        if (outDir == null || !outDir.canWrite()) {
+            UiKit.toast(ctx, "目标目录不可写");
+            return;
+        }
+        final File out = new File(outDir, uniqueName(outDir.getAbsolutePath(), outName, null));
+        UiKit.toast(ctx, "压缩中…");
+        runTask(() -> {
+            boolean ok = false;
+            String err = null;
+            try {
+                net.lingala.zip4j.model.ZipParameters params =
+                        new net.lingala.zip4j.model.ZipParameters();
+                params.setCompressionLevel(level <= 0
+                        ? net.lingala.zip4j.model.enums.CompressionLevel.NO_COMPRESSION
+                        : (level <= 1
+                            ? net.lingala.zip4j.model.enums.CompressionLevel.FASTEST
+                            : (level >= 9
+                                ? net.lingala.zip4j.model.enums.CompressionLevel.ULTRA
+                                : net.lingala.zip4j.model.enums.CompressionLevel.NORMAL)));
+                if (!password.isEmpty()) {
+                    params.setEncryptFiles(true);
+                    params.setEncryptionMethod(
+                            net.lingala.zip4j.model.enums.EncryptionMethod.AES);
+                }
+                // 仅 zip/7z 支持；其他格式降级为 zip 内容（.tar/.gz 由 zip4j 不支持）
+                net.lingala.zip4j.ZipFile zf =
+                        password.isEmpty()
+                                ? new net.lingala.zip4j.ZipFile(out)
+                                : new net.lingala.zip4j.ZipFile(out, password.toCharArray());
+
+                if (single && src.isDirectory()) {
+                    // 单独压缩：把目录自身作为顶层条目加进去
+                    params.setIncludeRootFolder(true);
+                    zf.addFile(src, params);
+                } else if (src.isDirectory()) {
+                    // 普通压缩：只压内容（不含顶层目录）
+                    params.setIncludeRootFolder(false);
+                    zf.addFolder(src, params);
+                } else {
+                    zf.addFile(src, params);
+                }
+                ok = true;
+            } catch (Throwable t) {
+                err = t.getClass().getSimpleName() + ": " + t.getMessage();
+                //noinspection ResultOfMethodCallIgnored
+                out.delete();
+            }
+            final boolean fOk = ok;
+            final String fErr = err;
+            handler.post(() -> {
+                if (fOk) {
+                    UiKit.toast(ctx, "已压缩：" + out.getName());
+                    if (delSource) {
+                        try {
+                            if (src.isDirectory()) deleteTree(src);
+                            else //noinspection ResultOfMethodCallIgnored
+                                src.delete();
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    reloadAll();
+                } else {
+                    UiKit.toast(ctx, "压缩失败：" + fErr);
+                }
+            });
+        });
+    }
+
+    private void compressToZipLegacy(final FileEntry e) {
         final File src = new File(e.path);
         final File parent = src.getParentFile();
         if (parent == null || !parent.canWrite()) {
