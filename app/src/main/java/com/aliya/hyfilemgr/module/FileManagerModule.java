@@ -8256,8 +8256,6 @@ public class FileManagerModule extends HyVqModule {
             {"tar", "TAR", "0", "0", "1"},
             {"tar.gz", "TAR.GZ", "0", "0", "1"},
             {"gz",  "GZ",  "0", "0", "1"},
-            // RAR 为专有压缩算法，无开源实现，只能解压不能创建
-            {"rar", "RAR", "0", "0", "0"},
     };
 
     /** 创建压缩文件对话框 */
@@ -8298,13 +8296,21 @@ public class FileManagerModule extends HyVqModule {
 
         // 格式列表：内嵌展开（不新开 Dialog——叠加全屏 Dialog 会在首帧
         // 出现背景未就绪的黑闪）
+        final ScrollView fmtScroll = new ScrollView(ctx);
+        fmtScroll.setVerticalScrollBarEnabled(true);
         final LinearLayout fmtList = new LinearLayout(ctx);
         fmtList.setOrientation(LinearLayout.VERTICAL);
-        fmtList.setVisibility(View.GONE);
         fmtList.setBackground(UiKit.rounded(ctx, dp(10),
                 UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHigh),
                 UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
-        box.addView(fmtList);
+        fmtScroll.addView(fmtList, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // 固定高度占位：展开前后弹窗总高不变（INVISIBLE 仍参与布局）
+        fmtScroll.setVisibility(View.INVISIBLE);
+        LinearLayout.LayoutParams fsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(44 * 5));
+        fsLp.topMargin = dp(6);
+        box.addView(fmtScroll, fsLp);
 
         // ── 压缩等级 ──
         final TextView tvLevel = labelText("压缩等级");
@@ -8368,7 +8374,7 @@ public class FileManagerModule extends HyVqModule {
             tvLevelHint.setVisibility(supportLevel ? View.VISIBLE : View.GONE);
         };
         tvFormat.setOnClickListener(v -> {
-            boolean show = fmtList.getVisibility() != View.VISIBLE;
+            boolean show = fmtScroll.getVisibility() != View.VISIBLE;
             if (show && fmtList.getChildCount() == 0) {
                 for (int i = 0; i < COMPRESS_FORMATS.length; i++) {
                     final int idx = i;
@@ -8403,12 +8409,12 @@ public class FileManagerModule extends HyVqModule {
                 }
             }
             if (show) {
-                fmtList.setVisibility(View.VISIBLE);
-                fmtList.setAlpha(0f);
-                fmtList.animate().alpha(1f).setDuration(140).start();
+                fmtScroll.setVisibility(View.VISIBLE);
+                fmtScroll.setAlpha(0f);
+                fmtScroll.animate().alpha(1f).setDuration(140).start();
             } else {
-                fmtList.animate().alpha(0f).setDuration(120)
-                        .withEndAction(() -> fmtList.setVisibility(View.GONE)).start();
+                fmtScroll.animate().alpha(0f).setDuration(120)
+                        .withEndAction(() -> fmtScroll.setVisibility(View.INVISIBLE)).start();
             }
         });
         applyFormat.run();
