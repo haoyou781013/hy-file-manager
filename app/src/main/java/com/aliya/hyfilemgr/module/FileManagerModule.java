@@ -1905,6 +1905,14 @@ public class FileManagerModule extends HyVqModule {
 
     /** 重新加载单个窗格：AccessRouter 四源路由 → 排序 → 刷新（恢复该目录上次滚动位置） */
     private void reload(Pane p) {
+        // 记录最近的真实目录，供终端作工作目录（虚拟路径时回退用它）
+        if (p != null && p.path != null
+                && !p.path.startsWith("content://")
+                && !p.path.startsWith(PREFIX_TRASH)
+                && !p.path.startsWith(PREFIX_ZIP)
+                && !p.path.startsWith("cat://")) {
+            lastRealPath = p.path;
+        }
         if (p == null || p.path == null) return;
         persistState(); // 目录切换即落盘（下次启动回到这里）
         // 滚动位置记忆（参考 MaterialFiles）：离开目录前缓存布局状态，**仅在特定场景恢复**。
@@ -2946,7 +2954,7 @@ public class FileManagerModule extends HyVqModule {
             {
                 int rowBg = path.equals(active.path)
                         ? UiKit.color(ctx, com.google.android.material.R.attr.colorPrimaryContainer)
-                        : UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow);
+                        : UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHigh);
                 android.graphics.drawable.GradientDrawable g = UiKit.rounded(ctx, 0, rowBg, 0);
                 g.setCornerRadii(new float[]{dp(14), dp(14), dp(14), dp(14), dp(14), dp(14), dp(14), dp(14)});
                 g.setStroke(dp(1), UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant));
@@ -3297,6 +3305,9 @@ public class FileManagerModule extends HyVqModule {
     /** 文件列表主视图（切到终端时隐藏） */
     private View fileContentView;
 
+    /** 最近一次浏览过的真实目录（虚拟路径时终端用它作工作目录） */
+    private String lastRealPath = null;
+
     /** 终端面板（内置，同一 Activity 内叠加显示） */
     private com.aliya.hyfilemgr.terminal.TerminalPanel terminalPanel;
 
@@ -3318,8 +3329,33 @@ public class FileManagerModule extends HyVqModule {
                 closeTerminal();
                 return;
             }
-            String dir = (active != null && active.path != null) ? active.path : "/sdcard";
-            if (dir.startsWith("content://")) dir = "/sdcard";
+            // 终端工作目录 = 文件列表当前路径。
+            // active 可能为 null 或指向虚拟路径（zip:// trash:// cat://）：
+            // 这些不是真实目录，退回上一次真实浏览路径。
+            String dir = null;
+            if (active != null && active.path != null) {
+                String p2 = active.path;
+                boolean virtualPath = p2.startsWith("content://")
+                        || p2.startsWith(PREFIX_TRASH)
+                        || p2.startsWith(PREFIX_ZIP)
+                        || p2.startsWith("cat://");
+                if (!virtualPath && new File(p2).isDirectory()) dir = p2;
+            }
+            if (dir == null) {
+                // 回退：另一窗格 → 上次真实路径 → /sdcard
+                Pane other = (active == paneL) ? paneR : paneL;
+                if (other != null && other.path != null
+                        && !other.path.startsWith("content://")
+                        && !other.path.startsWith(PREFIX_TRASH)
+                        && !other.path.startsWith(PREFIX_ZIP)
+                        && new File(other.path).isDirectory()) {
+                    dir = other.path;
+                } else if (lastRealPath != null && new File(lastRealPath).isDirectory()) {
+                    dir = lastRealPath;
+                } else {
+                    dir = "/sdcard";
+                }
+            }
 
             terminalPanel = new com.aliya.hyfilemgr.terminal.TerminalPanel(
                     ctx, dir, this::closeTerminal);
@@ -4434,12 +4470,15 @@ public class FileManagerModule extends HyVqModule {
         icon.setImageResource(e.iconRes);
         icon.setColorFilter(UiKit.color(ctx, selected
                 ? com.google.android.material.R.attr.colorOnPrimaryContainer
-                : com.google.android.material.R.attr.colorOnSurfaceVariant));
+                : com.google.android.material.R.attr.colorOnSurface));
         int s = dp(18);
         top.addView(icon, new LinearLayout.LayoutParams(s, s));
         TextView tv = new TextView(ctx);
         tv.setText(e.title);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        // 未选中行原先用 colorOnSurface 但背景是 colorSurfaceContainerLow，
+        // 在浅色主题下两者亮度接近、对比不足。改为加粗 + 全不透明正文色。
+        tv.setTypeface(null, android.graphics.Typeface.BOLD);
         tv.setTextColor(UiKit.color(ctx, selected
                 ? com.google.android.material.R.attr.colorOnPrimaryContainer
                 : com.google.android.material.R.attr.colorOnSurface));
@@ -4461,7 +4500,11 @@ public class FileManagerModule extends HyVqModule {
             TextView sub = new TextView(ctx);
             sub.setText(e.subtitle);
             sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-            sub.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
+            // 副标题原用 colorOnSurfaceVariant（灰），与卡片背景对比偏弱。
+            // 改用正文色 + 75% 不透明度：仍明显弱于标题，但可读性更好。
+            sub.setTextColor(UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorOnSurface));
+            sub.setAlpha(0.75f);
             sub.setSingleLine(true);
             sub.setEllipsize(android.text.TextUtils.TruncateAt.END);
             LinearLayout.LayoutParams subLp = new LinearLayout.LayoutParams(

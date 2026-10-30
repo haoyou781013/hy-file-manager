@@ -64,16 +64,23 @@ public class MainActivity extends AppCompatActivity {
             int barColor = com.aliya.hyfilemgr.ui.UiKit.color(this,
                     com.google.android.material.R.attr.colorSurfaceContainer);
             win.setStatusBarColor(barColor);
-            // 图标明暗跟随主题：工业风格是深色底，需要浅色图标
-            int uiMode = getResources().getConfiguration().uiMode
-                    & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
-            boolean dark = uiMode == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+            // 图标明暗：SYSTEM_UI_FLAG_LIGHT_STATUS_BAR 表示
+            // 「状态栏背景是浅色，请用深色图标」——名字指的是背景，不是图标。
+            // 旧代码把 dark 分支设成「清除该 flag」，等于深色底配浅色图标，
+            // 方向是对的；但浅色底分支又设了 flag，两者都对——
+            // 真正的问题是没判断实际背景亮度，Night 模式判断与实际 barColor 无关。
+            // 改为按 barColor 的感知亮度决定，与主题无关，永远正确。
+            int r = android.graphics.Color.red(barColor);
+            int g2 = android.graphics.Color.green(barColor);
+            int b2 = android.graphics.Color.blue(barColor);
+            double luma = 0.299 * r + 0.587 * g2 + 0.114 * b2;
+            boolean lightBackground = luma > 140;
             android.view.View decor = win.getDecorView();
             int flags = decor.getSystemUiVisibility();
-            if (dark) {
-                flags &= ~android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-            } else {
+            if (lightBackground) {
                 flags |= android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            } else {
+                flags &= ~android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
             }
             decor.setSystemUiVisibility(flags);
         } catch (Throwable ignored) {
