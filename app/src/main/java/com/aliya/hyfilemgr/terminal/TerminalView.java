@@ -40,6 +40,8 @@ public class TerminalView extends ScrollView {
     private BaseInputConnection ic;
     private final StringBuilder screen = new StringBuilder();
     private int maxLines = 3000;
+    /** 屏幕缓冲字符上限（约 3000 行 × 80 字符） */
+    private static final int MAX_SCREEN_CHARS = 240_000;
 
     /** 提示符（如 "$ "）。null 表示不显示 */
     private String promptStr = "$ ";
@@ -149,6 +151,45 @@ public class TerminalView extends ScrollView {
                 }
 
                 @Override
+                public boolean setComposingText(CharSequence text, int newCursorPosition) {
+                    // 中文/拼音输入法组词阶段走这里。若不重写，父类实现会调用
+                    // getEditable()（返回 null）→ NPE，组词必然失败。
+                    // 组词中的字符先不回显、不提交，等 commitText 再发给 shell。
+                    return true;
+                }
+
+                @Override
+                public boolean finishComposingText() {
+                    // 同上：父类会访问 getEditable()
+                    return true;
+                }
+
+                @Override
+                public CharSequence getTextBeforeCursor(int length, int flags) {
+                    return "";
+                }
+
+                @Override
+                public CharSequence getTextAfterCursor(int length, int flags) {
+                    return "";
+                }
+
+                @Override
+                public CharSequence getSelectedText(int flags) {
+                    return null;
+                }
+
+                @Override
+                public int getCursorCapsMode(int reqModes) {
+                    return 0;
+                }
+
+                @Override
+                public boolean setSelection(int start, int end) {
+                    return true;
+                }
+
+                @Override
                 public Editable getEditable() {
                     return null;   // 不提供真实 Editable，避免焦点/文本状态耦合
                 }
@@ -244,8 +285,14 @@ public class TerminalView extends ScrollView {
     public void append(String text) {
         // shell 输出直接进 flushed，末尾补提示符 + 光标
         flushed.append(text);
+        // 输出上限：超长会话（logcat / find /）会造成内存线性增长
+        // 并让每次 repaint 的 O(n) 复制越来越慢，最终卡死
+        if (flushed.length() > MAX_SCREEN_CHARS) {
+            int cut = flushed.length() - MAX_SCREEN_CHARS / 2;
+            int nl = flushed.indexOf("\n", cut);
+            if (nl > 0) flushed.delete(0, nl + 1);
+        }
         repaint();
-        return;
     }
 
     private void appendLegacy(String text) {

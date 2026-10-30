@@ -11,8 +11,8 @@ android {
         minSdk = 21
         targetSdk = 34
         // 版本号唯一来源：本文件
-        versionCode = 1
-        versionName = "0.1.0-dev"
+        versionCode = 2
+        versionName = "0.2.0-beta.1"
     }
 
     compileOptions {
@@ -77,6 +77,10 @@ dependencies {
     implementation("net.lingala.zip4j:zip4j:2.11.5")
     // TAR / TAR.GZ / GZ 真实支持（zip4j 只覆盖 ZIPC/7Z）
     implementation("org.apache.commons:commons-compress:1.20")
+    // commons-compress 1.20 把 xz / zstd 设为 optional，不会传递引入。
+    // 缺这两个会在 tar.xz / tar.zst 分支抛 NoClassDefFoundError。
+    implementation("org.tukaani:xz:1.9")
+    implementation("com.github.luben:zstd-jni:1.5.5-11@aar")
     // RAR 解压（RAR 压缩格式专有，无开源压缩实现）
     implementation("com.github.junrar:junrar:7.5.5")
 }

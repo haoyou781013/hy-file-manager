@@ -242,6 +242,10 @@ public class MediaPlayerActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         setContentView(R.layout.activity_media_player);
 
+        // 弹幕季 id / 集数：此前从未读取 extra，导致 initDanmaku() 首行
+        // (danmakuSeasonId <= 0) 直接 return，弹幕永远是 0 条
+        danmakuSeasonId = getIntent().getIntExtra(EXTRA_DANMAKU_SEASON, -1);
+        danmakuEpNo = getIntent().getIntExtra(EXTRA_DANMAKU_EP, 1);
         playerView = findViewById(R.id.video_view);
         placeholder = findViewById(R.id.audio_placeholder);
         controls = findViewById(R.id.player_controls);
@@ -1053,12 +1057,16 @@ public class MediaPlayerActivity extends Activity {
             PixelCopy.request(sv, bmp, result -> {
                 if (result != PixelCopy.SUCCESS) {
                     UiKit.toast(this, "截图失败（code " + result + "）");
+                    // 失败分支原本直接 return，绕过 finally 的 recycle，
+                    // 每失败一次泄漏一张全屏 ARGB_8888（4K 约 33MB）
+                    if (!bmp.isRecycled()) bmp.recycle();
                     return;
                 }
                 try {
                     File dir = new File(Environment.getExternalStorageDirectory(), "Pictures/HY_VQ");
                     if (!dir.exists() && !dir.mkdirs()) {
                         UiKit.toast(this, "无法创建截图目录");
+                        if (!bmp.isRecycled()) bmp.recycle();
                         return;
                     }
                     String name = "HYVQ_" + new java.text.SimpleDateFormat("yyyyMMdd_HHmmss",

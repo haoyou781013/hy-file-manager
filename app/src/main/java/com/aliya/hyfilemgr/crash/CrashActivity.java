@@ -234,10 +234,24 @@ public class CrashActivity extends Activity {
         try {
             Intent i = new Intent(this, com.aliya.hyfilemgr.MainActivity.class);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-            startActivity(i);
-            finish();
-            // 清空崩溃页任务栈
-            android.os.Process.killProcess(android.os.Process.myPid());
+            // 用 PendingIntent + AlarmManager 延迟拉起：
+            // 原来 startActivity → finish → killProcess 连发，进程在
+            // MainActivity 冷启动前就被杀掉，重启必然失败。
+            android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
+                    this, 0, i,
+                    android.app.PendingIntent.FLAG_CANCEL_CURRENT
+                            | android.app.PendingIntent.FLAG_IMMUTABLE);
+            android.app.AlarmManager am =
+                    (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
+            if (am != null) {
+                am.setExact(android.app.AlarmManager.RTC,
+                        System.currentTimeMillis() + 400, pi);
+            }
+            finishAffinity();
+            // 给 Alarm 留下调度时间再退出（不要立即 kill）
+            new android.os.Handler(getMainLooper()).postDelayed(
+                    () -> android.os.Process.killProcess(android.os.Process.myPid()),
+                    200);
         } catch (Throwable t) {
             toast("重启失败：" + t);
         }

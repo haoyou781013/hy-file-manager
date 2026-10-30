@@ -269,6 +269,13 @@ public final class SafStrategy {
      * 真实→真实请走 FileOps.copy（本方法不处理该组合）。须在后台线程调用。
      */
     public static boolean copyInto(Context ctx, String src, String destDir, String name, StringBuilder err) {
+        // 净化文件名：DocumentsProvider 返回的 DISPLAY_NAME 可能是
+        // "../../evil" 之类的畸形值，直接拼进真实路径会写到目标目录之外。
+        name = sanitizeName(name);
+        if (name == null || name.isEmpty()) {
+            if (err != null) err.append("非法文件名");
+            return false;
+        }
         try {
             boolean srcSaf = isSafUri(src);
             boolean dstSaf = isSafUri(destDir);

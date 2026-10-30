@@ -198,6 +198,17 @@ public final class FileOps {
 
     /** 递归复制（含目录结构与文件），目标已存在时覆盖 */
     private static void copyRecursive(File src, File dest) throws IOException {
+        // 防自嵌套：把 /a 复制到 /a/b 会无限递归直到栈溢出/写满磁盘
+        try {
+            String ss = src.getCanonicalPath();
+            String dd = dest.getCanonicalPath();
+            if (dd.equals(ss) || dd.startsWith(ss + java.io.File.separator)) {
+                throw new java.io.IOException("不能把目录复制到它自身或其子目录内");
+            }
+        } catch (java.io.IOException e) {
+            throw e;
+        } catch (Throwable ignored) {
+        }
         if (src.isDirectory()) {
             if (!dest.exists() && !dest.mkdirs()) throw new IOException("无法创建目录 " + dest);
             File[] children = src.listFiles();

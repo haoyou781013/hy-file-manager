@@ -182,6 +182,8 @@ public class FileManagerModule extends HyVqModule {
     private android.text.TextWatcher editorWatcher = null;
     /** 预览对话框（HTML/Markdown WebView，独立于编辑会话） */
     private android.app.Dialog webDialog = null;
+    /** 预览用 WebView（关闭时必须 destroy，否则每次预览叠加一个实例） */
+    private android.webkit.WebView previewWebView = null;
     /** 编辑器侧边栏（文件树抽屉：☰ 弹出；浏览目录/打开文件/原功能菜单） */
     private android.app.Dialog editorDrawer = null;
     private File editorDrawerDir = null;
@@ -335,6 +337,10 @@ public class FileManagerModule extends HyVqModule {
     public void onDetach() {
         persistState();
         if (activeInstance == this) activeInstance = null;
+        // 释放 Activity 强引用：否则旋转/重建后旧 Activity 被钉住，
+        // 整个 View 树泄漏，且延时回调会对已销毁 Activity 调 recreate
+        hostActivity = null;
+        if (handler != null) handler.removeCallbacksAndMessages(null);
     }
 
     /** 恢复持久化的浏览状态（排序模式 / 是否显示隐藏文件 / 双窗格上次路径）。
@@ -5535,6 +5541,7 @@ public class FileManagerModule extends HyVqModule {
             webDialog.dismiss();
             webDialog = null;
         }
+        destroyPreviewWebView();
         if (editorDrawer != null) {
             editorDrawer.dismiss();
             editorDrawer = null;
@@ -6111,6 +6118,24 @@ public class FileManagerModule extends HyVqModule {
     }
 
     // ── HTML / Markdown 预览（WebView 全屏；Markdown 极简转 HTML，无第三方库） ──
+    /** 销毁预览 WebView（loadUrl/stopLoading/destroy 三步缺一不可） */
+    private void destroyPreviewWebView() {
+        if (previewWebView == null) return;
+        try {
+            previewWebView.stopLoading();
+            previewWebView.loadUrl("about:blank");
+            previewWebView.clearHistory();
+            previewWebView.removeAllViews();
+            android.view.ViewParent parent = previewWebView.getParent();
+            if (parent instanceof android.view.ViewGroup) {
+                ((android.view.ViewGroup) parent).removeView(previewWebView);
+            }
+            previewWebView.destroy();
+        } catch (Throwable ignored) {
+        }
+        previewWebView = null;
+    }
+
     private void showPreviewDialog() {
         if (currentEditTab == null) return;
         final String ext = currentEditTab.file.getName().toLowerCase();
@@ -6162,11 +6187,13 @@ public class FileManagerModule extends HyVqModule {
                 webDialog.dismiss();
                 webDialog = null;
             }
+            destroyPreviewWebView();
         }));
         box.addView(top);
           // 统一走 MarkdownWebView；⚠️ 不再开启 JavaScript —— 预览的是用户
           // 任意 .md/.html 文件，开 JS 等于给每个文件一个脚本执行入口
           android.webkit.WebView wv = new android.webkit.WebView(ctx);
+          previewWebView = wv;
         wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
         box.addView(wv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         webDialog = new android.app.Dialog(ctx);
@@ -6347,7 +6374,7 @@ public class FileManagerModule extends HyVqModule {
                 if (!trimmed.isEmpty()) {
                     char last = trimmed.charAt(trimmed.length() - 1);
                     if (last == '{' || last == '[' || last == '(' || last == ':') {
-                        indent.append(" ".repeat(Math.max(1, editorTabWidth)));
+                        indent.append(" ".repeat(Math.max(1, editorTabWidthPref())));
                     }
                 }
                 if (indent.length() == 0) return;
@@ -8349,7 +8376,8 @@ public class FileManagerModule extends HyVqModule {
     // ── 压缩 / 解压（长按菜单入口；参考 Fossify ItemsAdapter；java.util.zip 零依赖） ──
 
     private static boolean isZip(FileEntry e) {
-        return e.name != null && e.name.toLowerCase(Locale.getDefault()).endsWith(".zip");
+        return e.name != null
+                && com.aliya.hyfilemgr.archive.ArchiveExtractor.canExtract(e.name);
     }
 
     /** 单条目压缩为 zip：同目录 <原名>.zip（重名自动 (1)）；目录递归打包 */
@@ -8849,56 +8877,46 @@ public class FileManagerModule extends HyVqModule {
 
     /** 解压 zip 到同目录 <zip名>/：处理 Windows GBK 文件名乱码、路径穿越防护 */
     private void extractZip(final FileEntry e) {
-        final File zipFile = new File(e.path);
-        final File parent = zipFile.getParentFile();
-        if (parent == null) return;
+        final File archive = new File(e.path);
+        final File parent = archive.getParentFile();
+        if (parent == null || !parent.canWrite()) {
+            UiKit.toast(ctx, "目录不可写，无法解压");
+            return;
+        }
+        // 去掉压缩扩展名作为输出目录名（含复合扩展名）
         String base = e.name;
-        int dot = base.lastIndexOf('.');
-        if (dot > 0) base = base.substring(0, dot);
+        String lower = base.toLowerCase(Locale.getDefault());
+        for (String suffix : new String[]{".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst",
+                ".tgz", ".tbz2", ".tbz", ".txz", ".tzst", ".zip", ".jar", ".apk", ".xapk",
+                ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst"}) {
+            if (lower.endsWith(suffix)) {
+                base = base.substring(0, base.length() - suffix.length());
+                break;
+            }
+        }
+        if (base.isEmpty()) base = "extracted";
         final File outDir = new File(parent, uniqueName(parent.getAbsolutePath(), base, null));
+
         UiKit.toast(ctx, "解压中…");
         runTask(() -> {
-            int count = 0;
-            try {
-                outDir.mkdirs();
-                try (java.util.zip.ZipInputStream zis = new java.util.zip.ZipInputStream(
-                        new java.io.BufferedInputStream(new java.io.FileInputStream(zipFile)))) {
-                    java.util.zip.ZipEntry ze;
-                    while ((ze = zis.getNextEntry()) != null) {
-                        String name = ze.getName();
-                        // 中文乱码修复：Windows zip 常见 GBK 编码文件名，被按 UTF-8 解码
-                        // 会出现 U+FFFD 替换符/控制字符 → 用 ISO-8859-1→GBK 还原
-                        if (name.indexOf('\uFFFD') >= 0 || containsGarbled(name)) {
-                            String fixed = fixGbkName(name);
-                            if (fixed != null && !fixed.equals(name)) name = fixed;
+            com.aliya.hyfilemgr.archive.ArchiveExtractor.Result res =
+                    com.aliya.hyfilemgr.archive.ArchiveExtractor.extract(
+                            archive, outDir, null, null);
+            handler.post(() -> {
+                if (res.ok) {
+                    UiKit.toast(ctx, "已解压 " + res.files + " 个文件到 " + outDir.getName());
+                    reloadAll();
+                } else {
+                    UiKit.toast(ctx, "解压失败：" + res.error);
+                    try {
+                        String[] left = outDir.list();
+                        if (left != null && left.length == 0) {
+                            //noinspection ResultOfMethodCallIgnored
+                            outDir.delete();
                         }
-                        // 防 zip 炸弹路径穿越：拒绝绝对路径与 ../
-                        if (name.startsWith("/") || name.contains("..")) continue;
-                        File target = new File(outDir, name);
-                        if (ze.isDirectory()) {
-                            target.mkdirs();
-                        } else {
-                            File td = target.getParentFile();
-                            if (td != null) td.mkdirs();
-                            try (java.io.BufferedOutputStream bos = new java.io.BufferedOutputStream(
-                                    new java.io.FileOutputStream(target))) {
-                                byte[] buf = new byte[65536];
-                                int n;
-                                while ((n = zis.read(buf)) > 0) bos.write(buf, 0, n);
-                            }
-                            target.setLastModified(ze.getTime());
-                            count++;
-                        }
-                        zis.closeEntry();
+                    } catch (Throwable ignored) {
                     }
                 }
-            } catch (Throwable t) {
-                UiKit.toast(ctx, "解压失败：" + t.getMessage());
-            }
-            final int fCount = count;
-            handler.post(() -> {
-                UiKit.toast(ctx, "解压完成：" + fCount + " 个文件 → " + outDir.getName());
-                reload(active);
             });
         });
     }
