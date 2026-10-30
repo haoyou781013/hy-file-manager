@@ -46,6 +46,8 @@ public final class ArchiveExtractor {
         public String error;
         /** 解压出的顶层条目（用于决定是否套一层目录） */
         public String topName;
+        /** 是否因文件名乱码而用 GBK 重解过 */
+        public boolean gbkRetried;
         static Result fail(String e) {
             Result r = new Result();
             r.ok = false;
@@ -124,17 +126,28 @@ public final class ArchiveExtractor {
             return extractZipEncrypted(src, destDir, password, progress);
         }
         int n = 0;
-        // 先按 UTF-8 试读；若条目名出现替换符（Windows GBK 包常见），
-        // 改为 ISO-8859-1 解码再转 GBK 还原。旧实现里有这段兜底，
-        // 改用 ArchiveExtractor 后丢失 → GBK 包解出乱码（功能倒退）。
+        // ⚠️ 不要靠异常判断乱码：commons-compress 1.20 对 UTF-8 走
+        // NioZipEncoding 的 REPLACE 模式（ZipEncodingHelper:62 →
+        // NioZipEncoding:176-186），非法字节直接替换成 '?'，**不抛异常**。
+        // 旧实现的 catch 分支是死代码，GBK 包解出 ???? 且仍返回 ok=true。
+        //
+        // 正确做法：先解一遍，然后**主动扫目标目录的条目名**，
+        // 命中替换符/控制字符比例过高就清空重来，用 GBK 再解一次。
+        boolean gbk = false;
         try (org.apache.commons.compress.archivers.zip.ZipArchiveInputStream zin =
                      new org.apache.commons.compress.archivers.zip.ZipArchiveInputStream(
                              new BufferedInputStream(new FileInputStream(src)),
                              "UTF-8", true)) {
             n = drainArchive(zin, destDir, progress, false);
         } catch (Throwable t) {
-            if (!looksLikeGarbled(t)) throw t;
-            // 回退：ISO-8859-1 → GBK
+            // 真异常（损坏/加密）照常抛出，不再用作乱码判据
+            throw t;
+        }
+
+        if (hasReplacementChars(destDir)) {
+            // 清掉刚解出的乱码结果，用 ISO-8859-1 重解再转 GBK
+            deleteTreeQuietly(destDir);
+            gbk = true;
             try (org.apache.commons.compress.archivers.zip.ZipArchiveInputStream zin =
                          new org.apache.commons.compress.archivers.zip.ZipArchiveInputStream(
                                  new BufferedInputStream(new FileInputStream(src)),
@@ -142,9 +155,11 @@ public final class ArchiveExtractor {
                 n = drainArchive(zin, destDir, progress, true);
             }
         }
+
         Result r = new Result();
         r.ok = true;
         r.files = n;
+        r.gbkRetried = gbk;
         return r;
     }
 
@@ -433,6 +448,40 @@ public final class ArchiveExtractor {
     }
 
     /** ISO-8859-1 读入的字节串按 GBK 重新解码（Windows zip 中文名还原） */
+    /**
+     * 扫描目录里的文件名，判断是否出现「UTF-8 解 GBK 字节」的替换符。
+     *
+     * <p>判据：名字里含 '?'（commons-compress 的 REPLACEMENT）或
+     * U+FFFD（Java 解码器的替换符）。任一命中且出现在非末尾位置即视为乱码
+     * —— 真实文件名里极少出现 '?'（Windows 保留字符，无法创建）。</p>
+     */
+    private static boolean hasReplacementChars(File dir) {
+        return hasReplacementChars(dir, 0);
+    }
+
+    private static boolean hasReplacementChars(File dir, int depth) {
+        if (dir == null || depth > 4) return false;
+        File[] items = dir.listFiles();
+        if (items == null) return false;
+        for (File f : items) {
+            String name = f.getName();
+            if (name.indexOf('?') >= 0 || name.indexOf('\uFFFD') >= 0) return true;
+            if (f.isDirectory() && hasReplacementChars(f, depth + 1)) return true;
+        }
+        return false;
+    }
+
+    /** 静默删除整棵树（GBK 重解前清场用） */
+    private static void deleteTreeQuietly(File f) {
+        if (f == null || !f.exists()) return;
+        if (f.isDirectory()) {
+            File[] items = f.listFiles();
+            if (items != null) for (File c : items) deleteTreeQuietly(c);
+        }
+        //noinspection ResultOfMethodCallIgnored
+        f.delete();
+    }
+
     private static String fixGbkName(String name) {
         try {
             return new String(name.getBytes(StandardCharsets.ISO_8859_1),

@@ -2223,6 +2223,11 @@ public class FileManagerModule extends HyVqModule {
     }
 
     private void updateOpBar() {
+        // 只有文件模式才显示多选栏；终端/设置下即使 multiMode 也不能弹出来
+        if (contentMode != ContentMode.FILES) {
+            if (opBar != null) opBar.setVisibility(View.GONE);
+            return;
+        }
         if (opCount != null) {
             int n = active == null || active.selected == null ? 0 : active.selected.size();
             opCount.setText("已选 " + n + " 项");
@@ -3137,7 +3142,7 @@ public class FileManagerModule extends HyVqModule {
      *
      * <p>当前两项：权限管理、文件管理。后续新设置项在此追加即可。</p>
      */
-    private void showSettingsPage() {
+    private View buildSettingsRoot() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "设置"));
@@ -3166,77 +3171,10 @@ public class FileManagerModule extends HyVqModule {
                 "显示密度(DPI) · 列表文件密度 · 界面主题", R.drawable.ic_sliders, v -> {
                     showInSettingsDialog(this::buildAppearanceSettings);
                 });
-
-        settingsHolder = box;
-        settingsDialog = UiKit.glassDialog(ctx, box);
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setOrientation(LinearLayout.HORIZONTAL);
-        btns.setGravity(Gravity.END);
-        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnsLp.topMargin = dp(10);
-        box.addView(btns, btnsLp);
-        btns.addView(textButton("关闭", v -> hideSettingsDialog()));
-        settingsDialog.show();
+        return box;
     }
 
     /** 设置页对话框引用（供子页返回时复用） */
-    private android.app.Dialog settingsDialog;
-    /** 设置弹窗的内容容器（原地切换时只换它的子 View，不重建 Dialog） */
-    private LinearLayout settingsHolder;
-
-    /**
-     * 设置页**原地切换**：把新内容换进已打开的设置弹窗，不重建 Dialog。
-     *
-     * <p>原先做法是 dismiss 当前弹窗再 glassDialog 新开一个 —— 每次都会
-     * 重新执行一次模糊截图（captureBlurredBackground + boxBlur），
-     * 整屏闪一下，观感像「重绘整个页面」。
-     * 原地替换只动面板子 View，模糊底图与窗口全都不变。</p>
-     *
-     * <p>过渡：旧内容左移淡出 → 新内容右移淡入，模拟前进。</p>
-     *
-     * @param holder 承载内容的容器（settingsDialog 面板内的 LinearLayout）
-     * @param newContent 新内容
-     * @param forward true=前进（新内容从右进），false=返回（新内容从左进）
-     */
-    private void swapSettingsContent(final LinearLayout holder, final View newContent,
-                                     final boolean forward) {
-        if (holder == null || newContent == null) return;
-        final int w = holder.getWidth() > 0
-                ? holder.getWidth()
-                : ctx.getResources().getDisplayMetrics().widthPixels;
-        final float dir = forward ? 1f : -1f;
-
-        // 旧内容退场
-        final View old = holder.getChildCount() > 0 ? holder.getChildAt(0) : null;
-        Runnable afterOut = () -> {
-            holder.removeAllViews();
-            holder.addView(newContent, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT));
-            // 新内容从另一侧滑入
-            newContent.setAlpha(0f);
-            newContent.setTranslationX(-dir * w * 0.18f);
-            newContent.animate()
-                    .alpha(1f)
-                    .translationX(0f)
-                    .setDuration(200)
-                    .setInterpolator(new android.view.animation.DecelerateInterpolator())
-                    .start();
-        };
-
-        if (old == null) {
-            afterOut.run();
-            return;
-        }
-        old.animate()
-                .alpha(0f)
-                .translationX(dir * w * 0.18f)
-                .setDuration(140)
-                .setInterpolator(new android.view.animation.AccelerateInterpolator())
-                .withEndAction(afterOut)
-                .start();
-    }
 
     /**
      * 在原地打开一个新设置页：复用同一个 settingsDialog 实例，
@@ -3285,12 +3223,6 @@ public class FileManagerModule extends HyVqModule {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
 
-        settingsEmbedView.setVisibility(View.VISIBLE);
-        if (fileContentView != null) fileContentView.setVisibility(View.GONE);
-        if (opBar != null) opBar.setVisibility(View.GONE);
-        if (bottomNav != null) bottomNav.setVisibility(View.GONE);
-        if (fabNew != null) fabNew.setVisibility(View.GONE);
-
         // 换内容（淡入）
         settingsEmbedContent.removeAllViews();
         settingsEmbedContent.addView(v, new LinearLayout.LayoutParams(
@@ -3298,12 +3230,14 @@ public class FileManagerModule extends HyVqModule {
         settingsEmbedContent.setAlpha(0f);
         settingsEmbedContent.animate().alpha(1f).setDuration(160).start();
 
-        enterSettingsTopBar();
+        // 统一互斥切换（会隐藏终端、切顶栏、管底栏与 FAB）
+        setContentMode(ContentMode.SETTINGS);
     }
 
     /** 顶栏切到设置模式：「设置 | 页名」+ 返回 */
     private void enterSettingsTopBar() {
         if (topBarCenterSlot == null || topBarSettingsTitleView != null) return;
+        removeTerminalTopTitle();
         if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.GONE);
 
         LinearLayout title = new LinearLayout(ctx);
@@ -3346,23 +3280,12 @@ public class FileManagerModule extends HyVqModule {
     /** 关闭设置页，恢复文件视图与顶栏 */
     private void closeSettingsEmbed() {
         if (settingsEmbedView == null) return;
-        settingsEmbedView.setVisibility(View.GONE);
-        if (fileContentView != null) fileContentView.setVisibility(View.VISIBLE);
-        if (bottomNav != null) {
-            bottomNav.setAlpha(1f);
-            bottomNav.setTranslationY(0f);
-            bottomNav.setVisibility(View.VISIBLE);
-        }
-        if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
-        // 顶栏恢复
-        if (topBarSettingsTitleView != null && topBarCenterSlot != null) {
-            topBarCenterSlot.removeView(topBarSettingsTitleView);
-            topBarSettingsTitleView = null;
-            settingsTopTitle = null;
-        }
-        if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.VISIBLE);
-        if (topBarFileActions != null) topBarFileActions.setVisibility(View.VISIBLE);
-        if (multiMode) updateOpBar();
+        setContentMode(ContentMode.FILES);
+    }
+
+    /** 打开设置主页（内嵌视图） */
+    private void showSettingsPage() {
+        showInSettingsDialog(this::buildSettingsRoot);
     }
 
     /** 薄包装：以独立弹窗打开（保持既有调用点兼容） */
@@ -3379,14 +3302,7 @@ public class FileManagerModule extends HyVqModule {
     }
 
     private void hideSettingsDialog() {
-        // 内嵌模式下关闭的是内嵌视图（settingsDialog 仅作旧兼容保留）
-        if (settingsEmbedView != null && settingsEmbedView.getVisibility() == View.VISIBLE) {
-            closeSettingsEmbed();
-            return;
-        }
-        if (settingsDialog != null && settingsDialog.isShowing()) {
-            UiKit.dismissWithAnim(settingsDialog);
-        }
+        closeSettingsEmbed();
     }
 
     /** 设置行：标题 + 副标题 + 图标 + 右箭头 */
@@ -3544,9 +3460,102 @@ public class FileManagerModule extends HyVqModule {
     /** 最近一次浏览过的真实目录（虚拟路径时终端用它作工作目录） */
     private String lastRealPath = null;
 
+    /** 当前内容视图：三者互斥 */
+    private enum ContentMode { FILES, SETTINGS, TERMINAL }
+
+    private ContentMode contentMode = ContentMode.FILES;
+
+    /**
+     * 统一的内容视图切换：先把其余视图全部隐藏，再显示目标。
+     *
+     * <p>旧代码各入口各自 setVisibility，缺少互斥约束 →
+     * 侧边栏「工具→文件管理」卡片在终端打开时直接叠上来，
+     * 关设置后终端又从 contentWrap 移除但未重新加入，出现
+     * 「两个视图同显」或「屏幕全空」。集中到一个方法避免再漏。</p>
+     */
+    private void setContentMode(ContentMode target) {
+        if (target == null) return;
+        ContentMode prev = contentMode;
+        contentMode = target;
+
+        boolean fileVisible = target == ContentMode.FILES;
+        boolean settingsVisible = target == ContentMode.SETTINGS;
+        boolean termVisible = target == ContentMode.TERMINAL;
+
+        if (fileContentView != null) {
+            fileContentView.setVisibility(fileVisible ? View.VISIBLE : View.GONE);
+        }
+        if (settingsEmbedView != null) {
+            settingsEmbedView.setVisibility(settingsVisible ? View.VISIBLE : View.GONE);
+        }
+        if (terminalPanel != null) {
+            View tv = terminalPanel.getView();
+            if (tv != null) tv.setVisibility(termVisible ? View.VISIBLE : View.GONE);
+        }
+
+        // 底部两栏与 FAB 只在文件模式显示
+        if (bottomNav != null) {
+            if (fileVisible) {
+                bottomNav.setAlpha(1f);
+                bottomNav.setTranslationY(0f);
+                bottomNav.setVisibility(View.VISIBLE);
+            } else {
+                bottomNav.setVisibility(View.GONE);
+            }
+        }
+        if (fabNew != null) {
+            fabNew.setVisibility(fileVisible ? View.VISIBLE : View.GONE);
+        }
+        if (opBar != null) {
+            if (fileVisible && multiMode) {
+                updateOpBar();
+            } else {
+                opBar.setVisibility(View.GONE);
+            }
+        }
+
+        // 顶栏：三选一
+        if (fileVisible) {
+            removeTerminalTopTitle();
+            removeSettingsTopTitle();
+            if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.VISIBLE);
+            if (topBarFileActions != null) topBarFileActions.setVisibility(View.VISIBLE);
+            if (topBarTermActions != null) topBarTermActions.setVisibility(View.GONE);
+        } else if (target == ContentMode.TERMINAL) {
+            removeSettingsTopTitle();
+            enterTerminalTopBar();
+        } else {
+            removeTerminalTopTitle();
+            enterSettingsTopBar();
+        }
+
+        if (prev != target && fileVisible && multiMode) updateOpBar();
+    }
+
+    /** 从顶栏移除终端标题（幂等） */
+    private void removeTerminalTopTitle() {
+        if (topBarTermTitleView != null && topBarCenterSlot != null) {
+            topBarCenterSlot.removeView(topBarTermTitleView);
+        }
+        topBarTermTitleView = null;
+        terminalTopPwd = null;
+    }
+
+    /** 从顶栏移除设置标题（幂等） */
+    private void removeSettingsTopTitle() {
+        if (topBarSettingsTitleView != null && topBarCenterSlot != null) {
+            topBarCenterSlot.removeView(topBarSettingsTitleView);
+        }
+        topBarSettingsTitleView = null;
+        settingsTopTitle = null;
+    }
+
     /** 顶栏切到终端模式：「终端 | pwd」+ 清屏/复制/中断 */
     private void enterTerminalTopBar() {
         if (topBarCenterSlot == null) return;
+        // 幂等守卫：避免顶栏插槽累积第二个标题
+        if (topBarTermTitleView != null) return;
+        removeSettingsTopTitle();
         // 中部：隐藏面包屑，显示终端标题
         if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.GONE);
         LinearLayout termTitle = new LinearLayout(ctx);
@@ -3672,14 +3681,8 @@ public class FileManagerModule extends HyVqModule {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT));
 
-            // 互斥：隐藏文件视图 + 底部两栏
-            if (fileContentView != null) fileContentView.setVisibility(View.GONE);
-            if (opBar != null) opBar.setVisibility(View.GONE);
-            if (bottomNav != null) bottomNav.setVisibility(View.GONE);
-            if (fabNew != null) fabNew.setVisibility(View.GONE);
-
-            // 顶栏切到终端模式（融入共享顶栏，不再有独立标题行）
-            enterTerminalTopBar();
+            // 统一互斥切换（同时处理文件/设置/终端三者与顶栏）
+            setContentMode(ContentMode.TERMINAL);
 
             // 不做位移/淡入动画：终端与文件列表是同级视图切换，
             // 加「自下而上淡入」正是弹窗观感的来源。直接可见。
@@ -3713,8 +3716,7 @@ public class FileManagerModule extends HyVqModule {
             bottomNav.setVisibility(View.VISIBLE);
         }
         if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
-        exitTerminalTopBar();
-        if (multiMode) updateOpBar();
+        setContentMode(ContentMode.FILES);
     }
     /** 回收站保留天数选择 */
     private void showTrashKeepDaysPicker() {
@@ -9997,23 +9999,44 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 递归清理过期文件；顺带清掉变空的目录 */
+    /**
+     * 清理回收站里的过期条目。
+     *
+     * <p><b>只按顶层条目判过期，不递归进目录内部。</b></p>
+     *
+     * <p>旧实现递归遍历所有层级，对**每个文件**按它自己的 mtime 判过期。
+     * 但 moveToTrash 只对顶层条目 setLastModified(now)，目录内部的子文件
+     * 仍是原始 mtime → 删一个 2024 年的目录（内含旧照片）进回收站后，
+     * 顶层目录不会过期，**内部旧照片却全部满足条件，下次启动被逐个静默删除**，
+     * 留下空壳目录。用户以为还能恢复，实际内容已丢。</p>
+     *
+     * <p>改为：只看 dir 的直接子项，命中就整棵树删。</p>
+     */
     private int purgeExpiredIn(File dir, long deadline) {
         File[] fs = dir.listFiles();
         if (fs == null) return 0;
         int n = 0;
         for (File f : fs) {
+            // 顶层条目才代表一次「删除操作」，其 mtime 已在 moveToTrash 里设为移入时间
+            if (f.lastModified() >= deadline) continue;
+            n += (int) countTree(f);
             if (f.isDirectory()) {
-                n += purgeExpiredIn(f, deadline);
-                // 子目录空了就删掉（不删除 TRASH_DIR 自身）
-                File[] left = f.listFiles();
-                if (left != null && left.length == 0 && !f.equals(new File(TRASH_DIR))) {
-                    //noinspection ResultOfMethodCallIgnored
-                    f.delete();
-                }
-            } else if (f.lastModified() < deadline) {
-                if (f.delete()) n++;
+                deleteTree(f);
+            } else if (f.delete()) {
+                // 单个文件已删
             }
         }
+        return n;
+    }
+
+    /** 统计一棵树的条目数（含目录自身） */
+    private static long countTree(File f) {
+        if (f == null || !f.exists()) return 0;
+        if (!f.isDirectory()) return 1;
+        File[] items = f.listFiles();
+        if (items == null) return 1;
+        long n = 1;
+        for (File c : items) n += countTree(c);
         return n;
     }
 

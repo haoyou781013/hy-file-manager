@@ -39,7 +39,6 @@ public class TerminalPanel {
     private boolean ctrlLocked = false;
     /** Ctrl 键视图（用于高亮） */
     private TextView ctrlKey;
-    private TextView pwdView;
 
     private String workDir;
 
@@ -131,7 +130,6 @@ public class TerminalPanel {
                     if (!arg.isEmpty() && !arg.startsWith("-")) {
                         workDir = arg.startsWith("/") ? arg
                                 : (workDir.endsWith("/") ? workDir + arg : workDir + "/" + arg);
-                        pwdView.setText(workDir);
                     }
                 }
             }

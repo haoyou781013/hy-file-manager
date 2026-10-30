@@ -66,8 +66,9 @@ public class NumberedEditText extends AppCompatEditText {
         gutterText.setColor(textColor);
         gutterText.setTypeface(getTypeface());
         gutterText.setTextSize(getTextSize());
-        // 正文左侧留出行号栏宽度，否则文字会被行号压住
-        setPadding(gutterWidth + dp(8), getPaddingTop(),
+        // 正文左内边距 = 行号栏宽 + 左 pad + 右 pad，
+        // 让正文正好从行号栏右侧开始。
+        setPadding(gutterWidth + gutterPad * 2, getPaddingTop(),
                 getPaddingRight(), getPaddingBottom());
         invalidate();
     }
@@ -104,49 +105,47 @@ public class NumberedEditText extends AppCompatEditText {
         final int scrollY = getScrollY();
         final int scrollX = getScrollX();
         final int height = getHeight();
-        final int padTop = getExtendedPaddingTop();
-        final int padBottom = getExtendedPaddingBottom();
 
-        // 行号栏背景：固定在可视区左侧，不随横向滚动移动
+        // 坐标系说明：EditText 的绘制原点在**内容区左上角**（已扣除 padLeft）。
+        // gutter 占用了 padLeft 的前 gutterWidth 像素，因此它在内容坐标里
+        // 是 0..gutterWidth，而不是 -gutterWidth..0。
+        // 横向滚动时内容整体左移 scrollX，gutter 要钉在左端 → translate(scrollX)。
         canvas.save();
         canvas.translate(scrollX, 0f);
-        canvas.drawRect(-gutterWidth - dp(8), 0f,
-                dp(8), height + scrollY, gutterBg);
+        canvas.drawRect(0f, 0f, gutterWidth, height, gutterBg);
         canvas.restore();
 
+        // 逻辑行计数：从第 0 行起累加，避免每行都从头数（旧实现 O(n²)）
+        int logicalLine = 1;
         final int firstLine = layout.getLineForVertical(scrollY);
-        final int lastLine = layout.getLineForVertical(scrollY + height);
-        final int topClip = scrollY + padTop;
-        final int bottomClip = scrollY + height - padBottom;
+        for (int i = 0; i < firstLine && i < layout.getLineCount(); i++) {
+            int st = layout.getLineStart(i);
+            if (st > 0 && getText().charAt(st - 1) == '\n') logicalLine++;
+        }
 
         canvas.save();
         canvas.translate(scrollX, 0f);
+        final int lastLine = layout.getLineForVertical(scrollY + height);
         for (int line = firstLine; line <= lastLine && line < layout.getLineCount(); line++) {
-            // 只在逻辑行首（lineStart 处的字符前是 \n 或文件开头）标号
             int lineStart = layout.getLineStart(line);
             boolean isLogicalStart = lineStart == 0
                     || (lineStart > 0 && getText().charAt(lineStart - 1) == '\n');
-            if (!isLogicalStart) continue;
-
-            int baseline = layout.getLineBaseline(line);
-            if (baseline < topClip || baseline > bottomClip) continue;
-
-            canvas.drawText(String.valueOf(logicalLineOf(layout, line)),
-                    -gutterPad, baseline, gutterText);
+            if (isLogicalStart) {
+                int baseline = layout.getLineBaseline(line);
+                // baseline 是内容坐标，与 scrollY 同量纲，可直接比较。
+                // 用行顶/行底判断是否与可视区相交，避免 getLineHeight()（Layout 无此方法）
+                int lineTop = layout.getLineTop(line);
+                int lineBottom = layout.getLineBottom(line);
+                if (lineBottom >= scrollY && lineTop <= scrollY + height) {
+                    canvas.drawText(String.valueOf(logicalLine),
+                            gutterWidth - gutterPad, baseline, gutterText);
+                }
+                logicalLine++;
+            }
         }
         canvas.restore();
 
         super.onDraw(canvas);
-    }
-
-    /** 该显示行所属的逻辑行号（从 1 开始） */
-    private int logicalLineOf(Layout layout, int shownLine) {
-        int n = 1;
-        for (int i = 1; i <= shownLine && i < layout.getLineCount(); i++) {
-            int start = layout.getLineStart(i);
-            if (start > 0 && getText().charAt(start - 1) == '\n') n++;
-        }
-        return n;
     }
 
     private int dp(int v) {
