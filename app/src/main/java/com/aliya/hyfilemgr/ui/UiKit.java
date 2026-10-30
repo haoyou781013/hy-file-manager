@@ -384,19 +384,20 @@ public final class UiKit {
             // 截整个 decorView（含状态栏区域），弹窗窗口铺满全屏时背景才能覆盖状态栏。
             // 旧实现只截 android.R.id.content（不含状态栏），弹窗窗口又是 MATCH_PARENT，
             // 于是状态栏那一条没有模糊背景 → 表现为「模糊不包括状态栏」。
-            int[] decorLoc = new int[2];
-            decor.getLocationInWindow(decorLoc);
             int dw = decor.getWidth();
             int dh = decor.getHeight();
-            // 若 decor 坐标在状态栏下方（decorLoc[1] > 0），说明还有一截在窗口之上，
-            // 把高度补上，保证从屏幕顶端开始覆盖。
-            int extraTop = Math.max(0, decorLoc[1]);
-            Bitmap shot = Bitmap.createBitmap(dw, dh + extraTop, Bitmap.Config.ARGB_8888);
+
+            // 直接按 decor 自身尺寸截图，不做任何坐标补偿。
+            //
+            // 旧实现用 getLocationInWindow 取 decorLoc 并在顶部补 extraTop 像素，
+            // 试图「补上状态栏那一截」——但 decor 本身就是整屏（含状态栏）的，
+            // getLocationInWindow 相对窗口而非屏幕，返回值随实现漂移，
+            // 补出来的 extraTop 恰好是一个状态栏高度，于是状态栏下方多出
+            // 一条空白模糊带，再往下才是真实顶栏内容。
+            //
+            // 正确做法：decor 多大就截多大，BitmapDrawable 铺满弹窗即可。
+            Bitmap shot = Bitmap.createBitmap(dw, dh, Bitmap.Config.ARGB_8888);
             Canvas canvas = new Canvas(shot);
-            // 顶部补边先用主题背景色填（避免黑条），随后 decor 会覆盖真实内容
-            int fill = color(context, com.google.android.material.R.attr.colorSurface);
-            canvas.drawColor(fill);
-            canvas.translate(-decorLoc[0], extraTop - decorLoc[1]);
             decor.draw(canvas);
             // 模糊半径 3：三趟 box blur（水平+垂直）已足够柔和；过高的半径（如 6）
             // 会让背景糊成一团，文字/内容观感发虚（实测反馈"模糊度过高"）。
