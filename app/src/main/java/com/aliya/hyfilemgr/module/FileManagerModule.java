@@ -3523,6 +3523,15 @@ public class FileManagerModule extends HyVqModule {
                 SHOW_SAF_MOUNTS, v -> {
                     openSafAuthorize();
                 });
+        // 内嵌模式：返回主设置页
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnsLp.topMargin = dp(12);
+        box.addView(btns, btnsLp);
+        btns.addView(textButton("返回", v -> showSettingsPage()));
+        btns.addView(textButton("关闭", v -> closeSettingsEmbed()));
         return box;
     }
 
@@ -3922,6 +3931,15 @@ public class FileManagerModule extends HyVqModule {
                 applyDensity(sb.getProgress() + 1);
             }
         });
+        // 内嵌模式：返回主设置页
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnsLp.topMargin = dp(12);
+        box.addView(btns, btnsLp);
+        btns.addView(textButton("返回", v -> showSettingsPage()));
+        btns.addView(textButton("关闭", v -> closeSettingsEmbed()));
         return box;
     }
 
@@ -4166,6 +4184,15 @@ public class FileManagerModule extends HyVqModule {
         box.addView(trashHeader, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         box.addView(trashBox);
+        // 内嵌模式：返回主设置页
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnsLp.topMargin = dp(12);
+        box.addView(btns, btnsLp);
+        btns.addView(textButton("返回", v -> showSettingsPage()));
+        btns.addView(textButton("关闭", v -> closeSettingsEmbed()));
         return box;
     }
 
@@ -4502,24 +4529,101 @@ public class FileManagerModule extends HyVqModule {
         toolsBody.setOrientation(LinearLayout.VERTICAL);
         toolsBody.setVisibility(navToolsExpanded ? View.VISIBLE : View.GONE);
 
-        // 终端
-        TextView termRow = new TextView(ctx);
-        termRow.setText("终端");
-        termRow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        termRow.setTextColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurface));
-        termRow.setPadding(dp(14), dp(11), dp(14), dp(11));
-        termRow.setBackgroundResource(R.drawable.bg_ripple_round);
-        termRow.setClickable(true);
-        termRow.setOnClickListener(v -> {
-            closeNavSidebar();
-            openTerminal();
-        });
-        toolsBody.addView(termRow, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // 工具项：卡片式（与「本地」组的挂载行视觉一致，但更紧凑）
+        toolsBody.addView(buildToolCard("文件管理",
+                "隐藏文件 · 缩略图 · 排序 · 回收站",
+                R.drawable.ic_folder, v -> {
+                    closeNavSidebarThen(() -> {
+                        showInSettingsDialog(this::buildFileSettings);
+                    });
+                }));
+
+        toolsBody.addView(buildToolCard("终端",
+                "系统 shell · 当前目录",
+                R.drawable.ic_terminal, v -> {
+                    closeNavSidebar();
+                    openTerminal();
+                }));
 
         content.addView(buildCollapsibleHeader("工具", toolsBody, () -> navToolsExpanded));
         content.addView(toolsBody);
+    }
+
+    /**
+     * 侧边栏工具项卡片：图标 + 标题 + 副标题，圆角卡片 + 1dp 描边。
+     *
+     * <p>与「本地」组的挂载行保持同一视觉语言（圆角 + 描边 + 左侧图标），
+     * 但没有拖拽手柄与删除按钮，更紧凑。</p>
+     */
+    private View buildToolCard(String title, String subtitle, int iconRes,
+                               View.OnClickListener onClick) {
+        LinearLayout card = new LinearLayout(ctx);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        int padH = dp(12);
+        int padV = dp(10);
+        card.setPadding(padH, padV, padH, padV);
+        card.setClickable(true);
+        card.setFocusable(true);
+
+        // 背景：圆角 12dp + 主题卡片色 + 1dp 描边（与挂载行一致）
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        bg.setCornerRadius(dp(12));
+        bg.setColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorSurfaceContainerHigh));
+        bg.setStroke(dp(1), UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOutlineVariant));
+        card.setBackground(bg);
+
+        ImageView icon = new ImageView(ctx);
+        icon.setImageResource(iconRes);
+        icon.setColorFilter(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        int is = dp(20);
+        card.addView(icon, new LinearLayout.LayoutParams(is, is));
+
+        LinearLayout texts = new LinearLayout(ctx);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams tLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tLp.leftMargin = dp(12);
+        card.addView(texts, tLp);
+
+        TextView tv = new TextView(ctx);
+        tv.setText(title);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tv.setTypeface(null, android.graphics.Typeface.BOLD);
+        tv.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        texts.addView(tv);
+
+        TextView sub = new TextView(ctx);
+        sub.setText(subtitle);
+        sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        sub.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        sub.setAlpha(0.72f);
+        sub.setSingleLine(true);
+        sub.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        texts.addView(sub);
+
+        card.setOnClickListener(v -> {
+            v.animate().scaleX(0.97f).scaleY(0.97f).setDuration(70)
+                    .withEndAction(() -> v.animate().scaleX(1f).scaleY(1f)
+                            .setDuration(130).start()).start();
+            onClick.onClick(v);
+        });
+
+        LinearLayout wrap = new LinearLayout(ctx);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.addView(card, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams wrapLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        wrapLp.bottomMargin = dp(6);
+        wrap.setLayoutParams(wrapLp);
+        return wrap;
     }
 
     /** 侧边栏分组展开状态（重建时保持） */
