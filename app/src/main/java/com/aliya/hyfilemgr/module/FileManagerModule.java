@@ -3124,24 +3124,22 @@ public class FileManagerModule extends HyVqModule {
         // ── 权限管理 ──
         addSettingsRow(box, "权限管理",
                 "所有文件访问 · 存储权限 · SAF 授权", R.drawable.ic_lock, v -> {
-                    hideSettingsDialog();
-                    showPermissionManager();
+                    showInSettingsDialog(this::buildPermissionManager);
                 });
 
         // ── 文件管理 ──
         addSettingsRow(box, "文件管理",
                 "隐藏文件 · 缩略图 · 排序方式", R.drawable.ic_folder, v -> {
-                    hideSettingsDialog();
-                    showFileSettings();
+                    showInSettingsDialog(this::buildFileSettings);
                 });
 
         // ── 个性化 ──
         addSettingsRow(box, "个性化",
-                "显示密度(DPI) · 列表文件密度", R.drawable.ic_sliders, v -> {
-                    hideSettingsDialog();
-                    showAppearanceSettings();
+                "显示密度(DPI) · 列表文件密度 · 界面主题", R.drawable.ic_sliders, v -> {
+                    showInSettingsDialog(this::buildAppearanceSettings);
                 });
 
+        settingsHolder = box;
         settingsDialog = UiKit.glassDialog(ctx, box);
         LinearLayout btns = new LinearLayout(ctx);
         btns.setOrientation(LinearLayout.HORIZONTAL);
@@ -3156,6 +3154,117 @@ public class FileManagerModule extends HyVqModule {
 
     /** 设置页对话框引用（供子页返回时复用） */
     private android.app.Dialog settingsDialog;
+    /** 设置弹窗的内容容器（原地切换时只换它的子 View，不重建 Dialog） */
+    private LinearLayout settingsHolder;
+
+    /**
+     * 设置页**原地切换**：把新内容换进已打开的设置弹窗，不重建 Dialog。
+     *
+     * <p>原先做法是 dismiss 当前弹窗再 glassDialog 新开一个 —— 每次都会
+     * 重新执行一次模糊截图（captureBlurredBackground + boxBlur），
+     * 整屏闪一下，观感像「重绘整个页面」。
+     * 原地替换只动面板子 View，模糊底图与窗口全都不变。</p>
+     *
+     * <p>过渡：旧内容左移淡出 → 新内容右移淡入，模拟前进。</p>
+     *
+     * @param holder 承载内容的容器（settingsDialog 面板内的 LinearLayout）
+     * @param newContent 新内容
+     * @param forward true=前进（新内容从右进），false=返回（新内容从左进）
+     */
+    private void swapSettingsContent(final LinearLayout holder, final View newContent,
+                                     final boolean forward) {
+        if (holder == null || newContent == null) return;
+        final int w = holder.getWidth() > 0
+                ? holder.getWidth()
+                : ctx.getResources().getDisplayMetrics().widthPixels;
+        final float dir = forward ? 1f : -1f;
+
+        // 旧内容退场
+        final View old = holder.getChildCount() > 0 ? holder.getChildAt(0) : null;
+        Runnable afterOut = () -> {
+            holder.removeAllViews();
+            holder.addView(newContent, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
+            // 新内容从另一侧滑入
+            newContent.setAlpha(0f);
+            newContent.setTranslationX(-dir * w * 0.18f);
+            newContent.animate()
+                    .alpha(1f)
+                    .translationX(0f)
+                    .setDuration(200)
+                    .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                    .start();
+        };
+
+        if (old == null) {
+            afterOut.run();
+            return;
+        }
+        old.animate()
+                .alpha(0f)
+                .translationX(dir * w * 0.18f)
+                .setDuration(140)
+                .setInterpolator(new android.view.animation.AccelerateInterpolator())
+                .withEndAction(afterOut)
+                .start();
+    }
+
+    /**
+     * 在原地打开一个新设置页：复用同一个 settingsDialog 实例，
+     * 只替换 contentView。
+     *
+     * <p>与「dismiss 旧弹窗 + glassDialog 新弹窗」的区别：
+     * 不重新创建窗口、不重新截图模糊（applyBlur 不再执行），
+     * 因此没有整屏闪一下。窗口背景与模糊图沿用首次创建时的结果。</p>
+     */
+    private void showInSettingsDialog(java.util.function.Supplier<View> contentSupplier) {
+        try {
+            if (settingsDialog != null && settingsDialog.isShowing()) {
+                final View v = contentSupplier.get();
+                if (v != null) {
+                    // 轻微淡出 → 换内容 → 淡入，给"换页"一个视觉过渡，
+                    // 但不重新创建窗口/不重截图模糊，因此不会闪黑。
+                    View old = settingsDialog.getWindow() == null ? null
+                            : settingsDialog.getWindow().getDecorView()
+                                    .findViewById(android.R.id.content);
+                    if (old instanceof android.view.ViewGroup
+                            && ((android.view.ViewGroup) old).getChildCount() > 0) {
+                        final View oldChild = ((android.view.ViewGroup) old).getChildAt(0);
+                        oldChild.animate().alpha(0f).setDuration(90)
+                                .withEndAction(() -> {
+                                    settingsDialog.setContentView(v);
+                                    v.setAlpha(0f);
+                                    v.animate().alpha(1f).setDuration(150).start();
+                                }).start();
+                    } else {
+                        settingsDialog.setContentView(v);
+                    }
+                }
+                return;
+            }
+        } catch (Throwable ignored) {
+        }
+        // 没有现成弹窗：走常规路径
+        View v = contentSupplier.get();
+        if (v != null) {
+            settingsDialog = UiKit.glassDialog(ctx, v);
+            settingsDialog.show();
+        }
+    }
+
+    /** 薄包装：以独立弹窗打开（保持既有调用点兼容） */
+    private void showPermissionManager() {
+        showInSettingsDialog(this::buildPermissionManager);
+    }
+
+    private void showFileSettings() {
+        showInSettingsDialog(this::buildFileSettings);
+    }
+
+    private void showAppearanceSettings() {
+        showInSettingsDialog(this::buildAppearanceSettings);
+    }
 
     private void hideSettingsDialog() {
         if (settingsDialog != null && settingsDialog.isShowing()) {
@@ -3211,7 +3320,7 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 权限管理页：所有文件访问 / 存储权限 / SAF 授权目录 */
-    private void showPermissionManager() {
+    private View buildPermissionManager() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "权限管理"));
@@ -3296,21 +3405,7 @@ public class FileManagerModule extends HyVqModule {
                 SHOW_SAF_MOUNTS, v -> {
                     openSafAuthorize();
                 });
-
-        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setOrientation(LinearLayout.HORIZONTAL);
-        btns.setGravity(Gravity.END);
-        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnsLp.topMargin = dp(10);
-        box.addView(btns, btnsLp);
-        btns.addView(textButton("返回", v -> {
-            UiKit.dismissWithAnim(d);
-            showSettingsPage();
-        }));
-        btns.addView(textButton("关闭", v -> UiKit.dismissWithAnim(d)));
-        d.show();
+        return box;
     }
 
     /** 内容区容器引用（文件视图 / 终端面板共存于此，靠 visibility 切换） */
@@ -3557,7 +3652,7 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 个性化设置页：显示密度(DPI) + 列表文件密度（均为进度条式） */
-    private void showAppearanceSettings() {
+    private View buildAppearanceSettings() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "个性化"));
@@ -3632,21 +3727,7 @@ public class FileManagerModule extends HyVqModule {
                 applyDensity(sb.getProgress() + 1);
             }
         });
-
-        final android.app.Dialog dlg = UiKit.glassDialog(ctx, box);
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setOrientation(LinearLayout.HORIZONTAL);
-        btns.setGravity(Gravity.END);
-        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnsLp.topMargin = dp(10);
-        box.addView(btns, btnsLp);
-        btns.addView(textButton("返回", v -> {
-            UiKit.dismissWithAnim(dlg);
-            showSettingsPage();
-        }));
-        btns.addView(textButton("关闭", v -> UiKit.dismissWithAnim(dlg)));
-        dlg.show();
+        return box;
     }
 
     /** addSliderRow 最近创建的 SeekBar（供调用方挂监听） */
@@ -3780,7 +3861,7 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 文件管理设置页：隐藏文件 / 缩略图 / 排序 */
-    private void showFileSettings() {
+    private View buildFileSettings() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "文件管理"));
@@ -3889,25 +3970,7 @@ public class FileManagerModule extends HyVqModule {
         box.addView(trashHeader, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         box.addView(trashBox);
-
-        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setOrientation(LinearLayout.HORIZONTAL);
-        btns.setGravity(Gravity.END);
-        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnsLp.topMargin = dp(10);
-        box.addView(btns, btnsLp);
-        btns.addView(textButton("排序方式", v -> {
-            UiKit.dismissWithAnim(d);
-            showSortMenu(navPanel);
-        }));
-        btns.addView(textButton("返回", v -> {
-            UiKit.dismissWithAnim(d);
-            showSettingsPage();
-        }));
-        btns.addView(textButton("关闭", v -> UiKit.dismissWithAnim(d)));
-        d.show();
+        return box;
     }
 
     /** 状态行：图标 + 标题 + 状态描述 + 勾选标记 */
