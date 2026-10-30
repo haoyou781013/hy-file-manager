@@ -219,12 +219,20 @@ public final class UiKit {
         dialog.setContentView(shell);
         if (dialog.getWindow() != null) {
             Window window = dialog.getWindow();
-            window.setBackgroundDrawableResource(android.R.color.transparent);
+            // 用**不透明主题色**兜底，不要透明：
+            // 从 Surface 创建到首帧绘制之间显示的是窗口背景，
+            // 透明会让这一帧露出黑色 Surface → 观感就是「弹窗切换闪一下黑」。
+            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
+                    color(context, com.google.android.material.R.attr.colorSurfaceContainer)));
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT);
             window.setGravity(Gravity.CENTER);
             // centerContent=false：面板已在 shell 中居中，这里只管铺模糊背景
             applyBlur(window, context, false);
+            // applyBlur 会把窗口背景设为透明（它改用 ImageView 承载模糊图），
+            // 这里补回不透明底色，让 ImageView 绘制前的那一帧不是黑的。
+            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
+                    color(context, com.google.android.material.R.attr.colorSurfaceContainer)));
         }
         dialog.setCancelable(true);
 
@@ -329,13 +337,8 @@ public final class UiKit {
             // 记录原窗口宽度，保持各弹窗既定宽度不变（如 92%/78% 屏宽）
             int prevWidth = window.getAttributes().width;
 
-            // ⚠️ 不要用 window.setBackgroundDrawable(bg)。
-            // 窗口背景的绘制原点在**内容区顶部**，FLAG_LAYOUT_NO_LIMITS 让窗口
-            // 覆盖到状态栏下方后，状态栏那一截会被"补"上另一份内容（系统把
-            // 窗口背景拉伸/平铺），表现为状态栏下方多出一条错位的模糊带。
-            // 改用真 View 填充，坐标由我们自己控制，从窗口顶部开始铺。
-            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
-                    android.graphics.Color.TRANSPARENT));
+            // 不在此设置窗口背景：保留调用方（glassDialog）设定的不透明
+            // 主题色作为首帧兜底。模糊图由下方 ImageView 承载。
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
             window.setGravity(Gravity.CENTER);
             window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
