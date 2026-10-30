@@ -57,55 +57,101 @@ public class TerminalPanel {
 
     // ── UI ──
 
+    /** 顶栏/终端区底色：跟随当前主题（文件列表用同一个 attr） */
+    private int surfaceHigh() {
+        try {
+            return com.aliya.hyfilemgr.ui.UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorSurfaceContainer);
+        } catch (Throwable t) {
+            return 0xFF161B22;
+        }
+    }
+
+    /** 正文色 */
+    private int onSurface() {
+        try {
+            return com.aliya.hyfilemgr.ui.UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorOnSurface);
+        } catch (Throwable t) {
+            return 0xFFE0E0E0;
+        }
+    }
+
+    private int primary() {
+        try {
+            return com.aliya.hyfilemgr.ui.UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorPrimary);
+        } catch (Throwable t) {
+            return 0xFF58A6FF;
+        }
+    }
+
+    private int onSurfaceVariant() {
+        try {
+            return com.aliya.hyfilemgr.ui.UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorOnSurfaceVariant);
+        } catch (Throwable t) {
+            return 0xFF8B949E;
+        }
+    }
+
     private LinearLayout build() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setBackgroundColor(0xFF0D1117);
+        box.setBackgroundColor(surfaceHigh());
         box.setClickable(true);
         box.setFocusable(true);
         box.setFocusableInTouchMode(true);
 
-        // ── 顶栏：终端 | pwd ──
+        // ── 融入式标题行：终端 | pwd ──
+        // 不再是「浮层自己的顶栏」，而是与文件列表共享同一顶栏高度与配色，
+        // 视觉上就像文件列表换了一屏内容，而不是弹出窗口。
         LinearLayout top = new LinearLayout(ctx);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        top.setPadding(dp(12), dp(8), dp(6), dp(8));
-        top.setBackgroundColor(0xFF161B22);
+        top.setPadding(dp(14), dp(10), dp(8), dp(10));
+        top.setBackgroundColor(surfaceHigh());
         box.addView(top, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView tag = new TextView(ctx);
         tag.setText("终端");
-        tag.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        tag.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        tag.setTextColor(0xFF7EE787);
+        tag.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tag.setTypeface(Typeface.DEFAULT_BOLD);
+        tag.setTextColor(primary());
         top.addView(tag);
 
         TextView sep = new TextView(ctx);
-        sep.setText(" | ");
+        sep.setText("  |  ");
         sep.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        sep.setTypeface(Typeface.MONOSPACE);
-        sep.setTextColor(0xFF484F58);
+        sep.setTextColor(onSurfaceVariant());
         top.addView(sep);
 
         pwdView = new TextView(ctx);
         pwdView.setText(workDir);
-        pwdView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        pwdView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         pwdView.setTypeface(Typeface.MONOSPACE);
-        pwdView.setTextColor(0xFF8B949E);
+        pwdView.setTextColor(onSurfaceVariant());
         pwdView.setSingleLine(true);
         pwdView.setEllipsize(android.text.TextUtils.TruncateAt.START);
         top.addView(pwdView, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
+        // 操作入口与文件列表的 ⋮ 一致：三个文字按钮 + 关闭
         top.addView(btn("清屏", v -> clearOutput()));
         top.addView(btn("复制", v -> copyOutput()));
-        top.addView(btn("Ctrl+C", v -> {
+        top.addView(btn("中断", v -> {
             if (session != null) session.sendInterrupt();
         }));
         top.addView(btn("关闭", v -> {
             if (onClose != null) onClose.onClose();
         }));
+
+        // 与文件列表一致的细分割线
+        View headerDivider = new View(ctx);
+        headerDivider.setBackgroundColor(onSurfaceVariant() & 0x33FFFFFF);
+        box.addView(headerDivider, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1))));
 
         // ── 终端视图（Termux 同款：直接在其上输入）──
         termView = new TerminalView(ctx);
@@ -160,15 +206,17 @@ public class TerminalPanel {
         toolBarWrap.addView(toolDivider, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1))));
 
-        // ── 工具栏：两行 ──
-        // 第一行：Ctrl / Tab / Esc / 常用符号
-        // 第二行：方向键 ← ↑ ↓ →
-        // 不再放 a~z：软键盘本身有字母，重复占用空间。
+        // ── 工具栏（参考 ZeroTermux 的 extra keys 布局）──
+        // 三行分组，每组用分隔线区隔：
+        //   行1 功能键：Ctrl / Alt / Tab / Esc / Home / End
+        //   行2 常用符号：| ~ / - _ $ * 空格
+        //   行3 方向键：← ↑ ↓ →
+        // 不放入 a~z（软键盘已有字母）。
         LinearLayout tools = new LinearLayout(ctx);
         tools.setOrientation(LinearLayout.VERTICAL);
         tools.setPadding(dp(6), dp(4), dp(6), dp(4));
 
-        // 第一行
+        // 行1：功能键
         LinearLayout row1 = new LinearLayout(ctx);
         row1.setOrientation(LinearLayout.HORIZONTAL);
         row1.setGravity(Gravity.CENTER_VERTICAL);
@@ -181,31 +229,44 @@ public class TerminalPanel {
         row1.addView(ctrlKey);
         row1.addView(termKey("Tab", "\t", null));
         row1.addView(termKey("Esc", "\u001b", null));
-        row1.addView(termKey("|", "|", null));
-        row1.addView(termKey("~", "~", null));
-        row1.addView(termKey("/", "/", null));
-        row1.addView(termKey("-", "-", null));
-        row1.addView(termKey("_", "_", null));
-        row1.addView(termKey("$", "$", null));
-        row1.addView(termKey("*", "*", null));
+        row1.addView(termKey("Home", "\u0001", null));
+        row1.addView(termKey("End", "\u0005", null));
+        row1.addView(termKey("PgUp", "\u001b[5~", null));
+        row1.addView(termKey("PgDn", "\u001b[6~", null));
         tools.addView(row1, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        // 第二行：方向键
+        // 行2：常用符号
         LinearLayout row2 = new LinearLayout(ctx);
         row2.setOrientation(LinearLayout.HORIZONTAL);
         row2.setGravity(Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams row2Lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         row2Lp.topMargin = dp(2);
-        row2.addView(termKey("←", "\u001b[D", null));
-        row2.addView(termKey("↑", "\u001b[A", null));
-        row2.addView(termKey("↓", "\u001b[B", null));
-        row2.addView(termKey("→", "\u001b[C", null));
-        // Home / End 也放第二行（命令行常用）
-        row2.addView(termKey("Home", "\u0001", null));
-        row2.addView(termKey("End", "\u0005", null));
+        row2.addView(termKey("|", "|", null));
+        row2.addView(termKey("~", "~", null));
+        row2.addView(termKey("/", "/", null));
+        row2.addView(termKey("-", "-", null));
+        row2.addView(termKey("_", "_", null));
+        row2.addView(termKey("$", "$", null));
+        row2.addView(termKey("*", "*", null));
+        row2.addView(termKey("\\", "\\", null));
+        row2.addView(termKey("'", "'", null));
+        row2.addView(termKey("\"", "\"", null));
         tools.addView(row2, row2Lp);
+
+        // 行3：方向键（四个并排，不依赖横向滑动）
+        LinearLayout row3 = new LinearLayout(ctx);
+        row3.setOrientation(LinearLayout.HORIZONTAL);
+        row3.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams row3Lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        row3Lp.topMargin = dp(2);
+        row3.addView(termKey("←", "\u001b[D", null));
+        row3.addView(termKey("↑", "\u001b[A", null));
+        row3.addView(termKey("↓", "\u001b[B", null));
+        row3.addView(termKey("→", "\u001b[C", null));
+        tools.addView(row3, row3Lp);
 
         toolBarWrap.addView(tools, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));

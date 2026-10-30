@@ -3334,27 +3334,10 @@ public class FileManagerModule extends HyVqModule {
             if (bottomNav != null) bottomNav.setVisibility(View.GONE);
             if (fabNew != null) fabNew.setVisibility(View.GONE);
 
-            // 进场动画：自下而上淡入（与文件列表同级切换，不需要位移叠加层）
-            pv.setAlpha(0f);
-            pv.setTranslationY(dp(28));
-            pv.getViewTreeObserver().addOnPreDrawListener(
-                    new android.view.ViewTreeObserver.OnPreDrawListener() {
-                @Override
-                public boolean onPreDraw() {
-                    android.view.ViewTreeObserver cur = pv.getViewTreeObserver();
-                    if (!cur.isAlive()) return true;
-                    cur.removeOnPreDrawListener(this);
-                    pv.setAlpha(0f);
-                    pv.setTranslationY(dp(28));
-                    pv.animate()
-                            .alpha(1f)
-                            .translationY(0f)
-                            .setDuration(220)
-                            .setInterpolator(new android.view.animation.DecelerateInterpolator())
-                            .start();
-                    return true;
-                }
-            });
+            // 不做位移/淡入动画：终端与文件列表是同级视图切换，
+            // 加「自下而上淡入」正是弹窗观感的来源。直接可见。
+            pv.setAlpha(1f);
+            pv.setTranslationY(0f);
             terminalPanel.start();
 
             // 立刻拉起键盘
@@ -3373,29 +3356,17 @@ public class FileManagerModule extends HyVqModule {
         final View pv = tp.getView();
         terminalPanel = null;
         tp.hideKeyboard();
-        // 退场动画结束后再移除视图并恢复文件列表
-        pv.animate()
-                .alpha(0f)
-                .translationY(dp(28))
-                .setDuration(180)
-                .setInterpolator(new android.view.animation.AccelerateInterpolator())
-                .withEndAction(() -> {
-                    tp.close();
-                    if (contentWrapRef != null) contentWrapRef.removeView(pv);
-                    if (fileContentView != null) {
-                        fileContentView.setAlpha(0f);
-                        fileContentView.setVisibility(View.VISIBLE);
-                        fileContentView.animate().alpha(1f).setDuration(200).start();
-                    }
-                    if (bottomNav != null) {
-                        bottomNav.setAlpha(1f);
-                        bottomNav.setTranslationY(0f);
-                        bottomNav.setVisibility(View.VISIBLE);
-                    }
-                    if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
-                    if (multiMode) updateOpBar();
-                })
-                .start();
+        // 直接切换，无退场动画（与文件列表同级）
+        tp.close();
+        if (contentWrapRef != null) contentWrapRef.removeView(pv);
+        if (fileContentView != null) fileContentView.setVisibility(View.VISIBLE);
+        if (bottomNav != null) {
+            bottomNav.setAlpha(1f);
+            bottomNav.setTranslationY(0f);
+            bottomNav.setVisibility(View.VISIBLE);
+        }
+        if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
+        if (multiMode) updateOpBar();
     }
     /** 回收站保留天数选择 */
     private void showTrashKeepDaysPicker() {

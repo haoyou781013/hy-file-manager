@@ -56,6 +56,28 @@ public class MainActivity extends AppCompatActivity {
         root.addView(v);
 
         setContentView(root);
+
+        // 状态栏与标题栏同色：标题栏用的是 colorSurfaceContainer，
+        // 这里同步状态栏，避免顶部出现一条不同色的横条。
+        try {
+            android.view.Window win = getWindow();
+            int barColor = com.aliya.hyfilemgr.ui.UiKit.color(this,
+                    com.google.android.material.R.attr.colorSurfaceContainer);
+            win.setStatusBarColor(barColor);
+            // 图标明暗跟随主题：工业风格是深色底，需要浅色图标
+            int uiMode = getResources().getConfiguration().uiMode
+                    & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+            boolean dark = uiMode == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+            android.view.View decor = win.getDecorView();
+            int flags = decor.getSystemUiVisibility();
+            if (dark) {
+                flags &= ~android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            } else {
+                flags |= android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            }
+            decor.setSystemUiVisibility(flags);
+        } catch (Throwable ignored) {
+        }
     }
 
     @Override
