@@ -328,32 +328,50 @@ public final class UiKit {
         if (bg != null) {
             // 记录原窗口宽度，保持各弹窗既定宽度不变（如 92%/78% 屏宽）
             int prevWidth = window.getAttributes().width;
-            window.setBackgroundDrawable(bg);
-            // 窗口铺满屏幕，背景模糊图才能完整覆盖弹窗后区域（含状态栏）
+
+            // ⚠️ 不要用 window.setBackgroundDrawable(bg)。
+            // 窗口背景的绘制原点在**内容区顶部**，FLAG_LAYOUT_NO_LIMITS 让窗口
+            // 覆盖到状态栏下方后，状态栏那一截会被"补"上另一份内容（系统把
+            // 窗口背景拉伸/平铺），表现为状态栏下方多出一条错位的模糊带。
+            // 改用真 View 填充，坐标由我们自己控制，从窗口顶部开始铺。
+            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
+                    android.graphics.Color.TRANSPARENT));
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
             window.setGravity(Gravity.CENTER);
-            // 允许绘制到状态栏下方（否则状态栏那条会被系统遮住/留白）
             window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                     | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                     | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
-            // 状态栏必须透明：弹窗已经铺满到状态栏下方，
-            // 若状态栏仍保留 Activity 设的颜色，模糊层与状态栏色会叠加成两层，
-            // 表现为「模糊算了两次状态栏」。
             try {
                 window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
                 window.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
             } catch (Throwable ignored) {
             }
-            // 原弹窗内容改为垂直居中悬浮（宽度保持原窗口宽度）
-            if (!centerContent) return;
+
             View decor = window.getDecorView();
             View content = decor.findViewById(android.R.id.content);
-            if (content instanceof FrameLayout && ((FrameLayout) content).getChildCount() > 0) {
-                View child = ((FrameLayout) content).getChildAt(0);
-                child.setLayoutParams(new FrameLayout.LayoutParams(
-                        prevWidth > 0 ? prevWidth : ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        Gravity.CENTER));
+            if (content instanceof FrameLayout) {
+                FrameLayout frame = (FrameLayout) content;
+                // 背景层：铺满、置于最底层、不可点击（点击交给 scrim）
+                ImageView blurView = new ImageView(window.getContext());
+                blurView.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                blurView.setImageDrawable(bg);
+                blurView.setClickable(false);
+                blurView.setFocusable(false);
+                FrameLayout.LayoutParams bgLp = new FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT);
+                // 关键：把背景层顶到状态栏上方（负偏移 = 状态栏高度）
+                bgLp.topMargin = -statusBarHeight(window.getContext());
+                frame.addView(blurView, 0, bgLp);
+
+                if (!centerContent) return;
+                if (frame.getChildCount() > 1) {
+                    View child = frame.getChildAt(1);
+                    child.setLayoutParams(new FrameLayout.LayoutParams(
+                            prevWidth > 0 ? prevWidth : FrameLayout.LayoutParams.MATCH_PARENT,
+                            FrameLayout.LayoutParams.WRAP_CONTENT,
+                            Gravity.CENTER));
+                }
             }
             return;
         }
@@ -366,6 +384,17 @@ public final class UiKit {
             window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
             window.setDimAmount(0.45f);
         }
+    }
+
+    /** 状态栏高度（px）；取不到时用 24dp 估算 */
+    private static int statusBarHeight(Context context) {
+        try {
+            int id = context.getResources().getIdentifier(
+                    "status_bar_height", "dimen", "android");
+            if (id > 0) return context.getResources().getDimensionPixelSize(id);
+        } catch (Throwable ignored) {
+        }
+        return (int) (context.getResources().getDisplayMetrics().density * 24f + 0.5f);
     }
 
     /**
