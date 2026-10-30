@@ -13,6 +13,18 @@ public final class MarkdownUtils {
 
     private MarkdownUtils() { }
 
+    /**
+     * 行内代码占位符前缀。
+     *
+     * <p>旧实现用 {@code \u0000CODE<n>\u0000}，若原文恰好包含该串
+     * 会被错误替换成代码块。改为每次转换生成随机私有区前缀，
+     * 几乎不可能与正文冲突。</p>
+     */
+    private static String newPlaceholderPrefix() {
+        return "\uE000" + java.util.UUID.randomUUID().toString().replace("-", "")
+                + "\uE001";
+    }
+
     /** Markdown 文本 → HTML body 片段（不含 html/head） */
     public static String toHtml(String md) {
         if (md == null || md.isEmpty()) return "";
@@ -147,13 +159,15 @@ public final class MarkdownUtils {
         String t = esc(s);
 
         // 行内代码（先占位，避免内部被其它规则处理）
+        final String ph = newPlaceholderPrefix();
         java.util.List<String> codes = new java.util.ArrayList<>();
         java.util.regex.Matcher mc =
                 java.util.regex.Pattern.compile("`([^`]+)`").matcher(t);
         StringBuffer sb = new StringBuffer();
         while (mc.find()) {
             codes.add(mc.group(1));
-            mc.appendReplacement(sb, "\u0000CODE" + (codes.size() - 1) + "\u0000");
+            mc.appendReplacement(sb, java.util.regex.Matcher.quoteReplacement(
+                    ph + (codes.size() - 1) + ph));
         }
         mc.appendTail(sb);
         t = sb.toString();
@@ -180,8 +194,7 @@ public final class MarkdownUtils {
 
         // 还原行内代码
         for (int i = 0; i < codes.size(); i++) {
-            t = t.replace("\u0000CODE" + i + "\u0000",
-                    "<code>" + codes.get(i) + "</code>");
+            t = t.replace(ph + i + ph, "<code>" + codes.get(i) + "</code>");
         }
         return t;
     }
@@ -220,6 +233,12 @@ public final class MarkdownUtils {
             }
             String alt = t.substring(start + 1, rb);
             String url = t.substring(rb + 2, rp);
+            // 协议过滤：防 javascript:/data: 注入
+            String lowerUrl = url.toLowerCase(java.util.Locale.ROOT);
+            if (lowerUrl.startsWith("javascript:") || lowerUrl.startsWith("data:")) {
+                out.append(t.charAt(i++));
+                continue;
+            }
             if (alt.length() > 300 || url.length() > 500 || url.isEmpty()) {
                 out.append(t.charAt(i++));
                 continue;

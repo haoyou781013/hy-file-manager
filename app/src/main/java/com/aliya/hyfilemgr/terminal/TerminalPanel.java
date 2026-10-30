@@ -40,10 +40,8 @@ public class TerminalPanel {
     /** Ctrl 键视图（用于高亮） */
     private TextView ctrlKey;
     private TextView pwdView;
-    private final StringBuilder buffer = new StringBuilder();
 
     private String workDir;
-    private int dpCache = -1;
 
     public TerminalPanel(Context ctx, String workDir, OnClose onClose) {
         this.ctx = ctx;
@@ -104,7 +102,6 @@ public class TerminalPanel {
         top.addView(btn("复制", v -> copyOutput()));
         top.addView(btn("Ctrl+C", v -> {
             if (session != null) session.sendInterrupt();
-            termView.append("^C\n");
         }));
         top.addView(btn("关闭", v -> {
             if (onClose != null) onClose.onClose();
@@ -115,8 +112,9 @@ public class TerminalPanel {
         termView.setSink(new TerminalView.Sink() {
             @Override
             public void onText(String text) {
-                // 本地回显（带提示符 + 光标） + 送给 shell
-                termView.echo(text);
+                // 只把字符交给 shell，由 shell 自己做回显。
+                // 本地再 echo 一次会与 shell 回显叠加，出现重复字符与
+                // 重复提示符（PS1 在交互模式下由 shell 输出）。
                 if (session != null && session.isRunning()) session.send(text);
             }
 
@@ -139,7 +137,10 @@ public class TerminalPanel {
             @Override
             public void onBackspace() {
                 termView.backspaceEcho();
-                if (session != null && session.isRunning()) session.send("\b");
+                // 发 DEL(0x7F) 而非 BS(0x08)：交互式 toybox sh 的行编辑
+                // 认 0x7F，0x08 会在 shell 缓冲里留一个多余控制字符，
+                // 导致输入与显示不一致、执行时参数被污染。
+                if (session != null && session.isRunning()) session.send("\u007f");
             }
         });
         termView.clear(banner());
@@ -373,9 +374,6 @@ public class TerminalPanel {
     }
 
     private int dp(int v) {
-        if (dpCache < 0) {
-            dpCache = 1;
-        }
         return Math.round(ctx.getResources().getDisplayMetrics().density * v);
     }
 }

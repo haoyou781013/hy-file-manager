@@ -167,10 +167,8 @@ public class FileManagerModule extends HyVqModule {
     private EditorTabState currentEditTab = null;
     /** 编辑器对话框与控件（ensureEditorDialog 构建，会话内复用） */
     private android.app.Dialog editorDialog = null;
-    private EditText editorEdit = null;
+    private com.aliya.hyfilemgr.widget.NumberedEditText editorEdit = null;
 
-    /** 编辑器左侧行号栏 */
-    private TextView editorLineNumbers;
 
     /** 编辑器：回车自动缩进（可在「编辑器设置」中关闭） */
     private boolean editorAutoIndent = true;
@@ -5275,7 +5273,7 @@ public class FileManagerModule extends HyVqModule {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         // 编辑区：等宽/字号可设置（设置对话框持久化），weight=1 填满剩余屏幕
-        editorEdit = new EditText(ctx);
+        editorEdit = new com.aliya.hyfilemgr.widget.NumberedEditText(ctx);
         editorEdit.setTypeface(editorMonoPref() ? android.graphics.Typeface.MONOSPACE
                 : android.graphics.Typeface.DEFAULT);
         editorEdit.setTextSize(TypedValue.COMPLEX_UNIT_SP, editorFontSizePref());
@@ -5295,25 +5293,9 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout editorArea = new LinearLayout(ctx);
         editorArea.setOrientation(LinearLayout.HORIZONTAL);
 
-        editorLineNumbers = new TextView(ctx);
-        editorLineNumbers.setTextSize(TypedValue.COMPLEX_UNIT_SP, editorFontSizePref());
-        editorLineNumbers.setTypeface(editorMonoPref()
-                ? android.graphics.Typeface.MONOSPACE
-                : android.graphics.Typeface.DEFAULT);
-        editorLineNumbers.setTextColor(pal[2]);
-        editorLineNumbers.setAlpha(0.55f);
-        editorLineNumbers.setGravity(Gravity.TOP | Gravity.END);
-        // 与 EditText 相同的内边距，首行才能对齐
-        editorLineNumbers.setPadding(dp(6), ep, dp(6), ep);
-        editorLineNumbers.setIncludeFontPadding(false);
-        editorLineNumbers.setLineSpacing(0f, 1f);
-        editorLineNumbers.setBackgroundColor(pal[5] & 0x22FFFFFF);
-        LinearLayout.LayoutParams lnLp = new LinearLayout.LayoutParams(
-                dp(38), ViewGroup.LayoutParams.MATCH_PARENT);
-        editorArea.addView(editorLineNumbers, lnLp);
-
         editorEdit.setIncludeFontPadding(false);
         editorEdit.setLineSpacing(0f, 1f);
+        editorEdit.setGutter(dp(34), dp(6), pal[5] & 0x22FFFFFF, pal[2]);
         editorArea.addView(editorEdit, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
 
@@ -5606,31 +5588,12 @@ public class FileManagerModule extends HyVqModule {
         if (editorStat == null || editorEdit == null) return;
         String t = editorEdit.getText().toString();
         int lines = countLines(t);
-        refreshLineNumbers(t, lines);
         int sel = Math.max(0, editorEdit.getSelectionStart());
         int lineStart = t.lastIndexOf('\n', Math.max(0, sel - 1)) + 1;
         int col = sel - lineStart + 1;
         editorStat.setText((currentEditTab == null ? "" : currentEditTab.encoding + " · "
                 + currentEditTab.lineEnding + " · ")
                 + "行 " + lines + " · 列 " + col + " · 字符 " + t.length());
-    }
-
-    /**
-     * 刷新行号栏。
-     *
-     * <p>行号与内容同行数，右侧对齐；与 EditText 使用相同字号、
-     * 相同 lineSpacing 与 includeFontPadding=false，保证逐行纵向对齐。</p>
-     */
-    private void refreshLineNumbers(String text, int lines) {
-        if (editorLineNumbers == null) return;
-        StringBuilder sb = new StringBuilder(lines * 3);
-        for (int i = 1; i <= lines; i++) {
-            if (i > 1) sb.append('\n');
-            sb.append(i);
-        }
-        if (!sb.toString().contentEquals(editorLineNumbers.getText())) {
-            editorLineNumbers.setText(sb.toString());
-        }
     }
 
     /** 符号栏按键：点击在光标处插入文本（参考 ZeroTermux symbol input；颜色统一走主题调色板） */
@@ -5744,6 +5707,9 @@ public class FileManagerModule extends HyVqModule {
         String prev = st.remove(st.size() - 1);
         String cur = editorEdit.getText().toString();
         currentEditTab.redoStack.add(cur);
+        while (currentEditTab.redoStack.size() > 200) {
+            currentEditTab.redoStack.remove(0);
+        }
         editorEdit.removeTextChangedListener(editorWatcher);
         editorEdit.setText(prev);
         editorEdit.setSelection(Math.min(prev.length(), editorEdit.getSelectionStart()));
@@ -6290,6 +6256,10 @@ public class FileManagerModule extends HyVqModule {
     private void doSaveAs(File target) {
         if (currentEditTab == null) return;
         try {
+            if (target.isDirectory()) {
+                UiKit.toast(ctx, "目标是目录，请输入文件名");
+                return;
+            }
             File parent = target.getParentFile();
             if (parent != null && !parent.exists() && !parent.mkdirs()) {
                 UiKit.toast(ctx, "无法创建目录：" + parent);
@@ -6297,8 +6267,23 @@ public class FileManagerModule extends HyVqModule {
             }
             String text = editorEdit != null ? editorEdit.getText().toString()
                     : String.valueOf(currentEditTab.content);
+            // 与 saveEditorTab 一致：按用户选的编码 + 行尾符写回
+            String enc = currentEditTab.encoding == null
+                    ? "UTF-8" : currentEditTab.encoding;
+            String le = currentEditTab.lineEnding;
+            if ("CRLF".equalsIgnoreCase(le)) {
+                text = text.replace("\r\n", "\n").replace("\n", "\r\n");
+            } else if ("CR".equalsIgnoreCase(le)) {
+                text = text.replace("\r\n", "\n").replace("\n", "\r");
+            }
+            java.nio.charset.Charset cs;
+            try {
+                cs = java.nio.charset.Charset.forName(enc);
+            } catch (Throwable t) {
+                cs = java.nio.charset.StandardCharsets.UTF_8;
+            }
             try (java.io.OutputStream os = new java.io.FileOutputStream(target)) {
-                os.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                os.write(text.getBytes(cs));
                 os.flush();
             }
             UiKit.toast(ctx, "已另存为：" + target.getName());

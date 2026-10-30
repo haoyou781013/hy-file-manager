@@ -35,8 +35,17 @@ public final class ThumbLoader {
 
     /** 缩略图目标边长（px 基准，实际按 density 缩放由调用方决定） */
     private static final int TARGET_PX = 96;
-    /** 磁盘缓存上限 200MB（按文件数粗控，每个约 5~20KB） */
-    private static final int DISK_MAX_FILES = 4000;
+    /** 磁盘缓存上限：按**字节**控制（旧实现按文件数，4000 个 ≈80MB 且与注释 200MB 不符） */
+    private static final long DISK_MAX_BYTES = 200L * 1024 * 1024;
+
+    /**
+     * 进行中的解码任务。同一 cacheKey 被多个 ViewHolder 同时请求时
+     * 复用一个 Future，避免多线程重复解码同一文件（并发写同一 .jpg
+     * 还会产生半写文件，之后 readDisk 永久空白）。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String,
+            java.util.concurrent.Future<Bitmap>> IN_FLIGHT =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     private static final LruCache<String, Bitmap> MEM =
             new LruCache<String, Bitmap>(8 * 1024 * 1024) {
@@ -105,29 +114,60 @@ public final class ThumbLoader {
             return;
         }
 
-        // 先清掉上一张（RecyclerView 复用时会残留）
-        iv.setImageBitmap(null);
+        // 不要 setImageBitmap(null)：适配器已预先设过类型图标，
+        // 清掉会让快速滚动时闪白一帧。
         iv.setColorFilter(null);
         iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
 
         final Context app = ctx.getApplicationContext();
+        // in-flight 去重：同 key 已有任务在跑就复用
+        final String key = cacheKey;
+        java.util.concurrent.Future<Bitmap> task = IN_FLIGHT.get(key);
+        if (task == null) {
+            java.util.concurrent.FutureTask<Bitmap> ft =
+                    new java.util.concurrent.FutureTask<>(() -> {
+                        Bitmap decoded = readDisk(app, key);
+                        if (decoded == null) {
+                            decoded = decode(app, path, name);
+                            if (decoded != null) writeDisk(app, key, decoded);
+                        }
+                        return decoded;
+                    });
+            java.util.concurrent.Future<Bitmap> prev = IN_FLIGHT.putIfAbsent(key, ft);
+            if (prev == null) {
+                POOL.execute(() -> {
+                    try {
+                        ft.run();
+                    } finally {
+                        IN_FLIGHT.remove(key);
+                    }
+                });
+                task = ft;
+            } else {
+                task = prev;
+            }
+        }
+        final java.util.concurrent.Future<Bitmap> running = task;
         POOL.execute(() -> {
-            Bitmap out = readDisk(app, cacheKey);
-            if (out == null) {
-                out = decode(app, path, name);
-                if (out != null) writeDisk(app, cacheKey, out);
+            Bitmap out;
+            try {
+                out = running.get();
+            } catch (Throwable t) {
+                out = null;
             }
             final Bitmap fin = out;
             if (fin == null) {
                 // 解码失败：通知调用方回退类型图标，避免留下空白
                 MAIN.post(() -> {
+                    if (!iv.isAttachedToWindow()) return;
                     if (!cacheKey.equals(iv.getTag())) return;
                     if (onFail != null) onFail.onFail(iv);
                 });
                 return;
             }
             MAIN.post(() -> {
-                // 防错位：加载完成时 ImageView 已被复用为别的条目 → 丢弃
+                // 防错位：加载完成时 ImageView 已被复用或已脱离窗口 → 丢弃
+                if (!iv.isAttachedToWindow()) return;
                 if (!cacheKey.equals(iv.getTag())) return;
                 iv.setColorFilter(null);
                 iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -329,14 +369,21 @@ public final class ThumbLoader {
         trimDisk(ctx);
     }
 
-    /** 磁盘缓存超量时按最后修改时间清掉最旧的一批 */
+    /** 磁盘缓存超量时按最后修改时间清掉最旧的一批（按字节统计） */
     private static void trimDisk(Context ctx) {
         File dir = new File(ctx.getCacheDir(), "thumbs");
         File[] all = dir.listFiles();
-        if (all == null || all.length <= DISK_MAX_FILES) return;
+        if (all == null || all.length == 0) return;
+        long total = 0;
+        for (File f : all) total += f.length();
+        if (total <= DISK_MAX_BYTES) return;
         java.util.Arrays.sort(all, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
-        int del = all.length - DISK_MAX_FILES;
-        for (int i = 0; i < del && i < all.length; i++) all[i].delete();
+        long target = DISK_MAX_BYTES * 8 / 10;   // 一次清到 80%，避免频繁 trim
+        for (File f : all) {
+            if (total <= target) break;
+            long len = f.length();
+            if (f.delete()) total -= len;
+        }
     }
 
     // APK 解码需要 Context，用静态持有（Application 级，不会泄漏）

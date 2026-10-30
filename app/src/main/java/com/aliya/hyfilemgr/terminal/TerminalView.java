@@ -38,7 +38,6 @@ public class TerminalView extends ScrollView {
     private final TextView inner;
     private Sink sink;
     private BaseInputConnection ic;
-    private final StringBuilder screen = new StringBuilder();
     /**
      * InputConnection 的可编辑载体。
      *
@@ -50,7 +49,6 @@ public class TerminalView extends ScrollView {
      */
     private final android.text.SpannableStringBuilder icBuffer =
             new android.text.SpannableStringBuilder();
-    private int maxLines = 3000;
     /** 屏幕缓冲字符上限（约 3000 行 × 80 字符） */
     private static final int MAX_SCREEN_CHARS = 240_000;
 
@@ -292,27 +290,12 @@ public class TerminalView extends ScrollView {
         repaint();
     }
 
-    private void appendLegacy(String text) {
-        screen.append(text);
-        int lines = 0;
-        for (int i = 0; i < screen.length(); i++) if (screen.charAt(i) == '\n') lines++;
-        if (lines > maxLines) {
-            int cut = screen.length() / 3;
-            int nl = screen.indexOf("\n", cut);
-            if (nl > 0) screen.delete(0, nl + 1);
-        }
-        inner.setText(screen.toString());
-        post(() -> fullScroll(FOCUS_DOWN));
-    }
+    
 
     public void clear(String banner) {
-        screen.setLength(0);
         flushed.setLength(0);
         lineBuf.setLength(0);
-        if (banner != null) {
-            flushed.append(banner);
-            screen.append(banner);
-        }
+        if (banner != null) flushed.append(banner);
         repaint();
     }
 

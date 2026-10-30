@@ -93,7 +93,9 @@ public class FontPreviewActivity extends Activity {
             }
             if (fileUri != null) {
                 // SAF：把字体复制到缓存再加载（createFromFile 需要真实文件）
-                File tmp = new File(getCacheDir(), "font_preview.tmp");
+                // 用唯一临时文件：固定名会被两个预览页互相覆盖，
+        // 且 Typeface 指向的是被改写后的内容
+        File tmp = File.createTempFile("font_preview_", ".tmp", getCacheDir());
                 try (java.io.InputStream is = getContentResolver().openInputStream(fileUri);
                      java.io.FileOutputStream os = new java.io.FileOutputStream(tmp)) {
                     if (is == null) {
