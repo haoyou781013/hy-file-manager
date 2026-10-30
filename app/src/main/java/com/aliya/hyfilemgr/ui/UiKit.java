@@ -240,10 +240,12 @@ public final class UiKit {
         // 模糊背景是「截图当前界面」得到的静态图，若面板直接从 0 淡入会有半秒空窗感；
         // 因此面板用「轻微缩放 + 淡入 + 上浮」的 Material 式进入，遮罩层同步淡入。
         final View scrimView = dismissOnOutside ? shell.getChildAt(0) : null;
-        panel.setAlpha(0f);
-        panel.setScaleX(0.92f);
-        panel.setScaleY(0.92f);
-        panel.setTranslationY(dp(context, 12));
+        // 起始 alpha 不取 0：留 0.35 的可见度，配合提亮后的模糊底，
+        // 避免「整屏先暗一下再亮起来」
+        panel.setAlpha(0.35f);
+        panel.setScaleX(0.94f);
+        panel.setScaleY(0.94f);
+        panel.setTranslationY(dp(context, 10));
         if (scrimView != null) scrimView.setAlpha(0f);
 
         dialog.setOnShowListener(d -> {
@@ -251,7 +253,7 @@ public final class UiKit {
                     new android.view.animation.DecelerateInterpolator(1.6f);
             panel.animate()
                     .alpha(1f).scaleX(1f).scaleY(1f).translationY(0f)
-                    .setDuration(240).setInterpolator(ease).start();
+                    .setDuration(180).setInterpolator(ease).start();
             if (scrimView != null) {
                 scrimView.animate().alpha(1f).setDuration(200).start();
             }
@@ -364,9 +366,15 @@ public final class UiKit {
             // 窗口背景直接用模糊图（BitmapDrawable），并让它按 CENTER_CROP 铺满。
             // 之前用 ImageView 承载会有首帧空白（等布局+绘制才有内容）→ 闪黑。
             // 设为窗口背景则第一帧就由系统绘制，不会出现空白帧。
+            // 模糊图叠加一层提亮：直接截图模糊的结果比弹窗面板暗，
+            // 面板 alpha 从 0 淡入期间整屏只有这层暗图 → 观感「先变黑再变亮」。
+            // 用白色半透明叠加把基底提亮，面板淡入时就不会有明暗跳变。
+            android.graphics.Bitmap base = blurredOf(bg);
+            android.graphics.Bitmap lifted = liftBrightness(base, 0.18f);
             android.graphics.drawable.BitmapDrawable windowBg =
                     new android.graphics.drawable.BitmapDrawable(
-                            window.getContext().getResources(), blurredOf(bg));
+                            window.getContext().getResources(),
+                            lifted != null ? lifted : base);
             windowBg.setGravity(Gravity.FILL);
             window.setBackgroundDrawable(windowBg);
 
@@ -393,6 +401,28 @@ public final class UiKit {
         } else {
             window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
             window.setDimAmount(0.45f);
+        }
+    }
+
+    /**
+     * 提亮位图：叠加一层白色半透明（alpha = ratio）。
+     *
+     * @param ratio 0~1，0.18 约等于把整体亮度抬高 18%
+     * @return 新位图；失败返回 null（调用方回退原图）
+     */
+    private static android.graphics.Bitmap liftBrightness(
+            android.graphics.Bitmap src, float ratio) {
+        if (src == null || src.isRecycled()) return null;
+        try {
+            android.graphics.Bitmap out = src.copy(
+                    android.graphics.Bitmap.Config.ARGB_8888, true);
+            if (out == null) return null;
+            android.graphics.Canvas c = new android.graphics.Canvas(out);
+            int a = Math.max(0, Math.min(255, (int) (ratio * 255)));
+            c.drawColor(android.graphics.Color.argb(a, 255, 255, 255));
+            return out;
+        } catch (Throwable t) {
+            return null;
         }
     }
 
