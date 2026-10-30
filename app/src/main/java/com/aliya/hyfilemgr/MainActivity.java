@@ -61,6 +61,27 @@ public class MainActivity extends AppCompatActivity {
         super.onPause();
     }
 
+    /**
+     * SAF 授权结果转发（openSafAuthorize 用 REQ_SAF_MOUNT=1005 发起）。
+     * 此前无接收点 → 授权结果丢失、takePersistableUriPermission 从未调用。
+     */
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != 1005 || resultCode != RESULT_OK || data == null) return;
+        android.net.Uri treeUri = data.getData();
+        if (treeUri == null) return;
+        try {
+            getContentResolver().takePersistableUriPermission(
+                    treeUri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            | android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        } catch (Throwable t) {
+            android.util.Log.w("HYSAF", "takePersistableUriPermission failed", t);
+        }
+        com.aliya.hyfilemgr.module.FileManagerModule.onSafGrantedStatic();
+    }
+
     @Override
     protected void onDestroy() {
         if (module != null) module.onDetach();

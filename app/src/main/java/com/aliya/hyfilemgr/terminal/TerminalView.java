@@ -39,6 +39,17 @@ public class TerminalView extends ScrollView {
     private Sink sink;
     private BaseInputConnection ic;
     private final StringBuilder screen = new StringBuilder();
+    /**
+     * InputConnection 的可编辑载体。
+     *
+     * <p>父类 BaseInputConnection 的 beginBatchEdit / setComposingText /
+     * getTextBeforeCursor 等**全部**会访问 getEditable()。返回 null 只是
+     * 把 NPE 从 commitText 推迟到 beginBatchEdit（IME 发字符前必调），
+     * 所以中文输入仍会崩。正确做法是返回一个真实但**不与视图耦合**的
+     * Editable：内容只用于满足 IME 协议，不参与显示。</p>
+     */
+    private final android.text.SpannableStringBuilder icBuffer =
+            new android.text.SpannableStringBuilder();
     private int maxLines = 3000;
     /** 屏幕缓冲字符上限（约 3000 行 × 80 字符） */
     private static final int MAX_SCREEN_CHARS = 240_000;
@@ -118,7 +129,15 @@ public class TerminalView extends ScrollView {
             // 但它的内容不会被读取，所有输入都直接转发给 sink。
             ic = new BaseInputConnection(this, false) {
                 @Override
+                public Editable getEditable() {
+                    // 真实 Editable：父类 beginBatchEdit/setComposingText 等
+                    // 都会用它，null 会崩。内容不参与显示，仅供 IME 协议。
+                    return icBuffer;
+                }
+
+                @Override
                 public boolean commitText(CharSequence text, int newCursorPosition) {
+                    icBuffer.clear();
                     if (sink != null && text != null) {
                         String s2 = text.toString();
                         if (!s2.isEmpty()) {
@@ -152,46 +171,24 @@ public class TerminalView extends ScrollView {
 
                 @Override
                 public boolean setComposingText(CharSequence text, int newCursorPosition) {
-                    // 中文/拼音输入法组词阶段走这里。若不重写，父类实现会调用
-                    // getEditable()（返回 null）→ NPE，组词必然失败。
-                    // 组词中的字符先不回显、不提交，等 commitText 再发给 shell。
+                    // 组词阶段：只更新 icBuffer 供 IME 读取，不回显、不提交
+                    icBuffer.clear();
+                    if (text != null) icBuffer.append(text);
                     return true;
                 }
 
                 @Override
                 public boolean finishComposingText() {
-                    // 同上：父类会访问 getEditable()
+                    // 部分 IME（手写/日文）只 setComposingText + finishComposingText，
+                    // 不发 commitText。若不在此提交，字符会被静默丢弃。
+                    if (icBuffer.length() > 0) {
+                        String committed = icBuffer.toString();
+                        icBuffer.clear();
+                        if (sink != null && !committed.isEmpty()) {
+                            sink.onText(committed);
+                        }
+                    }
                     return true;
-                }
-
-                @Override
-                public CharSequence getTextBeforeCursor(int length, int flags) {
-                    return "";
-                }
-
-                @Override
-                public CharSequence getTextAfterCursor(int length, int flags) {
-                    return "";
-                }
-
-                @Override
-                public CharSequence getSelectedText(int flags) {
-                    return null;
-                }
-
-                @Override
-                public int getCursorCapsMode(int reqModes) {
-                    return 0;
-                }
-
-                @Override
-                public boolean setSelection(int start, int end) {
-                    return true;
-                }
-
-                @Override
-                public Editable getEditable() {
-                    return null;   // 不提供真实 Editable，避免焦点/文本状态耦合
                 }
             };
         }

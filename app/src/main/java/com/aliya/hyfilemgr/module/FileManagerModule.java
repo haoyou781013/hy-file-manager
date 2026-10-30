@@ -340,7 +340,9 @@ public class FileManagerModule extends HyVqModule {
         // 释放 Activity 强引用：否则旋转/重建后旧 Activity 被钉住，
         // 整个 View 树泄漏，且延时回调会对已销毁 Activity 调 recreate
         hostActivity = null;
-        if (handler != null) handler.removeCallbacksAndMessages(null);
+        // 不清 handler：它是本模块唯一 UI 回调通道，25 处 post 都在用，
+        // 清空会丢弃排队中的解压/粘贴/搜索完成回调
+        if (dpiHandler != null) dpiHandler.removeCallbacksAndMessages(null);
     }
 
     /** 恢复持久化的浏览状态（排序模式 / 是否显示隐藏文件 / 双窗格上次路径）。
@@ -1635,7 +1637,10 @@ public class FileManagerModule extends HyVqModule {
                         File tf = new File(e.path);
                         // 压缩包：直接进入内部浏览（beta.8），不再走解压或外部打开
                         if (isZip(e)) {
-                            enterZip(e.path);
+                            // 只有 zip/jar/apk 进内部浏览；7z/rar/tar 等
+                            // enterZip 会 ZipException 且用户被困空目录
+                            if (isZipReadable(e)) enterZip(e.path);
+                            else extractZip(e);
                         } else if (isTextFile(tf.getName())) {
                             openTextEditor(tf);   // 文本/代码文件 → 内置编辑器
                         } else {
@@ -2204,7 +2209,8 @@ public class FileManagerModule extends HyVqModule {
             showOpenWithDialog(e.path, e.name,
                     e.path != null && e.path.startsWith("content://"));
         }});
-        actions.add(new Object[]{"解到对侧", R.drawable.ic_archive, zip, (Runnable) () -> {
+        actions.add(new Object[]{"解到对侧", R.drawable.ic_archive,
+                zip && isZipReadable(e), (Runnable) () -> {
             dialog.dismiss();
             extractZipEntryToOtherPane(e);
         }});
@@ -3589,21 +3595,31 @@ public class FileManagerModule extends HyVqModule {
         return tvValue;
     }
 
+    /** DPI 重建专用 handler（onDetach 单独取消，不影响主 UI 回调通道） */
+    private android.os.Handler dpiHandler;
+
     /** 应用 DPI：落盘 + 重建界面 */
     private void applyDpi(int dpi) {
         com.aliya.hyfilemgr.util.DpiUtils.setOverrideDpi(dpi);
         savePrefInt(PREF_DPI, dpi);
         UiKit.toast(ctx, "已切换到 " + dpiLabel(dpi) + "，界面即将重建");
-        // DPI 改变需要重建 Activity（updateConfiguration 不影响已创建的 View）
-        final android.app.Activity act = hostActivity;
-        if (act != null) {
-            new android.os.Handler(android.os.Looper.getMainLooper())
-                    .postDelayed(new Runnable() {
-                        @Override
-                        public void run() {
-                            act.recreate();
-                        }
-                    }, 400);
+        // WeakReference：局部 final 强引用会让 onDetach 置空失效，
+        // 400ms 后仍对已销毁 Activity 调 recreate 抛 IllegalStateException
+        final java.lang.ref.WeakReference<android.app.Activity> ref =
+                new java.lang.ref.WeakReference<>(hostActivity);
+        if (hostActivity != null) {
+            if (dpiHandler == null) {
+                dpiHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+            }
+            dpiHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    android.app.Activity a = ref.get();
+                    if (a != null && !a.isFinishing() && !a.isDestroyed()) {
+                        try { a.recreate(); } catch (Throwable ignored) { }
+                    }
+                }
+            }, 400);
         } else {
             UiKit.toast(ctx, "重启应用后生效");
         }
@@ -8375,6 +8391,17 @@ public class FileManagerModule extends HyVqModule {
 
     // ── 压缩 / 解压（长按菜单入口；参考 Fossify ItemsAdapter；java.util.zip 零依赖） ──
 
+    /**
+     * 该压缩包能否被**内部浏览**（java.util.zip 只认得 zip/jar/apk）。
+     * isZip 已扩为 canExtract（16 种格式），两者语义必须分开。
+     */
+    private static boolean isZipReadable(FileEntry e) {
+        if (e == null || e.name == null) return false;
+        String lower = e.name.toLowerCase(Locale.getDefault());
+        return lower.endsWith(".zip") || lower.endsWith(".jar")
+                || lower.endsWith(".apk");
+    }
+
     private static boolean isZip(FileEntry e) {
         return e.name != null
                 && com.aliya.hyfilemgr.archive.ArchiveExtractor.canExtract(e.name);
@@ -8589,6 +8616,11 @@ public class FileManagerModule extends HyVqModule {
             doCompress(src, name, ext, level[0], pwd,
                     cbSingle.isChecked(), cbDelSrc.isChecked(), cbOtherPane.isChecked());
         }));
+        // 格式下拉必须随对话框关闭：否则展开列表时点「取消」，
+        // 弹窗关了但列表仍浮在屏幕上
+        d.setOnDismissListener(x -> {
+            if (fmtPopup != null && fmtPopup.isShowing()) fmtPopup.dismiss();
+        });
         d.show();
         etName.postDelayed(() -> {
             etName.requestFocus();
@@ -8644,8 +8676,10 @@ public class FileManagerModule extends HyVqModule {
             boolean ok = false;
             String err = null;
             try {
-                // TAR / TAR.GZ / GZ 走 commons-compress（zip4j 不支持）
-                if ("tar".equals(ext) || "tar.gz".equals(ext) || "gz".equals(ext)) {
+                // TAR / TAR.GZ / GZ / 7Z 走 commons-compress
+                // （zip4j 2.11.5 只支持写 ZIP，不写 7z）
+                if ("tar".equals(ext) || "tar.gz".equals(ext) || "gz".equals(ext)
+                        || "7z".equals(ext)) {
                     final boolean tarOk;
                     try {
                         tarOk = compressWithCommons(src, out, ext, single);
@@ -8737,6 +8771,7 @@ public class FileManagerModule extends HyVqModule {
      */
     private boolean compressWithCommons(File src, File out, String ext, boolean single)
             throws java.io.IOException {
+        if ("7z".equals(ext)) return compress7z(src, out, single);
         if ("gz".equals(ext) && !src.isDirectory()) {
             // 单文件 gzip（无归档结构）
             try (java.io.InputStream in = new java.io.BufferedInputStream(
@@ -8776,6 +8811,45 @@ public class FileManagerModule extends HyVqModule {
         } finally {
             try { base.close(); } catch (Throwable ignored) { }
         }
+    }
+
+    /** 7z 压缩（commons-compress SevenZOutputFile；zip4j 不支持写 7z） */
+    private boolean compress7z(File src, File out, boolean single) throws java.io.IOException {
+        try (org.apache.commons.compress.archivers.sevenz.SevenZOutputFile sz =
+                     new org.apache.commons.compress.archivers.sevenz.SevenZOutputFile(out)) {
+            if (src.isDirectory()) {
+                add7zDir(sz, src, single ? src.getName() : "");
+            } else {
+                add7zFile(sz, src, src.getName());
+            }
+            sz.finish();
+        }
+        return true;
+    }
+
+    private void add7zDir(org.apache.commons.compress.archivers.sevenz.SevenZOutputFile sz,
+                          File dir, String prefix) throws java.io.IOException {
+        File[] fs = dir.listFiles();
+        if (fs == null) return;
+        for (File f : fs) {
+            String entry = prefix.isEmpty() ? f.getName() : prefix + "/" + f.getName();
+            if (f.isDirectory()) add7zDir(sz, f, entry);
+            else add7zFile(sz, f, entry);
+        }
+    }
+
+    private void add7zFile(org.apache.commons.compress.archivers.sevenz.SevenZOutputFile sz,
+                           File f, String entryName) throws java.io.IOException {
+        org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry e =
+                sz.createArchiveEntry(f, entryName);
+        sz.putArchiveEntry(e);
+        try (java.io.InputStream in = new java.io.BufferedInputStream(
+                new java.io.FileInputStream(f))) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) sz.write(buf, 0, n);
+        }
+        sz.closeArchiveEntry();
     }
 
     /** 递归写入 TAR：prefix 为空时直接写目录内容 */
@@ -8929,14 +9003,19 @@ public class FileManagerModule extends HyVqModule {
         }
     }
 
-    private static boolean containsGarbled(String name) {
-        for (int i = 0; i < name.length(); i++) {
-            char c = name.charAt(i);
-            // 只跳过常见的合法控制字符：Tab(0x09) / 换行(0x0A) / 回车(0x0D)
-            // 以及 NUL(0x00)，其余 <0x20 视为乱码
-            if (c < 0x20 && c != '\t' && c != '\n' && c != '\r' && c != '\0') return true;
+    private static boolean containsGarbled(String s) {
+        if (s == null || s.isEmpty()) return false;
+        // UTF-8 解 GBK 字节时产生 U+FFFD。旧判据只看 c < 0x20 且跳过 \0，
+        // 真实乱码是 U+FFFD 与高位字符 → 全部漏检，GBK 中文被当 UTF-8
+        // 打开成一片替换符。
+        int bad = 0;
+        int total = Math.min(s.length(), 4096);
+        for (int i = 0; i < total; i++) {
+            char c = s.charAt(i);
+            if (c == '\uFFFD') bad++;
+            else if (c < 0x20 && c != '\n' && c != '\r' && c != '\t') bad++;
         }
-        return false;
+        return total > 0 && bad * 200 > total;   // 超过 0.5%
     }
 
 
@@ -9428,12 +9507,26 @@ public class FileManagerModule extends HyVqModule {
             File pd = dest.getParentFile();
             if (pd != null) pd.mkdirs();
             if (dest.exists()) dest = new File(target + "." + System.currentTimeMillis());
-            if (f.renameTo(dest)) return true;
-            // renameTo 失败（跨分区等）→ 复制 + 删源
-            FileOps.copy(f, dest);
-            deleteTree(f);
-            return true;
+            boolean moved;
+            if (f.renameTo(dest)) {
+                moved = true;
+            } else {
+                // 跨分区：复制 + 删源。复制失败必须中止，绝不删源，
+                // 否则「移入回收站」变成不可恢复的物理删除
+                FileOps.copy(f, dest);
+                if (!dest.exists()) return false;
+                deleteTree(f);
+                moved = true;
+            }
+            if (moved) {
+                // renameTo 与 copy 都保留**原文件** mtime，purgeExpiredTrash
+                // 按 mtime 判过期 → 删一张旧照片会立刻被清理。
+                //noinspection ResultOfMethodCallIgnored
+                dest.setLastModified(System.currentTimeMillis());
+            }
+            return moved;
         } catch (Throwable t) {
+            android.util.Log.w("HYTrash", "moveToTrash failed: " + f, t);
             return false;
         }
     }

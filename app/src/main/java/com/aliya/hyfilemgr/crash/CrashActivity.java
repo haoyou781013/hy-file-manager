@@ -241,17 +241,38 @@ public class CrashActivity extends Activity {
                     this, 0, i,
                     android.app.PendingIntent.FLAG_CANCEL_CURRENT
                             | android.app.PendingIntent.FLAG_IMMUTABLE);
-            android.app.AlarmManager am =
-                    (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
-            if (am != null) {
-                am.setExact(android.app.AlarmManager.RTC,
-                        System.currentTimeMillis() + 400, pi);
+            // 三段各自 try：setExact 在 API 31+ 无 SCHEDULE_EXACT_ALARM 时抛
+            // SecurityException，若与 finishAffinity/kill 同块会被连带跳过，
+            // 导致进程不退出、崩溃页留在栈上。
+            // 改用 set()（非精确闹钟，免权限，400ms 精度对重启足够）。
+            try {
+                android.app.AlarmManager am =
+                        (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
+                if (am != null) {
+                    am.set(android.app.AlarmManager.RTC,
+                            System.currentTimeMillis() + 400, pi);
+                }
+            } catch (Throwable ignored) {
+                // 闹钟设不上时退化为立即 startActivity
+                try {
+                    startActivity(i);
+                } catch (Throwable ignored2) {
+                }
             }
-            finishAffinity();
+
+            try {
+                finishAffinity();
+            } catch (Throwable ignored) {
+            }
+
             // 给 Alarm 留下调度时间再退出（不要立即 kill）
-            new android.os.Handler(getMainLooper()).postDelayed(
-                    () -> android.os.Process.killProcess(android.os.Process.myPid()),
-                    200);
+            try {
+                new android.os.Handler(getMainLooper()).postDelayed(
+                        () -> android.os.Process.killProcess(android.os.Process.myPid()),
+                        200);
+            } catch (Throwable ignored) {
+                android.os.Process.killProcess(android.os.Process.myPid());
+            }
         } catch (Throwable t) {
             toast("重启失败：" + t);
         }

@@ -1107,10 +1107,12 @@ public class MediaPlayerActivity extends Activity {
 
     @Override protected void onStop() {
         super.onStop();
-        // 切到后台 / 被覆盖时停掉播放：只在 onPause 里 pause 会让
-        // 新旧 Activity（切集时 startActivity→finish）短暂共存争解码器
+        // 用 pause 而非 stop：ExoPlayer.stop() 会回到 STATE_IDLE，
+        // 必须重新 prepare 才能播，而 onResume 只重启 ticker 不恢复，
+        // 结果切后台再回前台从头重播、进度丢失。
+        // 真正的释放由 onDestroy 的 release 负责；pause 已足够让出解码器。
         try {
-            if (player != null) player.stop();
+            if (player != null && player.isPlaying()) player.pause();
         } catch (Throwable ignored) {
         }
         handler.removeCallbacks(ticker);
