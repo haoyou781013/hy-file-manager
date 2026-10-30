@@ -248,6 +248,8 @@ public class FileManagerModule extends HyVqModule {
         String navPrev;
         final List<FileEntry> entries = new ArrayList<>();
         final Set<FileEntry> selected = new LinkedHashSet<>();
+        /** 区间框选锚点（按下位置），-1 表示无进行中的框选 */
+        int dragRangeStart = -1;
         AccessResult lastResult = AccessResult.empty("None");
         RecyclerView list;
         FileListAdapter adapter;
@@ -997,16 +999,18 @@ public class FileManagerModule extends HyVqModule {
      * 实时反馈；未达阈值则回弹归位。</p>
      */
     private void attachSwipeToSelect(final RecyclerView rv, final Pane p) {
-        final float threshold = dp(SWIPE_SELECT_DP);
+        final float enterThreshold = dp(SWIPE_SELECT_DP);   // 进入多选的阈值
+        final float rangeThreshold = dp(48);                // 多选中触发框选的阈值
         final float maxShift = dp(28);
+
         final float[] downX = {0f};
         final float[] downY = {0f};
-        final int[] touchPos = {-1};
+        final int[] downPos = {-1};        // 按下时的条目位置（框选起点）
         final View[] shifting = {null};
         final boolean[] abort = {false};
+        final boolean[] rangeMode = {false}; // 本次手势处于「框选」模式
+        final int[] lastRangeEnd = {-1};     // 上次框选终点，用于避免重复刷新
 
-        // 用 RecyclerView.OnItemTouchListener：在 onInterceptTouchEvent 阶段
-        // 就能拿到事件，早于子项点击与滚动拦截，否则 OnTouchListener 会被吞掉。
         rv.addOnItemTouchListener(new RecyclerView.OnItemTouchListener() {
             @Override
             public boolean onInterceptTouchEvent(RecyclerView r, android.view.MotionEvent ev) {
@@ -1016,32 +1020,54 @@ public class FileManagerModule extends HyVqModule {
                         downX[0] = ev.getX();
                         downY[0] = ev.getY();
                         abort[0] = false;
+                        rangeMode[0] = false;
+                        lastRangeEnd[0] = -1;
                         shifting[0] = null;
-                        touchPos[0] = positionAt(r, ev);
+                        downPos[0] = positionAt(r, ev);
                         return false;
                     }
                     case android.view.MotionEvent.ACTION_MOVE: {
-                        if (abort[0] || multiMode) return false;
+                        if (abort[0]) return false;
                         float dx = ev.getX() - downX[0];
                         float dy = ev.getY() - downY[0];
-                        // 纵向意图更强 → 放弃，交给列表滚动
+
+                        // 纵向意图更强 → 交给列表纵向滚动（多选中同样允许）
                         if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > dp(10)) {
                             abort[0] = true;
                             releaseShift();
                             return false;
                         }
                         if (Math.abs(dx) < dp(6)) return false;
-                        // 横向确认：阻止父容器（列表纵向滚动）抢事件
+
+                        // 横向确认
                         r.getParent().requestDisallowInterceptTouchEvent(true);
-                        if (shifting[0] == null && touchPos[0] >= 0) {
+
+                        if (multiMode) {
+                            // ── 多选态：横向拖动 = 区间框选 ──
+                            if (Math.abs(dx) < rangeThreshold) {
+                                // 未达阈值时只有轻微跟随，避免误触
+                                if (shifting[0] != null) {
+                                    float shift = Math.max(-maxShift,
+                                            Math.min(maxShift, dx * 0.3f));
+                                    shifting[0].setTranslationX(shift);
+                                }
+                                return true;
+                            }
+                            rangeMode[0] = true;
+                            applyRangeSelection(r, ev, downPos[0], lastRangeEnd);
+                            return true;   // 吞掉，避免触发条目点击
+                        }
+
+                        // ── 非多选态：横向拖动 = 单条卡片跟手 ──
+                        if (shifting[0] == null && downPos[0] >= 0) {
                             RecyclerView.ViewHolder vh =
-                                    r.findViewHolderForAdapterPosition(touchPos[0]);
+                                    r.findViewHolderForAdapterPosition(downPos[0]);
                             if (vh != null) shifting[0] = vh.itemView;
                         }
                         if (shifting[0] != null) {
                             float shift = Math.max(-maxShift, Math.min(maxShift, dx));
                             shifting[0].setTranslationX(shift);
-                            float progress = Math.min(1f, Math.abs(dx) / threshold);
+                            float progress = Math.min(1f, Math.abs(dx) / enterThreshold);
                             shifting[0].setAlpha(1f - 0.25f * progress);
                         }
                         return false;
@@ -1051,19 +1077,34 @@ public class FileManagerModule extends HyVqModule {
                         View target = shifting[0];
                         shifting[0] = null;
                         r.getParent().requestDisallowInterceptTouchEvent(false);
-                        if (multiMode || target == null || abort[0]) return false;
-                        if (Math.abs(dx) >= threshold && touchPos[0] >= 0) {
-                            FileEntry sel = entryAt(p, touchPos[0]);
-                            target.animate().translationX(0f).alpha(1f)
-                                    .setDuration(140).start();
+
+                        // ── 框选结束 ──
+                        if (rangeMode[0]) {
+                            rangeMode[0] = false;
+                            return true;
+                        }
+
+                        if (target == null || abort[0] || downPos[0] < 0) {
+                            return false;
+                        }
+
+                        // ── 达到阈值：进入多选 ──
+                        if (Math.abs(dx) >= enterThreshold) {
+                            FileEntry sel = entryAt(p, downPos[0]);
+                            // 关键：卡片先无动画归位，再统一做一次入场，
+                            // 避免「卡片回弹」与「工具栏上冲」两个动画叠加产生弹跳
+                            target.setTranslationX(0f);
+                            target.setAlpha(1f);
                             if (sel != null) {
                                 p.selected.add(sel);
-                                enterMultiMode();
                                 p.adapter.setSelected(p.selected);
+                                enterMultiMode();
                                 updateOpBar();
-                                return true;   // 吞掉本次点击，避免再触发条目点击
+                                return true;
                             }
                         }
+
+                        // ── 未达阈值：弹性回位 ──
                         target.animate().translationX(0f).alpha(1f)
                                 .setDuration(180)
                                 .setInterpolator(new android.view.animation.OvershootInterpolator(2f))
@@ -1072,6 +1113,7 @@ public class FileManagerModule extends HyVqModule {
                     }
                     case android.view.MotionEvent.ACTION_CANCEL: {
                         r.getParent().requestDisallowInterceptTouchEvent(false);
+                        rangeMode[0] = false;
                         releaseShift();
                         return false;
                     }
@@ -1079,6 +1121,49 @@ public class FileManagerModule extends HyVqModule {
                         return false;
                 }
             }
+
+            /**
+             * 区间框选：把 [起点, 当前点] 之间的所有条目加入选择。
+             *
+             * <p>一次拖动即可框选中间任意多条，不需要滑两次。区间按当前位置重算，
+             * 往回拖时会把超出区间的条目取消选中。</p>
+             */
+            private void applyRangeSelection(RecyclerView rv, android.view.MotionEvent ev,
+                                             int anchorPos, int[] lastEnd) {
+                int curPos = positionAt(rv, ev);
+                if (curPos < 0) return;
+                if (curPos == lastEnd[0]) return;
+                lastEnd[0] = curPos;
+
+                int from = Math.min(anchorPos, curPos);
+                int to = Math.max(anchorPos, curPos);
+                boolean changed = false;
+                for (int i = from; i <= to; i++) {
+                    FileEntry e = entryAt(p, i);
+                    if (e == null) continue;
+                    if (p.selected.add(e)) changed = true;
+                }
+                // 回收本次区间之外、但由本次拖动加入的条目
+                if (p.dragRangeStart >= 0) {
+                    int pf = Math.min(p.dragRangeStart, lastRangePrevEnd);
+                    int pt = Math.max(p.dragRangeStart, lastRangePrevEnd);
+                    for (int i = pf; i <= pt; i++) {
+                        if (i >= from && i <= to) continue;   // 仍在区间内，保留
+                        FileEntry e = entryAt(p, i);
+                        if (e != null) p.selected.remove(e);
+                    }
+                }
+                p.dragRangeStart = anchorPos;
+                lastRangePrevEnd = curPos;
+
+                if (changed || true) {
+                    p.adapter.setSelected(p.selected);
+                    updateOpBar();
+                }
+            }
+
+            /** 上一次框选的终点（用于回收区间） */
+            private int lastRangePrevEnd = -1;
 
             private void releaseShift() {
                 if (shifting[0] != null) {
