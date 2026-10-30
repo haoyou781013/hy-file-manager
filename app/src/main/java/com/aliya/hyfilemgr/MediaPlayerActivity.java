@@ -1105,6 +1105,17 @@ public class MediaPlayerActivity extends Activity {
         historyHandler.removeCallbacks(historyTick);
     }
 
+    @Override protected void onStop() {
+        super.onStop();
+        // 切到后台 / 被覆盖时停掉播放：只在 onPause 里 pause 会让
+        // 新旧 Activity（切集时 startActivity→finish）短暂共存争解码器
+        try {
+            if (player != null) player.stop();
+        } catch (Throwable ignored) {
+        }
+        handler.removeCallbacks(ticker);
+    }
+
     @Override protected void onResume() {
         super.onResume();
         if (prepared) handler.post(ticker);

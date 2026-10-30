@@ -171,7 +171,9 @@ public class ImageViewerActivity extends Activity {
         int reqW = getResources().getDisplayMetrics().widthPixels;
         int reqH = getResources().getDisplayMetrics().heightPixels;
         int sample = 1;
-        while (w / sample > reqW * 2 && h / sample > reqH * 2) sample *= 2;
+        // 用 || 而非 &&：超宽/超高图（如 12000×3000）在 && 下 sample 恒为 1，
+        // 会全尺寸解码（3000 万像素 ≈ 60MB）。同时加上界防死循环。
+        while ((w / sample > reqW * 2 || h / sample > reqH * 2) && sample < 16) sample *= 2;
         return Math.max(1, sample);
     }
 }

@@ -234,8 +234,16 @@ public final class FileOps {
     }
 
     /** 递归删除，返回删除条目数（文件+目录） */
+    /**
+     * 递归删除。
+     *
+     * @return 实际删除成功的条目数（失败的不计入，与旧实现「无论成败都 +1」不同）
+     *
+     * <p>旧实现忽略 delete() 返回值与 listFiles() 为 null 的情况，
+     * 只读子项 / SELinux 拒绝时会谎报「已删除 N 项」。</p>
+     */
     private static int deleteRecursive(File f) {
-        if (!f.exists()) return 0;
+        if (f == null || !f.exists()) return 0;
         int count = 0;
         if (f.isDirectory()) {
             File[] children = f.listFiles();
@@ -245,8 +253,7 @@ public final class FileOps {
                 }
             }
         }
-        f.delete();
-        return count + 1;
+        return f.delete() ? count + 1 : count;
     }
 
     /** 文件名净化：去路径分隔符/控制字符，防路径穿越 */
