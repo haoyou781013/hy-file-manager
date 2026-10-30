@@ -526,11 +526,16 @@ public class FileManagerModule extends HyVqModule {
         navPanel.setOrientation(LinearLayout.VERTICAL);
         android.graphics.drawable.GradientDrawable panelBg = new android.graphics.drawable.GradientDrawable();
         panelBg.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
-        // 参考外部侧边栏 bg_glass_rounded：右下圆角 20dp + 半透明磨砂(glass_light_75)
-        int glassFill = ctx.getResources().getColor(R.color.glass_light_75, null);
-        panelBg.setColor(glassFill);
-        panelBg.setCornerRadii(new float[]{0, 0, dp(20), dp(20), 0, 0, dp(20), dp(20)}); // 仅右下圆角(同外部)
-        panelBg.setStroke(dp(1), ctx.getResources().getColor(R.color.glass_border_light, null));
+        // 面板背景必须用**主题色**，不能固定 glass_light_75（那是 75% 白）。
+        // 固定白底 + colorOnSurface 文字 = 浅色主题下深字浅底尚可、
+        // 工业风格下浅字浅底直接看不清；再叠加卡片的半透明，对比度严重不足。
+        int panelFill = UiKit.color(ctx,
+                com.google.android.material.R.attr.colorSurfaceContainerHigh);
+        // 92% 不透明，保留一点磨砂感又不牺牲可读性
+        panelBg.setColor((panelFill & 0x00FFFFFF) | 0xEB000000);
+        panelBg.setCornerRadii(new float[]{0, 0, dp(20), dp(20), 0, 0, dp(20), dp(20)});
+        panelBg.setStroke(dp(1), UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOutlineVariant));
         navPanel.setBackground(panelBg);
         int pad = dp(14);
         navPanel.setPadding(pad, pad, pad, pad);
@@ -3066,8 +3071,11 @@ public class FileManagerModule extends HyVqModule {
         row.setFocusable(true);
         row.setBackgroundResource(R.drawable.bg_ripple_round);
         row.setOnClickListener(v -> {
-            closeNavSidebar();
-            showSettingsPage();
+            // 必须等侧边栏真正隐藏后再弹设置页：
+            // 旧代码 closeNavSidebar() 只启动 200ms 动画就立刻 showSettingsPage()，
+            // 设置对话框的模糊遮罩会把仍在收起的侧边栏一起模糊掉，
+            // 表现为「透过模糊能看到侧边栏在退出，但它其实还没退干净」。
+            closeNavSidebarThen(this::showSettingsPage);
         });
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -4309,6 +4317,29 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 关闭内部侧边栏：面板左滑 + 遮罩淡出同步（修复透明度突变闪烁），结束后隐藏复位 */
+    /**
+     * 关闭侧边栏，并在**动画真正结束、导航层已 GONE** 后执行后续动作。
+     *
+     * <p>直接 closeNavSidebar() 只启动动画，随后立刻弹对话框会让
+     * 对话框的模糊遮罩把仍在收起的侧边栏一起拍进去。</p>
+     */
+    private void closeNavSidebarThen(Runnable then) {
+        if (navOverlay == null || navOverlay.getVisibility() != View.VISIBLE) {
+            if (then != null) then.run();
+            return;
+        }
+        closeNavSidebar();
+        // closeNavSidebar 的动画时长 200ms，这里多留 40ms 余量，
+        // 保证 navOverlay 已经 setVisibility(GONE)
+        if (navPanel != null) {
+            navPanel.postDelayed(() -> {
+                if (then != null) then.run();
+            }, 240);
+        } else if (then != null) {
+            then.run();
+        }
+    }
+
     private void closeNavSidebar() {
         if (navOverlay == null || navPanel == null) return;
         navPanel.animate().translationX(-navPanelWidth - dp(20)).setDuration(200).start();

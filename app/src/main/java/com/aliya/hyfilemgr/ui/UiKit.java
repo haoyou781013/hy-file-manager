@@ -253,6 +253,8 @@ public final class UiKit {
             dialog.getWindow().getDecorView().setTag(panel);
         }
 
+        // 弹窗关闭后恢复状态栏颜色（applyBlur 曾把它设为透明）
+        dialog.setOnDismissListener(d -> restoreStatusBarColor(dialog.getWindow(), context));
         return dialog;
     }
 
@@ -309,6 +311,16 @@ public final class UiKit {
      *                      false = 只铺模糊背景，子 View 布局交给调用方
      *                      （{@link #glassDialog} 用，因为面板已在 shell 里居中，若再收窄会连遮罩一起缩掉）
      */
+    /** 恢复状态栏颜色为标题栏同色（弹窗 applyBlur 时曾设为透明） */
+    private static void restoreStatusBarColor(Window window, Context context) {
+        if (window == null || context == null) return;
+        try {
+            window.setStatusBarColor(color(context,
+                    com.google.android.material.R.attr.colorSurfaceContainer));
+        } catch (Throwable ignored) {
+        }
+    }
+
     public static void applyBlur(Window window, Context context, boolean centerContent) {
         if (window == null) return;
         // 主方案：截图模糊背景（弹窗内容悬浮其上，全版本可靠）
@@ -320,10 +332,18 @@ public final class UiKit {
             // 窗口铺满屏幕，背景模糊图才能完整覆盖弹窗后区域（含状态栏）
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
             window.setGravity(Gravity.CENTER);
-            // 允许绘制到状态栏下方（否者状态栏那条会被系统遮住/留白）
+            // 允许绘制到状态栏下方（否则状态栏那条会被系统遮住/留白）
             window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                     | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                     | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            // 状态栏必须透明：弹窗已经铺满到状态栏下方，
+            // 若状态栏仍保留 Activity 设的颜色，模糊层与状态栏色会叠加成两层，
+            // 表现为「模糊算了两次状态栏」。
+            try {
+                window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+                window.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+            } catch (Throwable ignored) {
+            }
             // 原弹窗内容改为垂直居中悬浮（宽度保持原窗口宽度）
             if (!centerContent) return;
             View decor = window.getDecorView();
