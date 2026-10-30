@@ -36,10 +36,20 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         // setTheme 必须在 super.onCreate 之前，否则主题不会生效
-        int theme = getSharedPreferences("hyvq_filemgr", MODE_PRIVATE)
-                .getInt(PREF_THEME, 0);
+        android.content.SharedPreferences sp =
+                getSharedPreferences("hyvq_filemgr", MODE_PRIVATE);
+        int theme = sp.getInt(PREF_THEME, 0);
         if (theme == 1) {
+            // 工业风格：内置深色，不受明暗模式影响
             setTheme(R.style.Theme_HYFileManager_Industrial);
+        } else {
+            // 默认主题：按 ui_mode 选 0=跟随系统 / 1=亮 / 2=暗
+            int mode = sp.getInt("ui_mode", 0);
+            if (mode == 1) {
+                setTheme(R.style.Theme_HYFileManager_Light);
+            } else if (mode == 2) {
+                setTheme(R.style.Theme_HYFileManager_Dark);
+            }
         }
         super.onCreate(savedInstanceState);
 

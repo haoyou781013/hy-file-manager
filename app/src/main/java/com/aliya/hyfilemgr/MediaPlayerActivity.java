@@ -736,7 +736,7 @@ public class MediaPlayerActivity extends Activity {
             danmakuOn = !danmakuOn;
             // 记住用户选择（覆盖默认）
             getSharedPreferences("anime_prefs", MODE_PRIVATE)
-                    .edit().putBoolean("danmaku_default_on", danmakuOn).apply();
+                    .edit().putBoolean("danmaku_default_on", danmakuOn).commit();
             btnDanmaku.setText(danmakuOn ? "弹幕·开" : "弹幕");
             btnDanmaku.setTextColor(danmakuOn
                     ? 0xFF00E676 : android.graphics.Color.WHITE);

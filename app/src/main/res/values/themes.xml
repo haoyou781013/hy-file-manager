@@ -1,7 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- ── 主题 0：默认（Material3 跟随系统深浅色）── -->
+    <!-- ── 主题 0：默认（跟随系统深浅色）── -->
     <style name="Theme.HYFileManager" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/blue_600</item>
+        <item name="colorOnPrimary">@color/white</item>
+    </style>
+
+    <!-- 强制亮色 -->
+    <style name="Theme.HYFileManager.Light" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/blue_600</item>
+        <item name="colorOnPrimary">@color/white</item>
+    </style>
+
+    <!-- 强制暗色 -->
+    <style name="Theme.HYFileManager.Dark" parent="Theme.Material3.Dark.NoActionBar">
         <item name="colorPrimary">@color/blue_600</item>
         <item name="colorOnPrimary">@color/white</item>
     </style>

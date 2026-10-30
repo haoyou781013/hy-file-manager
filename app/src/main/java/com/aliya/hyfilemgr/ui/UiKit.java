@@ -341,35 +341,42 @@ public final class UiKit {
             // 主题色作为首帧兜底。模糊图由下方 ImageView 承载。
             window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
             window.setGravity(Gravity.CENTER);
+            // ⚠️ 不用 FLAG_LAYOUT_NO_LIMITS：它让窗口超出屏幕边界，
+            // 部分 ROM 会用黑色 Surface 补齐超出部分，绘制背景前就露出黑 →
+            // 这就是「弹窗切换闪一下黑」的真正来源。
+            // 只用 LAYOUT_IN_SCREEN（允许覆盖状态栏区域，但不越界）。
             window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                    | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
                     | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            // 状态栏透明：模糊图要铺到状态栏下方
             try {
                 window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
                 window.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+                // 同时把状态栏绘制旗标清掉，避免系统在状态栏区域再画一层
+                if (window.getDecorView() != null) {
+                    int vis = window.getDecorView().getSystemUiVisibility();
+                    vis |= android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+                    window.getDecorView().setSystemUiVisibility(vis);
+                }
             } catch (Throwable ignored) {
             }
 
+            // 窗口背景直接用模糊图（BitmapDrawable），并让它按 CENTER_CROP 铺满。
+            // 之前用 ImageView 承载会有首帧空白（等布局+绘制才有内容）→ 闪黑。
+            // 设为窗口背景则第一帧就由系统绘制，不会出现空白帧。
+            android.graphics.drawable.BitmapDrawable windowBg =
+                    new android.graphics.drawable.BitmapDrawable(
+                            window.getContext().getResources(), blurredOf(bg));
+            windowBg.setGravity(Gravity.FILL);
+            window.setBackgroundDrawable(windowBg);
+
+            if (!centerContent) return;
             View decor = window.getDecorView();
             View content = decor.findViewById(android.R.id.content);
             if (content instanceof FrameLayout) {
                 FrameLayout frame = (FrameLayout) content;
-                // 背景层：铺满、置于最底层、不可点击（点击交给 scrim）
-                ImageView blurView = new ImageView(window.getContext());
-                blurView.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                blurView.setImageDrawable(bg);
-                blurView.setClickable(false);
-                blurView.setFocusable(false);
-                FrameLayout.LayoutParams bgLp = new FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.MATCH_PARENT);
-                // 关键：把背景层顶到状态栏上方（负偏移 = 状态栏高度）
-                bgLp.topMargin = -statusBarHeight(window.getContext());
-                frame.addView(blurView, 0, bgLp);
-
-                if (!centerContent) return;
-                if (frame.getChildCount() > 1) {
-                    View child = frame.getChildAt(1);
+                if (frame.getChildCount() > 0) {
+                    View child = frame.getChildAt(0);
                     child.setLayoutParams(new FrameLayout.LayoutParams(
                             prevWidth > 0 ? prevWidth : FrameLayout.LayoutParams.MATCH_PARENT,
                             FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -387,6 +394,14 @@ public final class UiKit {
             window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
             window.setDimAmount(0.45f);
         }
+    }
+
+    /** 从 BitmapDrawable 取出底层 Bitmap；其他类型返回 null */
+    private static android.graphics.Bitmap blurredOf(Drawable d) {
+        if (d instanceof android.graphics.drawable.BitmapDrawable) {
+            return ((android.graphics.drawable.BitmapDrawable) d).getBitmap();
+        }
+        return null;
     }
 
     /** 状态栏高度（px）；取不到时用 24dp 估算 */

@@ -201,6 +201,8 @@ public class FileManagerModule extends HyVqModule {
     private static final String PREF_DENSITY = "list_density";
     /** 界面主题：0=默认，1=工业风格 */
     private static final String PREF_UI_THEME = "ui_theme";
+    /** 明暗模式：0=跟随系统，1=亮色，2=暗色（工业风格下隐藏） */
+    private static final String PREF_UI_MODE = "ui_mode";
     /** 侧边栏「本地」分组是否展开 */
     private static final String PREF_NAV_LOCAL_OPEN = "nav_local_open";
     /** 侧边栏「工具」分组是否展开 */
@@ -214,6 +216,8 @@ public class FileManagerModule extends HyVqModule {
 
     /** 界面主题：0=默认，1=工业风格 */
     private static int uiTheme = 0;
+    /** 明暗模式：0=跟随系统，1=亮色，2=暗色 */
+    private static int uiMode = 0;
 
     /** 回收站是否启用（关闭后侧边栏不显示回收站入口） */
     private static boolean trashEnabled = true;
@@ -365,6 +369,7 @@ public class FileManagerModule extends HyVqModule {
         thumbsEnabled = sp.getBoolean(PREF_THUMBS, true);
         listDensity = Math.max(1, Math.min(3, sp.getInt(PREF_DENSITY, 2)));
         uiTheme = Math.max(0, Math.min(1, sp.getInt(PREF_UI_THEME, 0)));
+        uiMode = Math.max(0, Math.min(2, sp.getInt(PREF_UI_MODE, 0)));
         navLocalExpanded = sp.getBoolean(PREF_NAV_LOCAL_OPEN, true);
         navToolsExpanded = sp.getBoolean(PREF_NAV_TOOLS_OPEN, true);
         trashEnabled = sp.getBoolean(PREF_TRASH_ENABLED, true);
@@ -395,6 +400,7 @@ public class FileManagerModule extends HyVqModule {
                 .putBoolean(PREF_THUMBS, thumbsEnabled)
                 .putInt(PREF_DENSITY, listDensity)
                 .putInt(PREF_UI_THEME, uiTheme)
+                .putInt(PREF_UI_MODE, uiMode)
                 .putBoolean(PREF_NAV_LOCAL_OPEN, navLocalExpanded)
                 .putBoolean(PREF_NAV_TOOLS_OPEN, navToolsExpanded)
                 .putBoolean(PREF_TRASH_ENABLED, trashEnabled)
@@ -866,7 +872,7 @@ public class FileManagerModule extends HyVqModule {
             final int mode = i;
             addMenuRow(panel, SORT_LABELS[i], R.drawable.ic_sort, v -> {
                 sortMode = mode;
-                fmPrefs().edit().putInt(PREF_SORT_MODE, mode).apply();
+                fmPrefs().edit().putInt(PREF_SORT_MODE, mode).commit();
                 reload(active);
                 popup.dismiss();
             });
@@ -2978,7 +2984,7 @@ public class FileManagerModule extends HyVqModule {
                         .setMessage("删除书签：" + path + "？")
                         .setPositiveButton("删除", (d, w) -> {
                             set.remove(path);
-                            fmPrefs().edit().putStringSet("bookmarks", set).apply();
+                            fmPrefs().edit().putStringSet("bookmarks", set).commit();
                             UiKit.toast(ctx, "已删除书签");
                             rebuildNavContent();
                         })
@@ -3454,6 +3460,52 @@ public class FileManagerModule extends HyVqModule {
         d.show();
     }
 
+    /** 明暗模式选择（跟随系统 / 亮色 / 暗色），切换后重建界面 */
+    private void showModePicker() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "明暗模式"));
+
+        TextView hint = new TextView(ctx);
+        hint.setText("工业风格内置深色，不受此项影响。\n切换后界面会自动重建。");
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hint.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        hint.setPadding(dp(4), 0, dp(4), dp(8));
+        box.addView(hint);
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        String[] names = {"跟随系统", "亮色", "暗色"};
+        String[] descs = {"按系统深色设置自动切换", "始终使用浅色界面", "始终使用深色界面"};
+        for (int i = 0; i < names.length; i++) {
+            final int idx = i;
+            addInfoRow(box, names[i], descs[i], uiMode == i, v -> {
+                if (uiMode == idx) {
+                    UiKit.dismissWithAnim(d);
+                    return;
+                }
+                uiMode = idx;
+                savePrefInt(PREF_UI_MODE, idx);
+                persistState();
+                UiKit.dismissWithAnim(d);
+                final android.app.Activity act = hostActivity;
+                if (act != null) {
+                    try {
+                        act.recreate();
+                    } catch (Throwable t) {
+                        UiKit.toast(ctx, "已保存，重启应用后生效");
+                    }
+                }
+            });
+        }
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        box.addView(btns, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim(d)));
+        d.show();
+    }
+
     /** 主题选择（默认 / 工业风格），切换后重建界面 */
     private void showThemePicker() {
         LinearLayout box = new LinearLayout(ctx);
@@ -3517,6 +3569,14 @@ public class FileManagerModule extends HyVqModule {
                 uiTheme == 1, v -> {
                     showThemePicker();
                 });
+
+        // ── 明暗模式（工业风格内置深色，隐藏此项）──
+        if (uiTheme != 1) {
+            final String[] MODE_NAMES = {"跟随系统", "亮色", "暗色"};
+            addInfoRow(box, "明暗模式",
+                    MODE_NAMES[Math.max(0, Math.min(2, uiMode))],
+                    uiMode != 0, v -> showModePicker());
+        }
 
         // ── 显示密度（DPI）：SeekBar ──
         final int[] dpiPresets = com.aliya.hyfilemgr.util.DpiUtils.PRESETS;
@@ -4444,7 +4504,7 @@ public class FileManagerModule extends HyVqModule {
             Object tag = content.getChildAt(i).getTag();
             if (tag instanceof String) sb.append(tag).append('\n');
         }
-        fmPrefs().edit().putString("nav_mount_order", sb.toString()).apply();
+        fmPrefs().edit().putString("nav_mount_order", sb.toString()).commit();
     }
 
     /** 构建合并列表行：两行结构（图标+名称+三条杠 / 副标题），左滑露出删除（仅授权项）、长按手柄拖排序 */
@@ -5672,7 +5732,7 @@ public class FileManagerModule extends HyVqModule {
         for (EditorTabState t : editorTabs) {
             arr.put(t.rootTarget != null ? "root://" + t.rootTarget : t.file.getAbsolutePath());
         }
-        fmPrefs().edit().putString(EDITOR_PREF_TABS, arr.toString()).apply();
+        fmPrefs().edit().putString(EDITOR_PREF_TABS, arr.toString()).commit();
     }
 
     /** 打开保留：恢复上次保留的标签（跳过不存在/过大/读取失败文件） */
@@ -9691,7 +9751,7 @@ public class FileManagerModule extends HyVqModule {
             return;
         }
         set.add(target);
-        sp.edit().putStringSet("bookmarks", set).apply();
+        sp.edit().putStringSet("bookmarks", set).commit();
         UiKit.toast(ctx, "已收藏：" + target);
     }
 
@@ -9952,7 +10012,7 @@ public class FileManagerModule extends HyVqModule {
         });
         lv.setOnItemLongClickListener((p, v, pos, id) -> {
             set.remove(paths.get(pos));
-            sp.edit().putStringSet("bookmarks", set).apply();
+            sp.edit().putStringSet("bookmarks", set).commit();
             UiKit.toast(ctx, "已删除书签");
             dialog.dismiss();
             showBookmarks();
