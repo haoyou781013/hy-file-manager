@@ -3246,39 +3246,123 @@ public class FileManagerModule extends HyVqModule {
      * 不重新创建窗口、不重新截图模糊（applyBlur 不再执行），
      * 因此没有整屏闪一下。窗口背景与模糊图沿用首次创建时的结果。</p>
      */
+    /** 设置容器（内嵌在 contentWrap，与文件列表/终端同级） */
+    private LinearLayout settingsEmbedView;
+    /** 设置容器内滚动的 ScrollView（各设置页内容放这里） */
+    private LinearLayout settingsEmbedContent;
+    /** 嵌在共享顶栏里的设置标题 */
+    private View topBarSettingsTitleView;
+    private TextView settingsTopTitle;
+
+    /**
+     * 打开/切换设置页（**内嵌视图**，不是弹窗）。
+     *
+     * <p>原先是 Dialog：遮罩 + 模糊截图 + 窗口创建，与文件列表是两套界面。
+     * 改为与终端相同的做法——在 contentWrap 内换视图，顶栏切换成「设置 | 页名」。
+     * 这样没有任何窗口/遮罩开销，切换只是换子 View。</p>
+     */
     private void showInSettingsDialog(java.util.function.Supplier<View> contentSupplier) {
-        try {
-            if (settingsDialog != null && settingsDialog.isShowing()) {
-                final View v = contentSupplier.get();
-                if (v != null) {
-                    // 轻微淡出 → 换内容 → 淡入，给"换页"一个视觉过渡，
-                    // 但不重新创建窗口/不重截图模糊，因此不会闪黑。
-                    View old = settingsDialog.getWindow() == null ? null
-                            : settingsDialog.getWindow().getDecorView()
-                                    .findViewById(android.R.id.content);
-                    if (old instanceof android.view.ViewGroup
-                            && ((android.view.ViewGroup) old).getChildCount() > 0) {
-                        final View oldChild = ((android.view.ViewGroup) old).getChildAt(0);
-                        oldChild.animate().alpha(0f).setDuration(90)
-                                .withEndAction(() -> {
-                                    settingsDialog.setContentView(v);
-                                    v.setAlpha(0f);
-                                    v.animate().alpha(1f).setDuration(150).start();
-                                }).start();
-                    } else {
-                        settingsDialog.setContentView(v);
-                    }
-                }
-                return;
-            }
-        } catch (Throwable ignored) {
-        }
-        // 没有现成弹窗：走常规路径
+        if (contentWrapRef == null) return;
         View v = contentSupplier.get();
-        if (v != null) {
-            settingsDialog = UiKit.glassDialog(ctx, v);
-            settingsDialog.show();
+        if (v == null) return;
+
+        if (settingsEmbedView == null) {
+            settingsEmbedView = new LinearLayout(ctx);
+            settingsEmbedView.setOrientation(LinearLayout.VERTICAL);
+            settingsEmbedView.setBackgroundColor(UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorSurface));
+            android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+            sv.setFillViewport(true);
+            settingsEmbedContent = new LinearLayout(ctx);
+            settingsEmbedContent.setOrientation(LinearLayout.VERTICAL);
+            int pad = dp(14);
+            settingsEmbedContent.setPadding(pad, dp(8), pad, pad);
+            sv.addView(settingsEmbedContent, new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            settingsEmbedView.addView(sv, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+            contentWrapRef.addView(settingsEmbedView, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
+
+        settingsEmbedView.setVisibility(View.VISIBLE);
+        if (fileContentView != null) fileContentView.setVisibility(View.GONE);
+        if (opBar != null) opBar.setVisibility(View.GONE);
+        if (bottomNav != null) bottomNav.setVisibility(View.GONE);
+        if (fabNew != null) fabNew.setVisibility(View.GONE);
+
+        // 换内容（淡入）
+        settingsEmbedContent.removeAllViews();
+        settingsEmbedContent.addView(v, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        settingsEmbedContent.setAlpha(0f);
+        settingsEmbedContent.animate().alpha(1f).setDuration(160).start();
+
+        enterSettingsTopBar();
+    }
+
+    /** 顶栏切到设置模式：「设置 | 页名」+ 返回 */
+    private void enterSettingsTopBar() {
+        if (topBarCenterSlot == null || topBarSettingsTitleView != null) return;
+        if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.GONE);
+
+        LinearLayout title = new LinearLayout(ctx);
+        title.setOrientation(LinearLayout.HORIZONTAL);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView tag = new TextView(ctx);
+        tag.setText("设置");
+        tag.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tag.setTypeface(null, android.graphics.Typeface.BOLD);
+        tag.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimary));
+        title.addView(tag);
+
+        TextView sep = new TextView(ctx);
+        sep.setText("  |  ");
+        sep.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        sep.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        title.addView(sep);
+
+        settingsTopTitle = new TextView(ctx);
+        settingsTopTitle.setText("");
+        settingsTopTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        settingsTopTitle.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        settingsTopTitle.setSingleLine(true);
+        title.addView(settingsTopTitle, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        topBarCenterSlot.addView(title, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT));
+        topBarSettingsTitleView = title;
+
+        if (topBarFileActions != null) topBarFileActions.setVisibility(View.GONE);
+        if (topBarTermActions != null) topBarTermActions.setVisibility(View.GONE);
+    }
+
+    /** 关闭设置页，恢复文件视图与顶栏 */
+    private void closeSettingsEmbed() {
+        if (settingsEmbedView == null) return;
+        settingsEmbedView.setVisibility(View.GONE);
+        if (fileContentView != null) fileContentView.setVisibility(View.VISIBLE);
+        if (bottomNav != null) {
+            bottomNav.setAlpha(1f);
+            bottomNav.setTranslationY(0f);
+            bottomNav.setVisibility(View.VISIBLE);
+        }
+        if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
+        // 顶栏恢复
+        if (topBarSettingsTitleView != null && topBarCenterSlot != null) {
+            topBarCenterSlot.removeView(topBarSettingsTitleView);
+            topBarSettingsTitleView = null;
+            settingsTopTitle = null;
+        }
+        if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.VISIBLE);
+        if (topBarFileActions != null) topBarFileActions.setVisibility(View.VISIBLE);
+        if (multiMode) updateOpBar();
     }
 
     /** 薄包装：以独立弹窗打开（保持既有调用点兼容） */
@@ -3295,6 +3379,11 @@ public class FileManagerModule extends HyVqModule {
     }
 
     private void hideSettingsDialog() {
+        // 内嵌模式下关闭的是内嵌视图（settingsDialog 仅作旧兼容保留）
+        if (settingsEmbedView != null && settingsEmbedView.getVisibility() == View.VISIBLE) {
+            closeSettingsEmbed();
+            return;
+        }
         if (settingsDialog != null && settingsDialog.isShowing()) {
             UiKit.dismissWithAnim(settingsDialog);
         }
@@ -3349,6 +3438,7 @@ public class FileManagerModule extends HyVqModule {
 
     /** 权限管理页：所有文件访问 / 存储权限 / SAF 授权目录 */
     private View buildPermissionManager() {
+        if (settingsTopTitle != null) settingsTopTitle.setText("权限管理");
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "权限管理"));
@@ -3757,6 +3847,7 @@ public class FileManagerModule extends HyVqModule {
 
     /** 个性化设置页：显示密度(DPI) + 列表文件密度（均为进度条式） */
     private View buildAppearanceSettings() {
+        if (settingsTopTitle != null) settingsTopTitle.setText("个性化");
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "个性化"));
@@ -3966,6 +4057,7 @@ public class FileManagerModule extends HyVqModule {
 
     /** 文件管理设置页：隐藏文件 / 缩略图 / 排序 */
     private View buildFileSettings() {
+        if (settingsTopTitle != null) settingsTopTitle.setText("文件管理");
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "文件管理"));
