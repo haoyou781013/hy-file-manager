@@ -315,6 +315,14 @@ public class FileManagerModule extends HyVqModule {
     private boolean multiMode = false;
 
     private TextView pathText;
+    /** 顶栏中部插槽（文件=面包屑 / 终端=标题） */
+    private FrameLayout topBarCenterSlot;
+    private View topBarCrumbView;
+    private View topBarFileActions;
+    private LinearLayout topBarTermActions;
+    /** 终端模式下顶栏的标题 View 与 pwd TextView */
+    private View topBarTermTitleView;
+    private TextView terminalTopPwd;
     /** ⭐ v2.8.0 ROOT 顶栏按钮（状态着色：已授权=主色） */
     /** 上一次已知的 root 状态，用于状态变化时只刷新一次 UI */
     /** 曾经授权成功过的标记：决定启动时是"静默探测"还是"什么都不做"（避免每次冷启动弹授权窗） */
@@ -568,16 +576,25 @@ public class FileManagerModule extends HyVqModule {
         // 左上角三条杠（汉堡）导航：点击弹出内部小侧边栏（层级导航 + SAF 挂载目录）
         bar.addView(toolIcon(R.drawable.ic_menu, v -> showNavSidebar()));
 
+        // 中部区域：文件模式显示面包屑，终端模式显示「终端 | pwd」。
+        // 用一个 FrameLayout 承载，两种内容互斥显示，共享同一个顶栏。
+        FrameLayout centerSlot = new FrameLayout(ctx);
+        LinearLayout.LayoutParams slotLp = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        slotLp.setMarginStart(dp(6));
+        bar.addView(centerSlot, slotLp);
+        topBarCenterSlot = centerSlot;
+
         // 面包屑路径（MaterialFiles 风格：点击弹出层级列表，可跳任意上级目录）
         LinearLayout crumb = new LinearLayout(ctx);
         crumb.setOrientation(LinearLayout.HORIZONTAL);
         crumb.setGravity(Gravity.CENTER_VERTICAL);
         crumb.setClickable(true);
         crumb.setOnClickListener(v -> showPathCrumbs());
-        LinearLayout.LayoutParams crumbLp = new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        crumbLp.setMarginStart(dp(6));
-        bar.addView(crumb, crumbLp);
+        centerSlot.addView(crumb, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT));
+        topBarCrumbView = crumb;
 
         pathText = new TextView(ctx);
         pathText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
@@ -598,12 +615,23 @@ public class FileManagerModule extends HyVqModule {
         caretLp.setMarginEnd(dp(4));
         crumb.addView(caret, caretLp);
 
-        // 🔍 搜索直达（原 ⋮ 菜单内入口，MaterialFiles/Amaze 顶栏搜索位）
-        bar.addView(toolIcon(R.drawable.ic_search, v -> showSearchDialog()));
-        // 排序直达（名称/大小/时间，Popover 弹出）
-        bar.addView(toolIcon(R.drawable.ic_sort, v -> showSortMenu(v)));
-        // ⋮ 更多（隐藏文件/书签/任务队列/刷新）
-        bar.addView(toolIcon(R.drawable.ic_more_vert, v -> showMoreMenu(v)));
+        // 右侧操作区：文件模式显示 搜索/排序/更多，终端模式显示 清屏/复制/中断
+        LinearLayout fileActions = new LinearLayout(ctx);
+        fileActions.setOrientation(LinearLayout.HORIZONTAL);
+        fileActions.setGravity(Gravity.CENTER_VERTICAL);
+        fileActions.addView(toolIcon(R.drawable.ic_search, v -> showSearchDialog()));
+        fileActions.addView(toolIcon(R.drawable.ic_sort, v -> showSortMenu(v)));
+        fileActions.addView(toolIcon(R.drawable.ic_more_vert, v -> showMoreMenu(v)));
+        bar.addView(fileActions);
+        topBarFileActions = fileActions;
+
+        LinearLayout termActions = new LinearLayout(ctx);
+        termActions.setOrientation(LinearLayout.HORIZONTAL);
+        termActions.setGravity(Gravity.CENTER_VERTICAL);
+        termActions.setVisibility(View.GONE);
+        bar.addView(termActions);
+        topBarTermActions = termActions;
+
         return bar;
     }
 
@@ -3417,6 +3445,78 @@ public class FileManagerModule extends HyVqModule {
     /** 最近一次浏览过的真实目录（虚拟路径时终端用它作工作目录） */
     private String lastRealPath = null;
 
+    /** 顶栏切到终端模式：「终端 | pwd」+ 清屏/复制/中断 */
+    private void enterTerminalTopBar() {
+        if (topBarCenterSlot == null) return;
+        // 中部：隐藏面包屑，显示终端标题
+        if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.GONE);
+        LinearLayout termTitle = new LinearLayout(ctx);
+        termTitle.setOrientation(LinearLayout.HORIZONTAL);
+        termTitle.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView tag = new TextView(ctx);
+        tag.setText("终端");
+        tag.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tag.setTypeface(null, android.graphics.Typeface.BOLD);
+        tag.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimary));
+        termTitle.addView(tag);
+
+        TextView sep = new TextView(ctx);
+        sep.setText("  |  ");
+        sep.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        sep.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        termTitle.addView(sep);
+
+        terminalTopPwd = new TextView(ctx);
+        String dir = (terminalPanel != null) ? terminalPanel.getWorkDir() : "/sdcard";
+        terminalTopPwd.setText(dir);
+        terminalTopPwd.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        terminalTopPwd.setTypeface(android.graphics.Typeface.MONOSPACE);
+        terminalTopPwd.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        terminalTopPwd.setSingleLine(true);
+        terminalTopPwd.setEllipsize(android.text.TextUtils.TruncateAt.START);
+        termTitle.addView(terminalTopPwd, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        topBarCenterSlot.addView(termTitle, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT));
+        topBarTermTitleView = termTitle;
+
+        // 右侧：换成终端操作
+        if (topBarFileActions != null) topBarFileActions.setVisibility(View.GONE);
+        if (topBarTermActions != null && topBarTermActions.getChildCount() == 0) {
+            topBarTermActions.addView(textButton("清屏", v -> {
+                if (terminalPanel != null) terminalPanel.clearOutputPublic();
+            }));
+            topBarTermActions.addView(textButton("中断", v -> {
+                if (terminalPanel != null) terminalPanel.sendInterruptPublic();
+            }));
+            topBarTermActions.setVisibility(View.VISIBLE);
+        }
+    }
+
+    /** 顶栏切回文件模式：面包屑 + 搜索/排序/更多 */
+    private void exitTerminalTopBar() {
+        if (topBarCenterSlot == null) return;
+        if (topBarTermTitleView != null) {
+            topBarCenterSlot.removeView(topBarTermTitleView);
+            topBarTermTitleView = null;
+        }
+        if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.VISIBLE);
+        if (topBarTermActions != null) topBarTermActions.setVisibility(View.GONE);
+        if (topBarFileActions != null) topBarFileActions.setVisibility(View.VISIBLE);
+        terminalTopPwd = null;
+    }
+
+    /** 终端 pwd 变化时同步顶栏 */
+    private void updateTerminalTopPwd(String dir) {
+        if (terminalTopPwd != null && dir != null) terminalTopPwd.setText(dir);
+    }
+
     /** 终端面板（内置，同一 Activity 内叠加显示） */
     private com.aliya.hyfilemgr.terminal.TerminalPanel terminalPanel;
 
@@ -3479,6 +3579,9 @@ public class FileManagerModule extends HyVqModule {
             if (bottomNav != null) bottomNav.setVisibility(View.GONE);
             if (fabNew != null) fabNew.setVisibility(View.GONE);
 
+            // 顶栏切到终端模式（融入共享顶栏，不再有独立标题行）
+            enterTerminalTopBar();
+
             // 不做位移/淡入动画：终端与文件列表是同级视图切换，
             // 加「自下而上淡入」正是弹窗观感的来源。直接可见。
             pv.setAlpha(1f);
@@ -3511,6 +3614,7 @@ public class FileManagerModule extends HyVqModule {
             bottomNav.setVisibility(View.VISIBLE);
         }
         if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
+        exitTerminalTopBar();
         if (multiMode) updateOpBar();
     }
     /** 回收站保留天数选择 */

@@ -103,51 +103,6 @@ public class TerminalPanel {
         box.setFocusable(true);
         box.setFocusableInTouchMode(true);
 
-        // ── 融入式标题行：终端 | pwd ──
-        // 不再是「浮层自己的顶栏」，而是与文件列表共享同一顶栏高度与配色，
-        // 视觉上就像文件列表换了一屏内容，而不是弹出窗口。
-        LinearLayout top = new LinearLayout(ctx);
-        top.setOrientation(LinearLayout.HORIZONTAL);
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        top.setPadding(dp(14), dp(10), dp(8), dp(10));
-        top.setBackgroundColor(surfaceHigh());
-        box.addView(top, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView tag = new TextView(ctx);
-        tag.setText("终端");
-        tag.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        tag.setTypeface(Typeface.DEFAULT_BOLD);
-        tag.setTextColor(primary());
-        top.addView(tag);
-
-        TextView sep = new TextView(ctx);
-        sep.setText("  |  ");
-        sep.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        sep.setTextColor(onSurfaceVariant());
-        top.addView(sep);
-
-        pwdView = new TextView(ctx);
-        pwdView.setText(workDir);
-        pwdView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        pwdView.setTypeface(Typeface.MONOSPACE);
-        pwdView.setTextColor(onSurfaceVariant());
-        pwdView.setSingleLine(true);
-        pwdView.setEllipsize(android.text.TextUtils.TruncateAt.START);
-        top.addView(pwdView, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        // 操作入口与文件列表的 ⋮ 一致：三个文字按钮 + 关闭
-        top.addView(btn("清屏", v -> clearOutput()));
-        top.addView(btn("复制", v -> copyOutput()));
-        top.addView(btn("中断", v -> {
-            if (session != null) session.sendInterrupt();
-        }));
-        top.addView(btn("关闭", v -> {
-            if (onClose != null) onClose.onClose();
-        }));
-
-        // 与文件列表一致的细分割线
         View headerDivider = new View(ctx);
         headerDivider.setBackgroundColor(onSurfaceVariant() & 0x33FFFFFF);
         box.addView(headerDivider, new LinearLayout.LayoutParams(
@@ -384,6 +339,21 @@ public class TerminalPanel {
     }
 
     // ── 会话 ──
+
+    /** 当前工作目录（供共享顶栏显示） */
+    public String getWorkDir() {
+        return workDir;
+    }
+
+    /** 清屏（供共享顶栏调用） */
+    public void clearOutputPublic() {
+        clearOutput();
+    }
+
+    /** 发送 Ctrl+C（供共享顶栏调用） */
+    public void sendInterruptPublic() {
+        if (session != null) session.sendInterrupt();
+    }
 
     public void start() {
         if (session != null && session.isRunning()) return;
