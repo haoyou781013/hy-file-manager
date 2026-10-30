@@ -11,8 +11,8 @@ android {
         minSdk = 21
         targetSdk = 34
         // 版本号唯一来源：本文件
-        versionCode = 2
-        versionName = "0.2.0-beta.1"
+        versionCode = 3
+        versionName = "0.2.0-beta.2"
     }
 
     compileOptions {

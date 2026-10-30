@@ -1,16 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="blue_600">#1E88E5</color>
-    <color name="blue_200">#90CAF9</color>
     <color name="white">#FFFFFF</color>
 
     <!-- 双列界面配色 -->
-    <color name="bg_window">#F7FAFD</color>
-    <color name="bg_toolbar">#FFFFFF</color>
-    <color name="bg_pathbar">#EDF4FC</color>
-    <color name="divider">#D6E3F0</color>
-    <color name="text_primary">#1B2A38</color>
-    <color name="text_secondary">#5C7186</color>
 
     <!-- 从 HY_VQ 剥离：玻璃质感 -->
     <color name="glass_light_75">#BFFEFCFC</color>       <!-- 75% 不透，用于侧边栏 -->

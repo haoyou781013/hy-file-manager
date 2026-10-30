@@ -4,7 +4,7 @@
 
 与 HY_VQ 的关系：
 - **HY_VQ**：综合工具（文件管理 + 终端 + 插件化 UI）
-- **HY 文件管理**：**专注**文件管理，剔除终端、插件、网络等，保持轻量
+- **HY 文件管理**：**专注**文件管理与归档，包含内置终端、文本编辑器、播放器；不使用插件机制
 
 ## 二、技术选型
 
@@ -22,8 +22,7 @@ app/src/main/java/com/aliya/hyfilemgr/
 ├── MainActivity.java            主界面（双栏）
 ├── module/
 │   ├── FileManagerModule.java   核心浏览/操作
-│   ├── ZipBrowserModule.java    压缩包浏览
-│   └── SearchModule.java        搜索/过滤
+│   （压缩包浏览与搜索已并入 FileManagerModule）
 └── ui/
     └── ...
 ```
@@ -41,7 +40,11 @@ app/src/main/java/com/aliya/hyfilemgr/
 - 插件化 UI（ModuleRegistry、抽屉）
 - 网络模块（更新、下载）
 
-## 五、待定
+## 五、已定（原「待定」项）
+
+- 7z / rar：**已支持**。7z 走 commons-compress SevenZOutputFile 写、SevenZFile 读；rar 只解压（专有算法，无开源写实现），走 junrar
+
+## 六、其他待定
 
 - 是否支持 7z / rar（需第三方库）
 - 是否支持 root 浏览

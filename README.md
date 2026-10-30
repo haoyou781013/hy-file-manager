@@ -5,7 +5,7 @@
 ## 项目简介
 
 HY 文件管理（HY_FileManager）是一个极简、高效的 Android 文件管理工具，专注于
-快速浏览、搜索和操作本地文件，不引入第三方框架，保持最小依赖。
+快速浏览、搜索和操作本地文件。依赖以「能省则省」为原则，但归档、播放等能力需要专门库时按需引入（见技术栈）。
 
 ## 特性
 
@@ -25,11 +25,11 @@ HY 文件管理（HY_FileManager）是一个极简、高效的 Android 文件管
 | 目标 Android | 14（API 34） |
 | UI 框架 | AndroidX · Material 3 |
 | 构建 | Gradle 8.x · AGP 8.x |
-| 依赖 | 仅 androidx.core / appcompat / material |
+| 依赖 | androidx(core/appcompat/material/recyclerview/activity)、media3、okhttp、zip4j、commons-compress、xz、zstd-jni、junrar |
 
 ## 项目状态
 
-- **阶段**：初始化（v0.1.0-dev）
+- **阶段**：功能完善（v0.2.0-beta.2）
 - **范围**：本地文件管理，不联网、不发布到 Play
 - **分发**：自签名 APK（GitHub Releases + Gitee Releases）
 
@@ -37,7 +37,7 @@ HY 文件管理（HY_FileManager）是一个极简、高效的 Android 文件管
 
 ```bash
 # 构建（命令行）
-sh toolchain/gradle/gradle-8.1.1/bin/gradle :app:assembleRelease --no-daemon
+sh tools/build.sh    # 或按 01-重建脚本 还原工具链后手动调用 gradle
 
 # 产物
 app/build/outputs/apk/release/app-release.apk
@@ -62,7 +62,8 @@ HY文件管理/
 
 ## 隐私
 
-- **不联网**：纯本地文件管理，不上传任何数据
+- **不上传数据**：文件管理、归档、终端均为本地操作，不向任何服务器上传文件或元数据
+- **联网能力**：仅媒体播放器使用 OkHttp 拉取网络视频流；可断网使用其余全部功能
 - **不索取多余权限**：只申请文件读写、安装包权限
 
 ## License
