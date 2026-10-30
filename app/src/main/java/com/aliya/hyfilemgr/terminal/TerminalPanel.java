@@ -112,9 +112,10 @@ public class TerminalPanel {
         termView.setSink(new TerminalView.Sink() {
             @Override
             public void onText(String text) {
-                // 只把字符交给 shell，由 shell 自己做回显。
-                // 本地再 echo 一次会与 shell 回显叠加，出现重复字符与
-                // 重复提示符（PS1 在交互模式下由 shell 输出）。
+                // 本地回显：ProcessBuilder 起的是**非交互式** sh
+                // （无 tty），它不回显输入也不输出提示符。
+                // 上一版改成「只交 shell」后终端打字完全看不到内容。
+                termView.echo(text);
                 if (session != null && session.isRunning()) session.send(text);
             }
 
@@ -143,6 +144,8 @@ public class TerminalPanel {
                 if (session != null && session.isRunning()) session.send("\u007f");
             }
         });
+        // 非交互 sh 不输出 PS1，本地给一个提示符
+        termView.setPrompt("$ ");
         termView.clear(banner());
         box.addView(termView, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -157,45 +160,54 @@ public class TerminalPanel {
         toolBarWrap.addView(toolDivider, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1))));
 
-        HorizontalScrollView toolScroll = new HorizontalScrollView(ctx);
-        toolScroll.setHorizontalScrollBarEnabled(false);
-        toolScroll.setBackgroundColor(0xFF161B22);
+        // ── 工具栏：两行 ──
+        // 第一行：Ctrl / Tab / Esc / 常用符号
+        // 第二行：方向键 ← ↑ ↓ →
+        // 不再放 a~z：软键盘本身有字母，重复占用空间。
         LinearLayout tools = new LinearLayout(ctx);
-        tools.setOrientation(LinearLayout.HORIZONTAL);
-        tools.setGravity(Gravity.CENTER_VERTICAL);
+        tools.setOrientation(LinearLayout.VERTICAL);
         tools.setPadding(dp(6), dp(4), dp(6), dp(4));
 
-        // Ctrl 锁定键（点击切换，点亮表示生效）
+        // 第一行
+        LinearLayout row1 = new LinearLayout(ctx);
+        row1.setOrientation(LinearLayout.HORIZONTAL);
+        row1.setGravity(Gravity.CENTER_VERTICAL);
         ctrlKey = termKey("Ctrl", "", null);
         ctrlKey.setOnClickListener(v -> {
             ctrlLocked = !ctrlLocked;
             updateCtrlKeyState();
             termView.requestFocus();
         });
-        tools.addView(ctrlKey);
+        row1.addView(ctrlKey);
+        row1.addView(termKey("Tab", "\t", null));
+        row1.addView(termKey("Esc", "\u001b", null));
+        row1.addView(termKey("|", "|", null));
+        row1.addView(termKey("~", "~", null));
+        row1.addView(termKey("/", "/", null));
+        row1.addView(termKey("-", "-", null));
+        row1.addView(termKey("_", "_", null));
+        row1.addView(termKey("$", "$", null));
+        row1.addView(termKey("*", "*", null));
+        tools.addView(row1, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        tools.addView(termKey("←", "\u001b[D", null));
-        tools.addView(termKey("↑", "\u001b[A", null));
-        tools.addView(termKey("↓", "\u001b[B", null));
-        tools.addView(termKey("→", "\u001b[C", null));
-        tools.addView(termKey("Tab", "\t", null));
-        tools.addView(termKey("Esc", "\u001b", null));
-        tools.addView(termKey("|", "|", null));
-        tools.addView(termKey("~", "~", null));
-        tools.addView(termKey("/", "/", null));
-        tools.addView(termKey("-", "-", null));
-        tools.addView(termKey("_", "_", null));
-        tools.addView(termKey("$", "$", null));
-        tools.addView(termKey("*", "*", null));
-        // 字母键：配合 Ctrl 锁定使用（Ctrl 亮起后按这些键 = Ctrl+字母）
-        for (char c = 'a'; c <= 'z'; c++) {
-            final String ch = String.valueOf(c);
-            tools.addView(termKey(ch, ch, null));
-        }
+        // 第二行：方向键
+        LinearLayout row2 = new LinearLayout(ctx);
+        row2.setOrientation(LinearLayout.HORIZONTAL);
+        row2.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams row2Lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        row2Lp.topMargin = dp(2);
+        row2.addView(termKey("←", "\u001b[D", null));
+        row2.addView(termKey("↑", "\u001b[A", null));
+        row2.addView(termKey("↓", "\u001b[B", null));
+        row2.addView(termKey("→", "\u001b[C", null));
+        // Home / End 也放第二行（命令行常用）
+        row2.addView(termKey("Home", "\u0001", null));
+        row2.addView(termKey("End", "\u0005", null));
+        tools.addView(row2, row2Lp);
 
-        toolScroll.addView(tools, new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        toolBarWrap.addView(toolScroll, new LinearLayout.LayoutParams(
+        toolBarWrap.addView(tools, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         box.addView(toolBarWrap, new LinearLayout.LayoutParams(

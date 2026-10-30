@@ -199,6 +199,8 @@ public class FileManagerModule extends HyVqModule {
     private static final String PREF_SHOW_HIDDEN = "show_hidden";
     private static final String PREF_DPI = "ui_dpi";
     private static final String PREF_DENSITY = "list_density";
+    /** 界面主题：0=默认，1=工业风格 */
+    private static final String PREF_UI_THEME = "ui_theme";
     /** 侧边栏「本地」分组是否展开 */
     private static final String PREF_NAV_LOCAL_OPEN = "nav_local_open";
     /** 侧边栏「工具」分组是否展开 */
@@ -209,6 +211,9 @@ public class FileManagerModule extends HyVqModule {
     private static final String PREF_TRASH_DEFAULT = "trash_default";
     /** 回收站自动清理天数（0 = 不自动清理） */
     private static final String PREF_TRASH_KEEP_DAYS = "trash_keep_days";
+
+    /** 界面主题：0=默认，1=工业风格 */
+    private static int uiTheme = 0;
 
     /** 回收站是否启用（关闭后侧边栏不显示回收站入口） */
     private static boolean trashEnabled = true;
@@ -359,6 +364,7 @@ public class FileManagerModule extends HyVqModule {
         gridMode = sp.getBoolean(PREF_GRID_MODE, false);
         thumbsEnabled = sp.getBoolean(PREF_THUMBS, true);
         listDensity = Math.max(1, Math.min(3, sp.getInt(PREF_DENSITY, 2)));
+        uiTheme = Math.max(0, Math.min(1, sp.getInt(PREF_UI_THEME, 0)));
         navLocalExpanded = sp.getBoolean(PREF_NAV_LOCAL_OPEN, true);
         navToolsExpanded = sp.getBoolean(PREF_NAV_TOOLS_OPEN, true);
         trashEnabled = sp.getBoolean(PREF_TRASH_ENABLED, true);
@@ -388,6 +394,7 @@ public class FileManagerModule extends HyVqModule {
                 .putBoolean(PREF_SHOW_HIDDEN, showHidden)
                 .putBoolean(PREF_THUMBS, thumbsEnabled)
                 .putInt(PREF_DENSITY, listDensity)
+                .putInt(PREF_UI_THEME, uiTheme)
                 .putBoolean(PREF_NAV_LOCAL_OPEN, navLocalExpanded)
                 .putBoolean(PREF_NAV_TOOLS_OPEN, navToolsExpanded)
                 .putBoolean(PREF_TRASH_ENABLED, trashEnabled)
@@ -3432,11 +3439,69 @@ public class FileManagerModule extends HyVqModule {
         d.show();
     }
 
+    /** 主题选择（默认 / 工业风格），切换后重建界面 */
+    private void showThemePicker() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "界面主题"));
+
+        TextView hint = new TextView(ctx);
+        hint.setText("工业风格：深色底 + 琥珀色强调，适合暗光环境。\n切换后界面会自动重建。");
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hint.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        hint.setPadding(dp(4), 0, dp(4), dp(8));
+        box.addView(hint);
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        String[] names = {"默认", "工业风格"};
+        String[] descs = {"Material3 跟随系统深浅色", "深色 + 琥珀强调，控制面板风格"};
+        for (int i = 0; i < names.length; i++) {
+            final int idx = i;
+            addInfoRow(box, names[i], descs[i], uiTheme == i, v -> {
+                if (uiTheme == idx) {
+                    UiKit.dismissWithAnim(d);
+                    return;
+                }
+                uiTheme = idx;
+                savePrefInt(PREF_UI_THEME, idx);
+                persistState();
+                UiKit.dismissWithAnim(d);
+                // 主题只能在 onCreate 前 setTheme，必须重建 Activity
+                final android.app.Activity act = hostActivity;
+                if (act != null) {
+                    try {
+                        act.recreate();
+                    } catch (Throwable t) {
+                        UiKit.toast(ctx, "主题已保存，重启应用后生效");
+                    }
+                } else {
+                    UiKit.toast(ctx, "主题已保存，重启应用后生效");
+                }
+            });
+        }
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        box.addView(btns, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim(d)));
+        d.show();
+    }
+
     /** 个性化设置页：显示密度(DPI) + 列表文件密度（均为进度条式） */
     private void showAppearanceSettings() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "个性化"));
+
+        // ── 界面主题 ──
+        final String[] THEME_NAMES = {"默认", "工业风格"};
+        addInfoRow(box, "界面主题",
+                THEME_NAMES[Math.max(0, Math.min(1, uiTheme))],
+                uiTheme == 1, v -> {
+                    showThemePicker();
+                });
 
         // ── 显示密度（DPI）：SeekBar ──
         final int[] dpiPresets = com.aliya.hyfilemgr.util.DpiUtils.PRESETS;

@@ -30,8 +30,17 @@ public class MainActivity extends AppCompatActivity {
         super.attachBaseContext(com.aliya.hyfilemgr.util.DpiUtils.wrap(base));
     }
 
+    /** 主题偏好：0=默认，1=工业风格 */
+    private static final String PREF_THEME = "ui_theme";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // setTheme 必须在 super.onCreate 之前，否则主题不会生效
+        int theme = getSharedPreferences("hyvq_filemgr", MODE_PRIVATE)
+                .getInt(PREF_THEME, 0);
+        if (theme == 1) {
+            setTheme(R.style.Theme_HYFileManager_Industrial);
+        }
         super.onCreate(savedInstanceState);
 
         FrameLayout root = new FrameLayout(this);

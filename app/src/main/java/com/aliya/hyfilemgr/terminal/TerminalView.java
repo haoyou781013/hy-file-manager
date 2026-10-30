@@ -54,6 +54,10 @@ public class TerminalView extends ScrollView {
 
     /** 提示符（如 "$ "）。null 表示不显示 */
     private String promptStr = "$ ";
+    /** 视图当前是否停在底部（用户上滑后为 false） */
+    private boolean atBottom = true;
+    private float touchDownX, touchDownY;
+    private boolean touchMoved;
     /** 光标字符（闪烁显示/隐藏） */
     private static final String CURSOR_ON = "▏";
     private static final String CURSOR_OFF = " ";
@@ -94,10 +98,36 @@ public class TerminalView extends ScrollView {
         setFocusableInTouchMode(true);
         setClickable(true);
         setDescendantFocusability(FOCUS_BLOCK_DESCENDANTS);
+        setOnScrollChangeListener((v, sx, sy, osx, osy) -> {
+            // 距底部 24dp 内视为「在底部」
+            android.view.View child = getChildAt(0);
+            if (child == null) return;
+            atBottom = (child.getBottom() - (sy + getHeight())) <= dp(24);
+        });
         setOnTouchListener((v, ev) -> {
-            if (ev.getAction() == MotionEvent.ACTION_UP) {
-                requestFocus();
-                showIme();
+            switch (ev.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    touchDownX = ev.getX();
+                    touchDownY = ev.getY();
+                    touchMoved = false;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    // 超过触摸斜率视为滚动意图，不再当作点击
+                    if (Math.abs(ev.getY() - touchDownY) > dp(8)
+                            || Math.abs(ev.getX() - touchDownX) > dp(8)) {
+                        touchMoved = true;
+                    }
+                    break;
+                case MotionEvent.ACTION_UP:
+                    // 只有「没滑动过」的轻点才拉起输入法。
+                    // 此前无条件 showIme() 导致上滑看历史被立刻弹键盘。
+                    if (!touchMoved) {
+                        requestFocus();
+                        showIme();
+                    }
+                    break;
+                default:
+                    break;
             }
             return false;
         });
@@ -169,7 +199,8 @@ public class TerminalView extends ScrollView {
 
                 @Override
                 public boolean setComposingText(CharSequence text, int newCursorPosition) {
-                    // 组词阶段：只更新 icBuffer 供 IME 读取，不回显、不提交
+                    // 组词阶段：只维护 icBuffer 供 IME 读取，不提交给 sink。
+                    // 提交统一由 commitText 负责，避免重复发送。
                     icBuffer.clear();
                     if (text != null) icBuffer.append(text);
                     return true;
@@ -177,15 +208,12 @@ public class TerminalView extends ScrollView {
 
                 @Override
                 public boolean finishComposingText() {
-                    // 部分 IME（手写/日文）只 setComposingText + finishComposingText，
-                    // 不发 commitText。若不在此提交，字符会被静默丢弃。
-                    if (icBuffer.length() > 0) {
-                        String committed = icBuffer.toString();
-                        icBuffer.clear();
-                        if (sink != null && !committed.isEmpty()) {
-                            sink.onText(committed);
-                        }
-                    }
+                    // 只清理缓冲，**不再提交**。
+                    // commitText 已经在提交时把字符送给 sink；若这里再提交
+                    // 一次 icBuffer 的残留内容，每个字符会被发送两次
+                    // （表现为输入 "ls" 得到 "lls"）。
+                    // icBuffer 仅作为 IME 协议载体，不承担提交职责。
+                    icBuffer.clear();
                     return true;
                 }
             };
@@ -241,7 +269,9 @@ public class TerminalView extends ScrollView {
         all.append(lineBuf);
         all.append(cursorVisible ? CURSOR_ON : CURSOR_OFF);
         inner.setText(all.toString());
-        post(() -> fullScroll(FOCUS_DOWN));
+        // 只有原本就在底部时才跟随滚动。用户向上翻看历史输出时
+        // 任何新输出（含光标闪烁触发 repaint）都不应把他拉回底部。
+        if (atBottom) post(() -> fullScroll(FOCUS_DOWN));
     }
 
     /** 本地回显一个字符（追加到当前行） */
