@@ -135,12 +135,20 @@ public class TerminalSession {
     }
 
     /** 发送原始文本（可用于 Tab 补全、Ctrl 组合键） */
+    /** 写入锁：stdin.write 不是线程安全的，并发写会让字节交错（输入乱序） */
+    private final Object writeLock = new Object();
+
     public void send(String text) {
-        if (!running || stdin == null) return;
-        try {
-            stdin.write(text.getBytes(StandardCharsets.UTF_8));
-            stdin.flush();
-        } catch (IOException ignored) {
+        if (text == null || text.isEmpty()) return;
+        synchronized (writeLock) {
+            java.io.OutputStream out = stdin;
+            if (!running || out == null) return;
+            try {
+                out.write(text.getBytes(StandardCharsets.UTF_8));
+                out.flush();
+            } catch (IOException e) {
+                android.util.Log.e("HyTermSnd", "write fail", e);
+            }
         }
     }
 

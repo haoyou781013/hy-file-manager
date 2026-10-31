@@ -46,6 +46,8 @@ public class TerminalPanel {
 
     private String workDir;
     private OnWorkDirChange onWorkDirChange;
+    /** 回显与发送的互斥锁：IME 可能并发回调，二者必须原子 */
+    private final Object termLock = new Object();
 
     public TerminalPanel(Context ctx, String workDir, OnClose onClose) {
         this.ctx = ctx;
@@ -117,21 +119,35 @@ public class TerminalPanel {
         termView.setSink(new TerminalView.Sink() {
             @Override
             public void onText(String text) {
-                // 本地回显：ProcessBuilder 起的是**非交互式** sh
-                // （无 tty），它不回显输入也不输出提示符。
-                // 上一版改成「只交 shell」后终端打字完全看不到内容。
-                termView.echo(text);
-                if (session != null && session.isRunning()) session.send(text);
+                // ⚠️ 关键：**不再逐字符发给 shell**。
+                //
+                // 实测（printf 'ls\177cd\n' | /system/bin/sh）确认：
+                // 非交互 sh 没有行编辑器，DEL(0x7f) / BS(0x08) / Ctrl-U
+                // 全部被当成**字面字符**收进命令缓冲，不会删字符。
+                // 因此用户「输入 ls → 退格 → 输入 cd」时，shell 实际收到
+                // "ls\x7f\x7fcd"，执行时报 lscd: inaccessible。
+                //
+                // 终端必须自己做行编辑：本地维护 lineBuf，
+                // 只在按回车时把**完整的正确行**发给 shell。
+                synchronized (termLock) {
+                    termView.echo(text);
+                }
             }
 
             @Override
             public void onEnter() {
+                synchronized (termLock) {
                 // ⚠️ 必须先取行内容再 newlineEcho()：
                 // newlineEcho 内部会 lineBuf.setLength(0)，之后再读就是空串，
                 // 导致 cd 解析永远拿到 ""，顶栏路径永不更新。
                 final String line = termView.currentLine();
                 termView.newlineEcho();
-                if (session != null && session.isRunning()) session.send("\n");
+                final boolean run = (session != null && session.isRunning());
+                if (run) {
+                    // 把整行 + 换行一次性发出。终端自己做行编辑的必然结果：
+                    // shell 只收到最终命令，不受中途退格污染。
+                    session.send(line + "\n");
+                }
                 if (line.trim().startsWith("cd ")) {
                     String arg = line.trim().substring(3).trim();
                     // 去掉引号
@@ -159,15 +175,15 @@ public class TerminalPanel {
                         }
                     }
                 }
+                }
             }
 
             @Override
             public void onBackspace() {
-                termView.backspaceEcho();
-                // 发 DEL(0x7F) 而非 BS(0x08)：交互式 toybox sh 的行编辑
-                // 认 0x7F，0x08 会在 shell 缓冲里留一个多余控制字符，
-                // 导致输入与显示不一致、执行时参数被污染。
-                if (session != null && session.isRunning()) session.send("\u007f");
+                synchronized (termLock) {
+                    // 只改本地缓冲，**不发给 shell**（见 onText 注释）
+                    termView.backspaceEcho();
+                }
             }
         });
         // 非交互 sh 不输出 PS1，本地给一个提示符
@@ -307,14 +323,18 @@ public class TerminalPanel {
                 }
             }
             if (out == null || out.isEmpty()) return;
-            session.send(out);
-            // 可打印字符本地回显（控制字符不回显）
-            if (!ctrlConsumed && out.length() == 1 && out.charAt(0) >= ' ') {
-                termView.echo(out);
-            }
+
             if (ctrlConsumed) {
+                // Ctrl 组合键必须直达 shell（中断、EOF 等无法本地处理）
+                session.send(out);
                 ctrlLocked = false;
                 updateCtrlKeyState();
+            } else if (out.length() == 1 && out.charAt(0) >= ' ') {
+                // 可打印字符：**只进本地行缓冲**，回车时整行才发
+                termView.echo(out);
+            } else {
+                // Tab / Esc / 方向键等特殊序列：直达 shell
+                session.send(out);
             }
             termView.requestFocus();
         });

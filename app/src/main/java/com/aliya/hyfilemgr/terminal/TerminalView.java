@@ -237,7 +237,6 @@ public class TerminalView extends ScrollView {
 
                 @Override
                 public boolean setComposingText(CharSequence text, int newCursorPosition) {
-                    // 组词阶段只维护父类 buffer，不发送
                     return super.setComposingText(text, newCursorPosition);
                 }
 
@@ -288,6 +287,24 @@ public class TerminalView extends ScrollView {
             }
         }
         if (start < s2.length()) sink.onText(s2.substring(start));
+    }
+
+    /** 供外部打调试信息 */
+    public void dbgPublic(String m) { dbg(m); }
+
+    /**
+     * 调试输出：直接打到终端界面（不依赖 logcat）。
+     *
+     * <p>排查输入链路时打开对应调用点即可。注意：非交互 sh 没有行编辑器，
+     * 所以终端必须自己做行编辑（见 TerminalPanel.onText 的注释）。</p>
+     */
+    @SuppressWarnings("unused")
+    private void dbg(String m) {
+        flushed.append("\u27E8").append(m).append("\u27E9\n");
+        if (flushed.length() > MAX_SCREEN_CHARS) {
+            flushed.delete(0, flushed.length() - MAX_SCREEN_CHARS);
+        }
+        repaint();
     }
 
     // ── 物理键盘 ──
