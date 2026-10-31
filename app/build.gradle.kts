@@ -9,7 +9,7 @@ android {
     defaultConfig {
         applicationId = "com.aliya.hyfilemgr"
         minSdk = 21
-        targetSdk = 34
+        targetSdk = 34   // 保持 34：升 36 会强制 edge-to-edge、onBackPressed 失效等
         // 版本号唯一来源：本文件
         versionCode = 4
         versionName = "0.2.0-beta.3"
