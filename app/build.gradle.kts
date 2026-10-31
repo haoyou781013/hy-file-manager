@@ -83,5 +83,5 @@ dependencies {
     implementation("org.tukaani:xz:1.10")
     implementation("com.github.luben:zstd-jni:1.5.5-11@aar")
     // RAR 解压（RAR 压缩格式专有，无开源压缩实现）
-    implementation("com.github.junrar:junrar:7.5.5")
+    implementation("com.github.junrar:junrar:8.1.2")
 }
