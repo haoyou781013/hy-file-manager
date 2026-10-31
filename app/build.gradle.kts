@@ -4,11 +4,11 @@ plugins {
 
 android {
     namespace = "com.aliya.hyfilemgr"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.aliya.hyfilemgr"
-        minSdk = 21
+        minSdk = 23   // media3 1.11.1 要求
         targetSdk = 34   // 保持 34：升 36 会强制 edge-to-edge、onBackPressed 失效等
         // 版本号唯一来源：本文件
         versionCode = 4
@@ -67,11 +67,11 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
 
     // 文件管理内置播放器（从 HY_VQ 剥离）
-    implementation("androidx.media3:media3-exoplayer:1.4.1")
-    implementation("androidx.media3:media3-ui:1.4.1")
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-ui:1.11.1")
 
     // 播放器网络数据源（PlayerCore 需要）
-    implementation("androidx.media3:media3-datasource-okhttp:1.4.1")
+    implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
 
     // ZIP 加密解出（从 HY_VQ 剥离）
