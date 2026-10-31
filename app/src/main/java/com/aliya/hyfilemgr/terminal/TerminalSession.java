@@ -38,6 +38,10 @@ public class TerminalSession {
     private OutputStream stdin;
     private final Handler main = new Handler(Looper.getMainLooper());
     private volatile boolean running;
+    /** 用户主动关闭的标志：区分「进程自己退出」与「我们关掉的」 */
+    private volatile boolean closedByUser;
+    /** 读线程引用，用于 close 时 interrupt */
+    private Thread readerThread;
 
     private final Callback callback;
     private final String workDir;
@@ -54,13 +58,13 @@ public class TerminalSession {
     /** 启动 shell 会话 */
     public void start() {
         if (running) return;
+        closedByUser = false;
         try {
             ProcessBuilder pb = new ProcessBuilder(SHELL);
             pb.redirectErrorStream(true);   // stderr 并入 stdout，顺序才正确
             if (workDir != null && new File(workDir).isDirectory()) {
                 pb.directory(new File(workDir));
             }
-            // 环境变量：尽量贴近 Termux 的可用环境
             java.util.Map<String, String> env = pb.environment();
             String path = "/system/bin:/system/xbin:/vendor/bin:/sbin:/product/bin";
             env.put("PATH", path);
@@ -68,42 +72,60 @@ public class TerminalSession {
             env.put("TERM", "xterm-256color");
             env.put("LANG", "zh_CN.UTF-8");
             env.put("PS1", "\\$ ");
-            // 交互式 + 无 profile，避免打印无关启动信息
             env.put("ENV", "");
 
             process = pb.start();
             stdin = process.getOutputStream();
             running = true;
 
-            // 读线程：持续把输出送回主线程
-            Thread reader = new Thread(() -> {
-                byte[] buf = new byte[4096];
-                int n;
-                try (InputStream is = process.getInputStream()) {
-                    while ((n = is.read(buf)) > 0) {
-                        if (n == 0) continue;
-                        String s = new String(buf, 0, n, StandardCharsets.UTF_8);
-                        main.post(() -> callback.onOutput(s));
-                    }
-                } catch (IOException ignored) {
-                } finally {
-                    running = false;
-                    int code = -1;
-                    try {
-                        code = process.waitFor();
-                    } catch (Throwable ignored) {
-                    }
-                    final int fc = code;
-                    main.post(() -> callback.onExit(fc));
-                }
-            }, "term-reader");
-            reader.setDaemon(true);
-            reader.start();
+            readerThread = new Thread(this::readLoop, "term-reader");
+            readerThread.setDaemon(true);
+            readerThread.start();
 
         } catch (Throwable t) {
             running = false;
             main.post(() -> callback.onOutput("\n[启动失败] " + t + "\n"));
             main.post(() -> callback.onExit(-1));
+        }
+    }
+
+    /**
+     * 读循环。
+     *
+     * <p>用 {@link InputStreamReader} 而不是「byte[] 转 String」：
+     * 后者会在 UTF-8 多字节字符跨越 4096 边界时把汉字切成两半，
+     * 输出成乱码（中文/emoji 常见）。InputStreamReader 内部维护
+     * 跨块状态，天然正确。</p>
+     */
+    private void readLoop() {
+        final Process proc = process;
+        if (proc == null) return;
+        char[] buf = new char[2048];
+        try (java.io.Reader is = new java.io.InputStreamReader(
+                proc.getInputStream(), StandardCharsets.UTF_8)) {
+            int n;
+            while ((n = is.read(buf)) > 0) {
+                if (closedByUser) break;
+                String s = new String(buf, 0, n);
+                main.post(() -> {
+                    if (!closedByUser) callback.onOutput(s);
+                });
+            }
+        } catch (IOException ignored) {
+        } finally {
+            running = false;
+            // 用户主动关闭时不要回调 onExit：否则界面已经关了，
+            // 还会弹一个「进程退出，退出码 -1」的提示
+            if (closedByUser) return;
+            int code = -1;
+            try {
+                code = proc.waitFor();
+            } catch (Throwable ignored) {
+            }
+            final int fc = code;
+            main.post(() -> {
+                if (!closedByUser) callback.onExit(fc);
+            });
         }
     }
 
@@ -127,18 +149,37 @@ public class TerminalSession {
         send("\u0003");
     }
 
-    /** 结束会话 */
+    /** 结束会话：先礼后兵（destroy → 等待 → destroyForcibly），并中断读线程 */
     public void close() {
+        closedByUser = true;
         running = false;
         try {
             if (stdin != null) stdin.close();
         } catch (IOException ignored) {
         }
-        try {
-            if (process != null) process.destroy();
-        } catch (Throwable ignored) {
-        }
+        final Process proc = process;
         process = null;
         stdin = null;
+        if (proc != null) {
+            try {
+                proc.destroy();
+                // 给 300ms 体面退出机会；超时强杀，避免子进程成孤儿
+                if (!proc.waitFor(300, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    proc.destroyForcibly();
+                }
+            } catch (Throwable ignored) {
+                try {
+                    proc.destroyForcibly();
+                } catch (Throwable ignored2) {
+                }
+            }
+        }
+        // 中断阻塞在 read() 上的读线程（此处无法真正唤醒系统调用，
+        // 但能让它在下次循环时因 closedByUser 退出）
+        Thread rt = readerThread;
+        readerThread = null;
+        if (rt != null) {
+            rt.interrupt();
+        }
     }
 }

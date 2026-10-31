@@ -350,6 +350,11 @@ public class TerminalPanel {
 
     /** 发送 Ctrl+C（供共享顶栏调用） */
     public void sendInterruptPublic() {
+        if (termView != null) {
+            // 本地也要收尾：否则屏幕上留着半截命令行，
+            // 后续输入会接在残行后面，显示与实际发送内容错位
+            termView.newlineEcho();
+        }
         if (session != null) session.sendInterrupt();
     }
 

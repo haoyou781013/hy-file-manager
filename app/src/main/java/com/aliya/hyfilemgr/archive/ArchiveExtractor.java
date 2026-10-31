@@ -48,6 +48,8 @@ public final class ArchiveExtractor {
         public String topName;
         /** 是否因文件名乱码而用 GBK 重解过 */
         public boolean gbkRetried;
+        /** 因不安全路径（Zip Slip 防护）被跳过的条目名 */
+        public final java.util.List<String> skipped = new java.util.ArrayList<>();
         static Result fail(String e) {
             Result r = new Result();
             r.ok = false;
@@ -169,8 +171,10 @@ public final class ArchiveExtractor {
         try {
             net.lingala.zip4j.ZipFile zf =
                     new net.lingala.zip4j.ZipFile(src, password.toCharArray());
+            Guard guard = new Guard(destDir);
             java.util.List<net.lingala.zip4j.model.FileHeader> heads = zf.getFileHeaders();
             for (net.lingala.zip4j.model.FileHeader h : heads) {
+                guard.countEntry();
                 if (h.isDirectory()) continue;
                 File out = safeChild(destDir, h.getFileName());
                 if (out == null) continue;
@@ -179,7 +183,7 @@ public final class ArchiveExtractor {
                     p.mkdirs();
                 try (InputStream is = zf.getInputStream(h);
                      OutputStream os = new FileOutputStream(out)) {
-                    copy(is, os);
+                    copy(is, os, guard);
                 }
                 n++;
                 if (progress != null) progress.onEntry(h.getFileName(), n);
@@ -198,9 +202,11 @@ public final class ArchiveExtractor {
     private static Result extract7z(File src, File destDir, Progress progress) throws IOException {
         int n = 0;
         try (SevenZFile sz = new SevenZFile(src)) {
+            Guard guard = new Guard(destDir);
             SevenZArchiveEntry entry;
             byte[] buf = new byte[8192];
             while ((entry = sz.getNextEntry()) != null) {
+                guard.countEntry();
                 if (entry.isDirectory()) {
                     File d = safeChild(destDir, entry.getName());
                     if (d != null) //noinspection ResultOfMethodCallIgnored
@@ -358,9 +364,17 @@ public final class ArchiveExtractor {
      */
     private static int drainArchive(ArchiveInputStream in, File destDir,
                                     Progress progress, boolean gbk) throws IOException {
+        return drainArchive(in, destDir, progress, gbk, null);
+    }
+
+    private static int drainArchive(ArchiveInputStream in, File destDir,
+                                    Progress progress, boolean gbk,
+                                    java.util.List<String> skippedSink) throws IOException {
         int n = 0;
+        Guard guard = new Guard(destDir);
         ArchiveEntry entry;
         while ((entry = in.getNextEntry()) != null) {
+            guard.countEntry();
             if (!in.canReadEntryData(entry)) continue;
             String name = entry.getName();
             if (gbk) name = fixGbkName(name);
@@ -371,12 +385,16 @@ public final class ArchiveExtractor {
                 continue;
             }
             File out = safeChild(destDir, name);
-            if (out == null) continue;
+            if (out == null) {
+                // 不安全路径（Zip Slip 防护命中）：不静默丢弃，记下条目名
+                if (skippedSink != null && skippedSink.size() < 50) skippedSink.add(name);
+                continue;
+            }
             File p = out.getParentFile();
             if (p != null) //noinspection ResultOfMethodCallIgnored
                 p.mkdirs();
             try (OutputStream os = new FileOutputStream(out)) {
-                copy(in, os);
+                copy(in, os, guard);
             }
             n++;
             if (progress != null) progress.onEntry(name, n);
@@ -514,10 +532,66 @@ public final class ArchiveExtractor {
         return false;
     }
 
+    /**
+     * 解压配额守卫：防止 zip bomb（高压缩比 + 巨量条目）。
+     *
+     * <p>仅作用于**解压**。内部浏览只读中央目录、不解压数据流，
+     * 因此不存在被炸弹打爆内存的问题，无需在此约束。</p>
+     *
+     * <p>为什么不能用 entry.getSize() 判：该字段可被伪造（可为 -1 或谎报），
+     * 必须按**实际写出字节数**累计。</p>
+     */
+    static final class Guard {
+        /** 条目数上限 */
+        static final int MAX_ENTRIES = 200_000;
+        /** 单文件解压后上限（1GB） */
+        static final long MAX_ENTRY_BYTES = 1L << 30;
+        /** 总量上限：4GB 与「可用空间 80%」取小 */
+        static final long MAX_TOTAL_FLOOR = 4L << 30;
+
+        int entries;
+        long total;
+        final long totalCap;
+
+        Guard(File destDir) {
+            long usable = destDir == null ? 0 : destDir.getUsableSpace();
+            long byDisk = usable > 0 ? (long) (usable * 0.8) : MAX_TOTAL_FLOOR;
+            this.totalCap = Math.min(MAX_TOTAL_FLOOR, byDisk);
+        }
+
+        void countEntry() throws IOException {
+            if (++entries > MAX_ENTRIES) {
+                throw new IOException("压缩包条目数超过上限 " + MAX_ENTRIES + "，已中止");
+            }
+        }
+
+        void addBytes(long n) throws IOException {
+            total += n;
+            if (total > totalCap) {
+                throw new IOException("解压后总大小超过上限 "
+                        + (totalCap / (1024 * 1024)) + "MB，已中止");
+            }
+        }
+    }
+
+    /** 带配额的 copy：按实际写出字节累计，超限即断 */
     private static void copy(InputStream in, OutputStream out) throws IOException {
+        copy(in, out, null);
+    }
+
+    private static void copy(InputStream in, OutputStream out, Guard guard) throws IOException {
         byte[] buf = new byte[8192];
         int n;
-        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        long written = 0;
+        while ((n = in.read(buf)) > 0) {
+            out.write(buf, 0, n);
+            written += n;
+            if (written > Guard.MAX_ENTRY_BYTES) {
+                throw new IOException("单个文件解压后超过 "
+                        + (Guard.MAX_ENTRY_BYTES / (1024 * 1024)) + "MB，已中止");
+            }
+            if (guard != null) guard.addBytes(n);
+        }
     }
 
     private static String ext(String name) {

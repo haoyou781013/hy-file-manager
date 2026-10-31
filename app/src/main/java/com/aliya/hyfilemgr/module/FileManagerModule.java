@@ -120,7 +120,8 @@ public class FileManagerModule extends HyVqModule {
      *  避免多线程并发写同一目录；⋮菜单可查排队数 */
     private static final java.util.concurrent.ExecutorService TASK_QUEUE =
             java.util.concurrent.Executors.newSingleThreadExecutor();
-    private static int queuedTasks = 0;
+    private static final java.util.concurrent.atomic.AtomicInteger queuedTasks =
+            new java.util.concurrent.atomic.AtomicInteger();
     /** 分类扫描结果缓存（key=分类id，避免重复全盘扫描） */
     private static String catCacheKey = null;
     private static List<FileEntry> catCache = null;
@@ -8743,7 +8744,7 @@ public class FileManagerModule extends HyVqModule {
             popup.dismiss();
             showStorageAnalysis();
         });
-        addMenuRow(panel, queuedTasks > 0 ? "任务队列（" + queuedTasks + "）" : "任务队列",
+        addMenuRow(panel, queuedTasks.get() > 0 ? "任务队列（" + queuedTasks.get() + "）" : "任务队列",
                 R.drawable.ic_layers, v -> {
                     popup.dismiss();
                     showTaskQueue();
@@ -8777,16 +8778,24 @@ public class FileManagerModule extends HyVqModule {
     // ── 轻量任务队列：耗时操作排队串行（避免并发写冲突），⋮菜单可查 ──
 
     private void runTask(final Runnable task) {
-        queuedTasks++;
-        TASK_QUEUE.execute(() -> {
-            try {
-                task.run();
-            } catch (Throwable t) {
-                UiKit.toast(ctx, "任务失败：" + t.getMessage());
-            } finally {
-                queuedTasks--;
-            }
-        });
+        if (task == null) return;
+        // 先提交再计数：旧代码先 ++ 再 execute，若 execute 抛
+        // RejectedExecutionException（策略变更或 shutdown 后），
+        // 计数永远停在 +1，全局「队列非空」判断失效。
+        try {
+            TASK_QUEUE.execute(() -> {
+                try {
+                    task.run();
+                } catch (Throwable t) {
+                    UiKit.toast(ctx, "任务失败：" + t.getMessage());
+                } finally {
+                    queuedTasks.decrementAndGet();
+                }
+            });
+            queuedTasks.incrementAndGet();
+        } catch (Throwable submitFail) {
+            UiKit.toast(ctx, "无法提交任务：" + submitFail.getMessage());
+        }
     }
 
     /** 任务队列状态对话框（⋮菜单入口） */
@@ -8799,8 +8808,8 @@ public class FileManagerModule extends HyVqModule {
         tv.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
         tv.setLineSpacing(0, 1.3f);
         tv.setPadding(dp(4), dp(4), dp(4), dp(4));
-        tv.setText(queuedTasks > 0
-                ? "当前排队/执行中任务：" + queuedTasks + "\n粘贴/压缩/解压/搜索/分类扫描/回收站操作按顺序串行执行，完成后 toast 提示。"
+        tv.setText(queuedTasks.get() > 0
+                ? "当前排队/执行中任务：" + queuedTasks.get() + "\n粘贴/压缩/解压/搜索/分类扫描/回收站操作按顺序串行执行，完成后 toast 提示。"
                 : "无进行中任务。\n耗时操作（粘贴/压缩/解压/搜索/分类扫描/回收站）统一排队串行执行，避免并发写同一目录造成数据损坏。");
         box.addView(tv);
         LinearLayout btns = new LinearLayout(ctx);
