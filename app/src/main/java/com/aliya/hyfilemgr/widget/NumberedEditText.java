@@ -134,6 +134,8 @@ public class NumberedEditText extends AppCompatEditText {
                 int baseline = layout.getLineBaseline(line);
                 // baseline 是内容坐标，与 scrollY 同量纲，可直接比较。
                 // 用行顶/行底判断是否与可视区相交，避免 getLineHeight()（Layout 无此方法）
+                // lineTop/lineBottom/baseline 都是**内容坐标**（不含 scrollY），
+                // 与 scrollY 比较即可判断是否落在可视区
                 int lineTop = layout.getLineTop(line);
                 int lineBottom = layout.getLineBottom(line);
                 if (lineBottom >= scrollY && lineTop <= scrollY + height) {

@@ -120,6 +120,15 @@ public class FileManagerModule extends HyVqModule {
      *  避免多线程并发写同一目录；⋮菜单可查排队数 */
     private static final java.util.concurrent.ExecutorService TASK_QUEUE =
             java.util.concurrent.Executors.newSingleThreadExecutor();
+    /** 偏好落盘的专用线程：commit() 是同步 fsync，不能放 UI 线程 */
+    private static final android.os.HandlerThread PREF_THREAD =
+            new android.os.HandlerThread("hy-prefs");
+    private static final android.os.Handler PREF_HANDLER;
+    static {
+        PREF_THREAD.start();
+        PREF_HANDLER = new android.os.Handler(PREF_THREAD.getLooper());
+    }
+
     private static final java.util.concurrent.atomic.AtomicInteger queuedTasks =
             new java.util.concurrent.atomic.AtomicInteger();
     /** 分类扫描结果缓存（key=分类id，避免重复全盘扫描） */
@@ -396,29 +405,53 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 持久化浏览状态（排序 / 隐藏文件 / 双窗格路径 / 活动窗格）：切换目录与 detach 时调用 */
+    /**
+     * 持久化用户偏好。
+     *
+     * <p>官方文档（SharedPreferences.Editor）：
+     * "pending apply() calls can block the main thread during component
+     * lifecycle transitions, which is a common source of ANR errors."</p>
+     *
+     * <p>我们不把 commit 改回 apply（apply 的落盘时机不可控），
+     * 而是把 commit 放到专用 HandlerThread：
+     * 既保证同步落盘，又不在 UI 线程阻塞。</p>
+     */
     private void persistState() {
-        if (ctx == null || paneL == null || paneR == null) return;
-        // 只持久化用户偏好；路径不再保存（重启固定回存储根，保存无意义且徒增写盘）
-        StringBuilder rfb = new StringBuilder();
-        for (String path : recentFiles) rfb.append(path).append('\n');
-        // 用 commit() 同步落盘：apply() 是异步的，进程被杀时可能丢失
-        boolean ok = fmPrefs().edit()
-                .putBoolean(PREF_GRID_MODE, gridMode)
-                .putString(PREF_RECENT_FILES, rfb.toString())
-                .putInt(PREF_SORT_MODE, sortMode)
-                .putBoolean(PREF_SHOW_HIDDEN, showHidden)
-                .putBoolean(PREF_THUMBS, thumbsEnabled)
-                .putInt(PREF_DENSITY, listDensity)
-                .putInt(PREF_UI_THEME, uiTheme)
-                .putInt(PREF_UI_MODE, uiMode)
-                .putBoolean(PREF_NAV_LOCAL_OPEN, navLocalExpanded)
-                .putBoolean(PREF_NAV_TOOLS_OPEN, navToolsExpanded)
-                .putBoolean(PREF_TRASH_ENABLED, trashEnabled)
-                .putBoolean(PREF_TRASH_DEFAULT, trashDefault)
-                .putInt(PREF_TRASH_KEEP_DAYS, trashKeepDays)
-                .putInt(PREF_DPI, com.aliya.hyfilemgr.util.DpiUtils.getOverrideDpi())
-                .commit();
-        if (!ok) android.util.Log.e("HYPrefs", "persistState commit failed");
+        if (ctx == null) return;
+        // 快照：异步执行时字段可能已被主线程改动
+        final boolean fHidden = showHidden;
+        final boolean fThumbs = thumbsEnabled;
+        final boolean fGrid = gridMode;
+        final int fSort = sortMode;
+        final int fDensity = listDensity;
+        final int fTheme = uiTheme;
+        final int fMode = uiMode;
+        final boolean fTrashOn = trashEnabled;
+        final boolean fTrashDefault = trashDefault;
+        final int fTrashDays = trashKeepDays;
+        final int fDpi = com.aliya.hyfilemgr.util.DpiUtils.getOverrideDpi();
+        final java.util.ArrayList<String> fRecent = new java.util.ArrayList<>(recentFiles);
+        PREF_HANDLER.post(() -> {
+            try {
+                boolean ok = fmPrefs().edit()
+                        .putBoolean(PREF_SHOW_HIDDEN, fHidden)
+                        .putBoolean(PREF_THUMBS, fThumbs)
+                        .putBoolean(PREF_GRID_MODE, fGrid)
+                        .putInt(PREF_SORT_MODE, fSort)
+                        .putInt(PREF_DENSITY, fDensity)
+                        .putInt(PREF_UI_THEME, fTheme)
+                        .putInt(PREF_UI_MODE, fMode)
+                        .putBoolean(PREF_TRASH_ENABLED, fTrashOn)
+                        .putBoolean(PREF_TRASH_DEFAULT, fTrashDefault)
+                        .putInt(PREF_TRASH_KEEP_DAYS, fTrashDays)
+                        .putInt(PREF_DPI, fDpi)
+                        .putString(PREF_RECENT_FILES, android.text.TextUtils.join("\n", fRecent))
+                        .commit();
+                if (!ok) android.util.Log.e("HYPrefs", "persistState commit failed");
+            } catch (Throwable t) {
+                android.util.Log.e("HYPrefs", "persistState error", t);
+            }
+        });
     }
 
     // ── 视图 ──
@@ -9012,7 +9045,9 @@ public class FileManagerModule extends HyVqModule {
     private static final String[][] COMPRESS_FORMATS = {
             // 扩展名 / 显示名 / 支持密码 / 支持等级 / 可否创建
             {"zip", "ZIP", "1", "1", "1"},
-            {"7z",  "7Z",  "1", "1", "1"},
+            // 7z：密码支持（commons-compress 1.26 的 SevenZOutputFile 可写 AES256）
+            //     但**不支持压缩等级**——LZMA2 没有 level 参数，SevenZArchiveEntry 也无此字段
+            {"7z",  "7Z",  "1", "0", "1"},
             {"tar", "TAR", "0", "0", "1"},
             {"tar.gz", "TAR.GZ", "0", "0", "1"},
             {"gz",  "GZ",  "0", "0", "1"},
@@ -9265,7 +9300,7 @@ public class FileManagerModule extends HyVqModule {
                         || "7z".equals(ext)) {
                     final boolean tarOk;
                     try {
-                        tarOk = compressWithCommons(src, out, ext, single);
+                        tarOk = compressWithCommons(src, out, ext, single, password);
                     } catch (Throwable tt) {
                         //noinspection ResultOfMethodCallIgnored
                         out.delete();
@@ -9352,9 +9387,9 @@ public class FileManagerModule extends HyVqModule {
      *
      * @param single 目录场景下是否把目录自身作为顶层条目
      */
-    private boolean compressWithCommons(File src, File out, String ext, boolean single)
-            throws java.io.IOException {
-        if ("7z".equals(ext)) return compress7z(src, out, single);
+    private boolean compressWithCommons(File src, File out, String ext, boolean single,
+                                        String password) throws java.io.IOException {
+        if ("7z".equals(ext)) return compress7z(src, out, single, password);
         if ("gz".equals(ext) && !src.isDirectory()) {
             // 单文件 gzip（无归档结构）
             try (java.io.InputStream in = new java.io.BufferedInputStream(
@@ -9397,9 +9432,14 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 7z 压缩（commons-compress SevenZOutputFile；zip4j 不支持写 7z） */
-    private boolean compress7z(File src, File out, boolean single) throws java.io.IOException {
+    private boolean compress7z(File src, File out, boolean single, String password)
+            throws java.io.IOException {
+        // commons-compress 1.23.0+ 的 SevenZOutputFile 支持写加密 7z。
+        // 旧版（我们曾用的 1.20）只有解码器，所以当初误判为「不支持写加密」。
+        // 1.26.0 起 AES256 加密可用。
+        char[] pwd = (password == null || password.isEmpty()) ? null : password.toCharArray();
         try (org.apache.commons.compress.archivers.sevenz.SevenZOutputFile sz =
-                     new org.apache.commons.compress.archivers.sevenz.SevenZOutputFile(out)) {
+                     new org.apache.commons.compress.archivers.sevenz.SevenZOutputFile(out, pwd)) {
             if (src.isDirectory()) {
                 add7zDir(sz, src, single ? src.getName() : "");
             } else {

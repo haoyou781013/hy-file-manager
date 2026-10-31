@@ -547,9 +547,18 @@ public final class ArchiveExtractor {
         static final long MAX_ENTRY_BYTES = 1L << 30;
         /** 总量上限：4GB 与「可用空间 80%」取小 */
         static final long MAX_TOTAL_FLOOR = 4L << 30;
+        /**
+         * 最低压缩比（解压后字节 / 压缩字节）。
+         *
+         * <p>参考 Apache POI ZipSecureFile 的 minInflateRatio=0.01（1%）。
+         * 手机端取 2% 略宽松，避免误杀全零镜像 / SQLite 备份等合法高压缩数据。</p>
+         */
+        static final double MIN_INFLATE_RATIO = 0.02;
 
         int entries;
         long total;
+        /** 已读入的压缩字节数（用于压缩比判定） */
+        long compressedBytes;
         final long totalCap;
 
         Guard(File destDir) {
@@ -566,6 +575,14 @@ public final class ArchiveExtractor {
 
         void addBytes(long n) throws IOException {
             total += n;
+            // 压缩比检测：只在已解出足够数据后判断（小文件比​例无意义）
+            if (total > (1L << 20) && compressedBytes > 0) {
+                double ratio = (double) total / compressedBytes;
+                if (ratio > 1.0 / MIN_INFLATE_RATIO) {
+                    throw new IOException("压缩比异常（" + Math.round(ratio) +
+                            ":1），疑似压缩炸弹，已中止");
+                }
+            }
             if (total > totalCap) {
                 throw new IOException("解压后总大小超过上限 "
                         + (totalCap / (1024 * 1024)) + "MB，已中止");

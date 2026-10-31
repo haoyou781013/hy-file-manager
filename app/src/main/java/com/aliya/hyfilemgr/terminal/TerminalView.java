@@ -166,10 +166,11 @@ public class TerminalView extends ScrollView {
         return true;   // 让系统认为这是可编辑控件
     }
 
+    /** 是否正处于 IME 回调栈内（commitText 等） */
+    private boolean inImeCallback;
+    /** 是否已投递过延后的重绘 */
+    private boolean repaintQueued;
     /** IME 批处理深度：>0 时暂停重绘，避免 setText 打断 IME 的提交序列 */
-    private int batchDepth;
-    /** commitText 刚处理过回车，需忽略紧随其后的 KEYCODE_ENTER */
-    private boolean suppressNextEnter;
 
     @Override
     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
@@ -182,102 +183,111 @@ public class TerminalView extends ScrollView {
         if (ic == null) {
             // 用一个哑 Editable 承载 BaseInputConnection 的必需参数，
             // 但它的内容不会被读取，所有输入都直接转发给 sink。
-            ic = new BaseInputConnection(this, false) {
-                @Override
-                public Editable getEditable() {
-                    // 真实 Editable：父类 beginBatchEdit/setComposingText 等
-                    // 都会用它，null 会崩。内容不参与显示，仅供 IME 协议。
-                    return icBuffer;
-                }
-
+            // ── 与 Termux 完全一致的模型 ──
+            // 参考 terminal-view/.../TerminalView.java（termux-app）
+            //   ic = new BaseInputConnection(this, true)
+            //   getEditable() 不覆盖，走父类内部 SpannableStringBuilder
+            //   commitText: super.commitText → 读取整个 getEditable() → 发送 → clear
+            //
+            // 为什么这样能修掉 cldcd/lls/lscd：
+            // 之前我们「自建 icBuffer + 用 commitText 入参送 sink」，
+            // 而且 sink 内部会同步 echo → repaint → inner.setText()。
+            // TextView 内容一变，系统对焦点 View 触发 restartInput，
+            // InputConnection 被断开重建，IME 把缓存中的字符再发一遍 →
+            // 字符重复且错序。batchDepth / suppressNextEnter 只是掩盖症状。
+            //
+            // Termux 的做法把「提交」与「显示」解耦：同一 batch 内多次 commit
+            // 先合并进父类 buffer，再由一次 sendTextToTerminal 整体送出，
+            // 顺序由 buffer 本身保证，天然不会错序。
+            ic = new BaseInputConnection(this, true) {
                 @Override
                 public boolean commitText(CharSequence text, int newCursorPosition) {
-                    // ⚠️ 顺序很重要：**先提交，最后才清 buffer**。
-                    //
-                    // 旧代码先 icBuffer.clear() 再 sink.onText()，
-                    // 而 onText 会 echo → repaint → inner.setText(...)。
-                    // inner 的文本一改，IME 认为内容被外部修改，
-                    // 会在同一次批处理里"补交"还没落地的字符 →
-                    // 输入 "cd" 变成 "cbd"（顺序错乱，不是简单重复）。
-                    //
-                    // 反过来（先提交后清空）IME 看到的是一次原子的内容变更。
-                    if (sink != null && text != null) {
-                        String s2 = text.toString();
-                        if (!s2.isEmpty()) {
-                            if (s2.contains("\n")) {
-                                String[] parts = s2.split("\n", -1);
-                                for (int i = 0; i < parts.length; i++) {
-                                    if (!parts[i].isEmpty()) sink.onText(parts[i]);
-                                    if (i < parts.length - 1) sink.onEnter();
-                                }
-                                // 标记：本次提交已经处理过回车。
-                                // 部分输入法会紧接着再发一个 KEYCODE_ENTER，
-                                // 若不拦截，onEnter 会执行两次 → 多发一个换行，
-                                // shell 多吐一个提示符，后续输入视觉上接在上一行末尾
-                                // （表现为 "lscd" 这种粘连）。
-                                suppressNextEnter = true;
-                            } else {
-                                sink.onText(s2);
-                            }
+                    // 先让父类写进它自己的 buffer（保留 IME 协议状态）
+                    super.commitText(text, newCursorPosition);
+                    Editable e = getEditable();
+                    if (e != null && e.length() > 0) {
+                        inImeCallback = true;
+                        try {
+                            flushBuffer(e);
+                        } finally {
+                            inImeCallback = false;
                         }
+                        e.clear();
                     }
-                    icBuffer.clear();
                     return true;
                 }
 
                 @Override
-                public boolean beginBatchEdit() {
-                    batchDepth++;
-                    return super.beginBatchEdit();
-                }
-
-                @Override
-                public boolean endBatchEdit() {
-                    if (batchDepth > 0) batchDepth--;
-                    boolean r = super.endBatchEdit();
-                    if (batchDepth == 0 && repaintPending) {
-                        repaintPending = false;
-                        repaint();
-                    }
-                    return r;
-                }
-
-                @Override
-                public boolean sendKeyEvent(KeyEvent event) {
-                    return handleKey(event);
-                }
-
-                @Override
-                public boolean deleteSurroundingText(int beforeLength, int afterLength) {
-                    // 软键盘退格走这里
-                    for (int i = 0; i < beforeLength; i++) {
-                        if (sink != null) sink.onBackspace();
+                public boolean finishComposingText() {
+                    super.finishComposingText();
+                    // 部分 IME（手写/日文）只 setComposingText + finishComposingText，
+                    // 不发 commitText，这里把残留内容补发出去。
+                    Editable e = getEditable();
+                    if (e != null && e.length() > 0) {
+                        inImeCallback = true;
+                        try {
+                            flushBuffer(e);
+                        } finally {
+                            inImeCallback = false;
+                        }
+                        e.clear();
                     }
                     return true;
                 }
 
                 @Override
                 public boolean setComposingText(CharSequence text, int newCursorPosition) {
-                    // 组词阶段：只维护 icBuffer 供 IME 读取，不提交给 sink。
-                    // 提交统一由 commitText 负责，避免重复发送。
-                    icBuffer.clear();
-                    if (text != null) icBuffer.append(text);
-                    return true;
+                    // 组词阶段只维护父类 buffer，不发送
+                    return super.setComposingText(text, newCursorPosition);
                 }
 
                 @Override
-                public boolean finishComposingText() {
-                    // 只清理缓冲，**不再提交**。
-                    // commitText 已经在提交时把字符送给 sink；若这里再提交
-                    // 一次 icBuffer 的残留内容，每个字符会被发送两次
-                    // （表现为输入 "ls" 得到 "lls"）。
-                    // icBuffer 仅作为 IME 协议载体，不承担提交职责。
-                    icBuffer.clear();
-                    return true;
+                public boolean deleteSurroundingText(int beforeLength, int afterLength) {
+                    // Termux 的做法：转成 KEYCODE_DEL 逐个发送，而不是直接调 sink。
+                    // 原因：三星等键盘开拼写检查时会一次发 leftLength>1，
+                    // 直连 sink 会绕过 IME 的状态机。
+                    for (int i = 0; i < beforeLength; i++) {
+                        sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,
+                                KeyEvent.KEYCODE_DEL));
+                        sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,
+                                KeyEvent.KEYCODE_DEL));
+                    }
+                    if (afterLength > 0) {
+                        return true;
+                    }
+                    Editable e = getEditable();
+                    return e != null;
+                }
+
+                @Override
+                public boolean sendKeyEvent(KeyEvent event) {
+                    return handleKey(event);
                 }
             };
         }
         return ic;
+    }
+
+    /**
+     * 把 IME buffer 的内容整体送给 sink（Termux 的 sendTextToTerminal）。
+     *
+     * <p>按内容拆行：普通字符走 onText，换行走 onEnter。
+     * 关键点：**重绘延后到下一个消息循环**，不在 InputConnection
+     * 回调栈内调 setText —— 否则会触发系统 restartInput，
+     * InputConnection 被重建，IME 重发缓存字符（cldcd 的根因）。</p>
+     */
+    private void flushBuffer(CharSequence buf) {
+        if (buf == null || buf.length() == 0 || sink == null) return;
+        String s2 = buf.toString().replace("\r", "");
+        int start = 0;
+        for (int i = 0; i < s2.length(); i++) {
+            if (s2.charAt(i) == '\n') {
+                if (i > start) sink.onText(s2.substring(start, i));
+                sink.onEnter();
+                start = i + 1;
+            }
+        }
+        if (start < s2.length()) sink.onText(s2.substring(start));
     }
 
     // ── 物理键盘 ──
@@ -292,14 +302,7 @@ public class TerminalView extends ScrollView {
         if (event == null || sink == null) return false;
         int code = event.getKeyCode();
         if (code == KeyEvent.KEYCODE_ENTER) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                if (suppressNextEnter) {
-                    // 上一次 commitText 已经触发过 onEnter，忽略这次重复
-                    suppressNextEnter = false;
-                    return true;
-                }
-                sink.onEnter();
-            }
+            if (event.getAction() == KeyEvent.ACTION_DOWN) sink.onEnter();
             return true;
         }
         if (code == KeyEvent.KEYCODE_DEL) {
@@ -406,15 +409,19 @@ public class TerminalView extends ScrollView {
         inner.setText(all.toString());
     }
 
-    /** 批处理期间挂起的重绘请求 */
-    private boolean repaintPending;
 
     private void repaint() {
-        // IME 正在批处理（beginBatchEdit..endBatchEdit）时不要 setText：
-        // 中途改写内容会让 IME 认为文本被外部修改，打乱它自己的提交序列 →
-        // 输入 "cd" 变成 "cbd"（顺序错乱）。
-        if (batchDepth > 0) {
-            repaintPending = true;
+        // 若正处于 IME 回调栈内（commitText/deleteSurroundingText 等），
+        // 直接 setText 会触发 restartInput → IME 重发缓存字符。
+        // 统一改为投递到队列尾，让回调栈先返回。
+        if (inImeCallback) {
+            if (!repaintQueued) {
+                repaintQueued = true;
+                post(() -> {
+                    repaintQueued = false;
+                    repaint();
+                });
+            }
             return;
         }
         StringBuilder all = new StringBuilder(flushed);
