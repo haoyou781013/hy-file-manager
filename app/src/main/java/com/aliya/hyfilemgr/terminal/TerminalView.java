@@ -168,6 +168,8 @@ public class TerminalView extends ScrollView {
 
     /** IME 批处理深度：>0 时暂停重绘，避免 setText 打断 IME 的提交序列 */
     private int batchDepth;
+    /** commitText 刚处理过回车，需忽略紧随其后的 KEYCODE_ENTER */
+    private boolean suppressNextEnter;
 
     @Override
     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
@@ -208,6 +210,12 @@ public class TerminalView extends ScrollView {
                                     if (!parts[i].isEmpty()) sink.onText(parts[i]);
                                     if (i < parts.length - 1) sink.onEnter();
                                 }
+                                // 标记：本次提交已经处理过回车。
+                                // 部分输入法会紧接着再发一个 KEYCODE_ENTER，
+                                // 若不拦截，onEnter 会执行两次 → 多发一个换行，
+                                // shell 多吐一个提示符，后续输入视觉上接在上一行末尾
+                                // （表现为 "lscd" 这种粘连）。
+                                suppressNextEnter = true;
                             } else {
                                 sink.onText(s2);
                             }
@@ -284,7 +292,14 @@ public class TerminalView extends ScrollView {
         if (event == null || sink == null) return false;
         int code = event.getKeyCode();
         if (code == KeyEvent.KEYCODE_ENTER) {
-            if (event.getAction() == KeyEvent.ACTION_DOWN) sink.onEnter();
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (suppressNextEnter) {
+                    // 上一次 commitText 已经触发过 onEnter，忽略这次重复
+                    suppressNextEnter = false;
+                    return true;
+                }
+                sink.onEnter();
+            }
             return true;
         }
         if (code == KeyEvent.KEYCODE_DEL) {
@@ -447,7 +462,14 @@ public class TerminalView extends ScrollView {
     /** 追加输出并自动滚到底部 */
     public void append(String text) {
         // shell 输出直接进 flushed，末尾补提示符 + 光标
-        flushed.append(text);
+        if (text != null && !text.isEmpty()) {
+            flushed.append(text);
+            // 输出末尾若没有换行，提示符会和最后一行输出粘连
+            // （ls 之后行缓冲看似带了 ls 前缀，实为上一行的残留视觉）
+            if (flushed.length() > 0 && flushed.charAt(flushed.length() - 1) != '\n') {
+                flushed.append('\n');
+            }
+        }
         // 输出上限：超长会话（logcat / find /）会造成内存线性增长
         // 并让每次 repaint 的 O(n) 复制越来越慢，最终卡死
         if (flushed.length() > MAX_SCREEN_CHARS) {
