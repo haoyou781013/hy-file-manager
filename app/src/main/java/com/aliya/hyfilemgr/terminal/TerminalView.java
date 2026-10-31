@@ -294,11 +294,20 @@ public class TerminalView extends ScrollView {
         inner.setFocusableInTouchMode(true);
         inner.requestFocus();
 
-        // 选中当前位置的一个词，触发系统 CAB（复制/全选菜单）
-        CharSequence txt = inner.getText();
-        if (txt != null && txt.length() > 0) {
-            android.text.Selection.setSelection(inner.getEditableText(), 0, txt.length());
+        // TextView 的 getText() 返回的是普通 String（不可变），
+        // getEditableText() 对它返回 null → Selection.setSelection(null) 必崩。
+        // 必须先塞一个 SpannableString 进去，才能设置选区。
+        CharSequence cur = inner.getText();
+        String plain = cur == null ? "" : cur.toString();
+        if (!plain.isEmpty()) {
+            android.text.SpannableString ss = new android.text.SpannableString(plain);
+            inner.setText(ss, android.widget.TextView.BufferType.SPANNABLE);
+            try {
+                android.text.Selection.setSelection(ss, 0, ss.length());
+            } catch (Throwable ignored) {
+            }
         }
+        CharSequence txt = plain;
         android.content.ClipboardManager cm = (android.content.ClipboardManager)
                 getContext().getSystemService(Context.CLIPBOARD_SERVICE);
         if (cm != null && txt != null && txt.length() > 0) {
@@ -314,6 +323,14 @@ public class TerminalView extends ScrollView {
         // 3 秒后自动退出选择模式，恢复输入能力
         postDelayed(() -> {
             if (inner == null) return;
+            // 清掉选区，避免退出后仍高亮
+            try {
+                CharSequence c = inner.getText();
+                if (c instanceof android.text.Spannable) {
+                    android.text.Selection.removeSelection((android.text.Spannable) c);
+                }
+            } catch (Throwable ignored) {
+            }
             inner.setTextIsSelectable(false);
             inner.setFocusable(false);
             inner.setFocusableInTouchMode(false);
