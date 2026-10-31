@@ -3500,15 +3500,6 @@ public class FileManagerModule extends HyVqModule {
                 SHOW_SAF_MOUNTS, v -> {
                     openSafAuthorize();
                 });
-        // 内嵌模式：返回主设置页
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setGravity(Gravity.END);
-        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnsLp.topMargin = dp(12);
-        box.addView(btns, btnsLp);
-        btns.addView(textButton("返回", v -> showSettingsPage()));
-        btns.addView(textButton("关闭", v -> closeSettingsEmbed()));
         return box;
     }
 
@@ -4014,15 +4005,6 @@ public class FileManagerModule extends HyVqModule {
                 applyDensity(sb.getProgress() + 1);
             }
         });
-        // 内嵌模式：返回主设置页
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setGravity(Gravity.END);
-        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnsLp.topMargin = dp(12);
-        box.addView(btns, btnsLp);
-        btns.addView(textButton("返回", v -> showSettingsPage()));
-        btns.addView(textButton("关闭", v -> closeSettingsEmbed()));
         return box;
     }
 
@@ -4268,15 +4250,6 @@ public class FileManagerModule extends HyVqModule {
         box.addView(trashHeader, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         box.addView(trashBox);
-        // 内嵌模式：返回主设置页
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setGravity(Gravity.END);
-        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnsLp.topMargin = dp(12);
-        box.addView(btns, btnsLp);
-        btns.addView(textButton("返回", v -> showSettingsPage()));
-        btns.addView(textButton("关闭", v -> closeSettingsEmbed()));
         return box;
     }
 

@@ -166,6 +166,9 @@ public class TerminalView extends ScrollView {
         return true;   // 让系统认为这是可编辑控件
     }
 
+    /** IME 批处理深度：>0 时暂停重绘，避免 setText 打断 IME 的提交序列 */
+    private int batchDepth;
+
     @Override
     public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT
@@ -187,7 +190,15 @@ public class TerminalView extends ScrollView {
 
                 @Override
                 public boolean commitText(CharSequence text, int newCursorPosition) {
-                    icBuffer.clear();
+                    // ⚠️ 顺序很重要：**先提交，最后才清 buffer**。
+                    //
+                    // 旧代码先 icBuffer.clear() 再 sink.onText()，
+                    // 而 onText 会 echo → repaint → inner.setText(...)。
+                    // inner 的文本一改，IME 认为内容被外部修改，
+                    // 会在同一次批处理里"补交"还没落地的字符 →
+                    // 输入 "cd" 变成 "cbd"（顺序错乱，不是简单重复）。
+                    //
+                    // 反过来（先提交后清空）IME 看到的是一次原子的内容变更。
                     if (sink != null && text != null) {
                         String s2 = text.toString();
                         if (!s2.isEmpty()) {
@@ -202,7 +213,25 @@ public class TerminalView extends ScrollView {
                             }
                         }
                     }
+                    icBuffer.clear();
                     return true;
+                }
+
+                @Override
+                public boolean beginBatchEdit() {
+                    batchDepth++;
+                    return super.beginBatchEdit();
+                }
+
+                @Override
+                public boolean endBatchEdit() {
+                    if (batchDepth > 0) batchDepth--;
+                    boolean r = super.endBatchEdit();
+                    if (batchDepth == 0 && repaintPending) {
+                        repaintPending = false;
+                        repaint();
+                    }
+                    return r;
                 }
 
                 @Override
@@ -362,7 +391,17 @@ public class TerminalView extends ScrollView {
         inner.setText(all.toString());
     }
 
+    /** 批处理期间挂起的重绘请求 */
+    private boolean repaintPending;
+
     private void repaint() {
+        // IME 正在批处理（beginBatchEdit..endBatchEdit）时不要 setText：
+        // 中途改写内容会让 IME 认为文本被外部修改，打乱它自己的提交序列 →
+        // 输入 "cd" 变成 "cbd"（顺序错乱）。
+        if (batchDepth > 0) {
+            repaintPending = true;
+            return;
+        }
         StringBuilder all = new StringBuilder(flushed);
         if (promptStr != null) all.append(promptStr);
         all.append(lineBuf);
