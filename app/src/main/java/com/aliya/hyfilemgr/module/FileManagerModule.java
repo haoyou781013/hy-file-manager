@@ -3614,12 +3614,16 @@ public class FileManagerModule extends HyVqModule {
         // 右侧：换成终端操作
         if (topBarFileActions != null) topBarFileActions.setVisibility(View.GONE);
         if (topBarTermActions != null && topBarTermActions.getChildCount() == 0) {
+            topBarTermActions.addView(textButton("复制", v -> {
+                if (terminalPanel != null) terminalPanel.copyAllPublic();
+            }));
             topBarTermActions.addView(textButton("清屏", v -> {
                 if (terminalPanel != null) terminalPanel.clearOutputPublic();
             }));
             topBarTermActions.addView(textButton("中断", v -> {
                 if (terminalPanel != null) terminalPanel.sendInterruptPublic();
             }));
+            topBarTermActions.addView(textButton("关闭", v -> closeTerminal()));
             topBarTermActions.setVisibility(View.VISIBLE);
         }
     }

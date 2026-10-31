@@ -342,6 +342,11 @@ public class TerminalPanel {
         return workDir;
     }
 
+    /** 复制全部输出到剪贴板（供共享顶栏调用） */
+    public void copyAllPublic() {
+        copyOutput();
+    }
+
     /** 清屏（供共享顶栏调用） */
     public void clearOutputPublic() {
         clearOutput();

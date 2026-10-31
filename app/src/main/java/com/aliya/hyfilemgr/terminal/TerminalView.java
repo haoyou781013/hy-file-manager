@@ -58,6 +58,14 @@ public class TerminalView extends ScrollView {
     private boolean atBottom = true;
     private float touchDownX, touchDownY;
     private boolean touchMoved;
+    /** 正在长按选择文本 */
+    private boolean selecting;
+    private final Runnable longPressRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!touchMoved) enterSelectionMode();
+        }
+    };
     /** 光标字符（闪烁显示/隐藏） */
     private static final String CURSOR_ON = "▏";
     private static final String CURSOR_OFF = " ";
@@ -104,27 +112,41 @@ public class TerminalView extends ScrollView {
             if (child == null) return;
             atBottom = (child.getBottom() - (sy + getHeight())) <= dp(24);
         });
+        // 长按选择：长按 400ms 且未移动 → 进入文本选择模式
+        setOnLongClickListener(v -> {
+            enterSelectionMode();
+            return true;
+        });
         setOnTouchListener((v, ev) -> {
             switch (ev.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     touchDownX = ev.getX();
                     touchDownY = ev.getY();
                     touchMoved = false;
+                    // 手动实现长按：ScrollView 的 onLongClick 会被自身滚动拦截
+                    postDelayed(longPressRunnable, android.view.ViewConfiguration
+                            .getLongPressTimeout());
                     break;
                 case MotionEvent.ACTION_MOVE:
                     // 超过触摸斜率视为滚动意图，不再当作点击
                     if (Math.abs(ev.getY() - touchDownY) > dp(8)
                             || Math.abs(ev.getX() - touchDownX) > dp(8)) {
                         touchMoved = true;
+                        removeCallbacks(longPressRunnable);
                     }
                     break;
                 case MotionEvent.ACTION_UP:
+                    removeCallbacks(longPressRunnable);
                     // 只有「没滑动过」的轻点才拉起输入法。
                     // 此前无条件 showIme() 导致上滑看历史被立刻弹键盘。
-                    if (!touchMoved) {
+                    if (!touchMoved && !selecting) {
                         requestFocus();
                         showIme();
                     }
+                    selecting = false;
+                    break;
+                case MotionEvent.ACTION_CANCEL:
+                    removeCallbacks(longPressRunnable);
                     break;
                 default:
                     break;
@@ -252,6 +274,57 @@ public class TerminalView extends ScrollView {
 
     // ── 显示 ──
 
+    /**
+     * 进入文本选择模式：把内部 TextView 临时设为可选，弹出系统选择菜单。
+     *
+     * <p>为什么必须临时切换：平时 {@code inner} 必须 {@code setTextIsSelectable(false)},
+     * 否则它会自己抢焦点，导致 InputConnection 被它拿走、软键盘输入进不了
+     * TerminalView 的 sink。只有长按时才短暂开启选择能力。</p>
+     */
+    private void enterSelectionMode() {
+        if (inner == null) return;
+        selecting = true;
+        // 先停光标闪烁并回显真实文本（去掉光标字符），否则选中的文本会带 ▏
+        cursorHandler.removeCallbacks(cursorBlink);
+        cursorVisible = false;
+        repaintNoCursor();
+
+        inner.setTextIsSelectable(true);
+        inner.setFocusable(true);
+        inner.setFocusableInTouchMode(true);
+        inner.requestFocus();
+
+        // 选中当前位置的一个词，触发系统 CAB（复制/全选菜单）
+        CharSequence txt = inner.getText();
+        if (txt != null && txt.length() > 0) {
+            android.text.Selection.setSelection(inner.getEditableText(), 0, txt.length());
+        }
+        android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+        if (cm != null && txt != null && txt.length() > 0) {
+            // 同时直写剪贴板：很多 ROM 的 CAB 在自绘 View 上不弹
+            try {
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("终端输出", txt));
+                android.widget.Toast.makeText(getContext(),
+                        "终端输出已复制到剪贴板", android.widget.Toast.LENGTH_SHORT).show();
+            } catch (Throwable ignored) {
+            }
+        }
+
+        // 3 秒后自动退出选择模式，恢复输入能力
+        postDelayed(() -> {
+            if (inner == null) return;
+            inner.setTextIsSelectable(false);
+            inner.setFocusable(false);
+            inner.setFocusableInTouchMode(false);
+            setDescendantFocusability(FOCUS_BLOCK_DESCENDANTS);
+            requestFocus();
+            cursorVisible = true;
+            cursorHandler.removeCallbacks(cursorBlink);
+            cursorHandler.postDelayed(cursorBlink, 530);
+        }, 3000);
+    }
+
     /** 设置提示符（如 "$ "、"> "） */
     public void setPrompt(String prompt) {
         this.promptStr = prompt;
@@ -263,6 +336,15 @@ public class TerminalView extends ScrollView {
      *
      * <p>光标用下划线字符表示，与真正的终端一致；每次输入/退格都重画当前行。</p>
      */
+    /** 重绘但不画光标（选择模式用，避免选中的文本带 ▏ 字符） */
+    private void repaintNoCursor() {
+        if (inner == null) return;
+        StringBuilder all = new StringBuilder(flushed);
+        if (promptStr != null) all.append(promptStr);
+        all.append(lineBuf);
+        inner.setText(all.toString());
+    }
+
     private void repaint() {
         StringBuilder all = new StringBuilder(flushed);
         if (promptStr != null) all.append(promptStr);
