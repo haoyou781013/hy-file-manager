@@ -29,7 +29,7 @@ HY 文件管理（HY_FileManager）是一个极简、高效的 Android 文件管
 
 ## 项目状态
 
-- **阶段**：功能完善（v0.2.0-beta.2）
+- **阶段**：功能完善（v0.2.0-beta.3）
 - **范围**：本地文件管理，不联网、不发布到 Play
 - **分发**：自签名 APK（GitHub Releases + Gitee Releases）
 

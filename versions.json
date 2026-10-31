@@ -1,13 +1,20 @@
 {
-  "updatedAt": "2026-10-30",
+  "updatedAt": "2026-10-31",
   "repo": "haoyou781013/HY_FileManager",
   "versions": [
+    {
+      "ver": "0.2.0-beta.3",
+      "versionCode": 4,
+      "prerelease": true,
+      "publishedAt": "2026-10-31",
+      "body": "## 0.2.0-beta.3\n\n第三轮八代理全量审查后的完整修复（26 项）。\n\n### P0（7 项，必崩/数据丢失/安全预期落空）\n- 终端首次 cd 必崩：pwdView 悬空无赋值点，onEnter 里 setText → NPE\n- 行号栏完全不可见：gutter 画到控件外（坐标用错）；同时 O(n²)→O(n)\n- GBK 兜底是死代码：commons-compress 对 UTF-8 用 REPLACE 不抛异常，catch 永不进入；乱码仍返回 ok=true\n- 7z 密码静默失效：UI 标支持密码，实际产出明文 7z（SevenZOutputFile 不支持写加密）\n- 设置页两套状态机并存：侧边栏进设置弹窗、子页返回变内嵌\n- 三视图无互斥：终端与设置可同时可见\n- 回收站按子文件原 mtime 清理：删一个旧目录进去，内部文件下次启动被静默清空\n\n### 性能（8 项）\n- reload 每次切目录同步 commit（13 键 fsync，UI 线程），而注释明说路径不再保存\n- openLink 一次打开两次 commit\n- persistState 的 commit 返回值被丢弃，写失败完全静默\n- reloadAll 后台线程触碰 RecyclerView → CalledFromWrongThreadException\n- lastRealPath 被右窗格覆盖（reloadAll 按 L→R 连调），终端 cwd 指向错误目录\n- ThumbLoader in-flight 用 FutureTask+get() 阻塞，实测吞吐下降 50%\n- 播放器 onStop 的 pause 从未执行（被 isPlaying() 守卫挡掉）\n- 弹幕开关在播放线程 commit\n\n### 顽疾（9 项，含三轮未修）\n- TerminalSession 整类重写：读线程不可中断、关闭后仍回调 onExit、无 destroyForcibly、UTF-8 跨块截断\n- 新增解压炸弹防护 Guard：条目数 20 万 / 单文件 1GB / 总量 min(4GB, 可用空间×80%)\n- safeChild 命中 Zip Slip 时不再静默丢弃，记入 Result.skipped\n- registerReceiver 三参是 API 33 新增，minSdk=21 直接调用抛 NoSuchMethodError\n- TASK_QUEUE 计数漂移（先 ++ 再 execute）+ int→AtomicInteger\n- 中断按钮残留半截命令行\n\n### 功能补全\n- 解压到对侧改用 ArchiveExtractor，非 zip 格式（7z/rar/tar）现在真正可用\n- 真删 compressToZipLegacy / handleFtp\n\n### 文档一致性\n- DESIGN.md 去除 7z/rar 自相矛盾与网络表述冲突\n- agents.md 行数同步\n- 清理 2 个零引用 color、2 个未使用 import、statusBarHeight 死方法"
+    },
     {
       "ver": "0.2.0-beta.2",
       "versionCode": 3,
       "prerelease": true,
       "publishedAt": "2026-10-30",
-      "body": "## 0.2.0-beta.2\n\n第二轮八代理全量审查后的修复。\n\n### 修复上一批引入的 8 条回归\n- 非 zip 格式（7z/rar/tar.gz）点开被困空目录 → 新增 isZipReadable 分流\n- 解到对侧三重失配 → 新增 extractToOtherPane\n- GBK 文件名 zip 解出乱码 → 补 ISO-8859-1→GBK 兜底\n- 播放器切后台从头重播 → onStop 改 pause\n- 崩溃页重启必失败（setExact 无权限） → 改 set() + 三段独立 try\n- 清空 handler 丢失 UI 回调 → 只清 dpiHandler\n- hostActivity 置空拦不住延时回调 → 改 WeakReference\n- 中文输入法仍会崩（NPE 移到 beginBatchEdit） → getEditable 返回真实 SpannableStringBuilder\n\n### 高危问题\n- SAF 授权链路整体断裂（无 onActivityResult、takePersistableUriPermission 零调用）\n- 跨分区删除绕过回收站变成物理删除\n- 回收站按原文件 mtime 判过期导致刚移入即被清理\n- 7z 实际产出 ZIP 字节流 → 改用 SevenZOutputFile 真实写\n- gz 纯扩展名时覆盖源文件\n- 格式下拉不随对话框关闭\n- GBK 兜底判据失效（只看 c<0x20，真实乱码是 U+FFFD）\n\n### 清理\n- 删除 ui/Anim.java（91 行全类零引用）\n- 删除 compressToZipLegacy / handleFtp\n- 删除 7 个零引用 color\n\n### 文档\n- README 依赖表、版本、构建命令、隐私声明全部对齐实际\n- DESIGN.md 模块图与 7z/rar 状态更新\n- agents.md 行数同步"
+      "body": "## 0.2.0-beta.2\n\n第二轮八代理全量审查后的修复。\n\n### 修复上一批引入的 8 条回归\n- 非 zip 格式（7z/rar/tar.gz）点开被困空目录 → 新增 isZipReadable 分流\n- 解到对侧三重失配 → 新增 extractToOtherPane\n- GBK 文件名 zip 解出乱码 → 补 ISO-8859-1→GBK 兜底\n- 播放器切后台从头重播 → onStop 改 pause\n- 崩溃页重启必失败（setExact 无权限） → 改 set() + 三段独立 try\n- 清空 handler 丢失 UI 回调 → 只清 dpiHandler\n- hostActivity 置空拦不住延时回调 → 改 WeakReference\n- 中文输入法仍会崩（NPE 移到 beginBatchEdit） → getEditable 返回真实 SpannableStringBuilder\n\n### 高危问题\n- SAF 授权链路整体断裂（无 onActivityResult、takePersistableUriPermission 零调用）\n- 跨分区删除绕过回收站变成物理删除\n- 回收站按原文件 mtime 判过期导致刚移入即被清理\n- 7z 实际产出 ZIP 字节流 → 改用 SevenZOutputFile 真实写\n- gz 纯扩展名时覆盖源文件\n- 格式下拉不随对话框关闭\n- GBK 兜底判据失效（只看 c<0x20，真实乱码是 U+FFFD）\n\n### 清理\n- 删除 ui/Anim.java（91 行全类零引用）\n- 计划删除 compressToZipLegacy / handleFtp\n  **已推翻 → 见 0.2.0-beta.3：beta.2 时未删，beta.3 才真正删除**\n- 删除 7 个零引用 color\n\n### 文档\n- README 依赖表、版本、构建命令、隐私声明全部对齐实际\n- DESIGN.md 模块图与 7z/rar 状态更新\n- agents.md 行数同步"
     },
     {
       "ver": "0.2.0-beta.1",
@@ -24,5 +31,5 @@
       "body": "## 0.1.0-dev\n\n项目初始化。\n\n### 范围\n- 本地文件管理\n- 双栏浏览\n- 压缩包内部浏览（zip:// 虚拟路径）\n- 多选批量操作\n\n### 状态\n- 仅骨架，未实测\n- 不联网，不发布到 Play"
     }
   ],
-  "count": 3
+  "count": 4
 }

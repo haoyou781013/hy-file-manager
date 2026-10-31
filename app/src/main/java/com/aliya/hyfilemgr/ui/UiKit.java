@@ -436,17 +436,6 @@ public final class UiKit {
         return null;
     }
 
-    /** 状态栏高度（px）；取不到时用 24dp 估算 */
-    private static int statusBarHeight(Context context) {
-        try {
-            int id = context.getResources().getIdentifier(
-                    "status_bar_height", "dimen", "android");
-            if (id > 0) return context.getResources().getDimensionPixelSize(id);
-        } catch (Throwable ignored) {
-        }
-        return (int) (context.getResources().getDisplayMetrics().density * 24f + 0.5f);
-    }
-
     /**
      * 截取当前界面内容并高斯模糊，作为弹窗背景（主线程调用）。
      * 截图失败（非 Activity 上下文/尺寸无效）返回 null，由调用方走兜底方案。

@@ -13,7 +13,7 @@
 | 语言 | Java 17 | 与 HY_VQ 一致，便于复用 |
 | UI | Material 3 | 与 HY_VQ 一致 |
 | 压缩 | `java.util.zip` + `zip4j` | zip4j 仅在解密时启用 |
-| 网络 | **不引入** | 纯本地，零联网 |
+| 网络 | 仅在播放器 | 媒体流走 OkHttp；文件管理/归档/终端全离线 |
 
 ## 三、模块划分
 
@@ -46,6 +46,5 @@ app/src/main/java/com/aliya/hyfilemgr/
 
 ## 六、其他待定
 
-- 是否支持 7z / rar（需第三方库）
 - 是否支持 root 浏览
 - 主题 / 图标

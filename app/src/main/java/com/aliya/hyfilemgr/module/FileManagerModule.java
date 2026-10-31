@@ -9437,38 +9437,6 @@ public class FileManagerModule extends HyVqModule {
         }
     }
 
-    private void compressToZipLegacy(final FileEntry e) {
-        final File src = new File(e.path);
-        final File parent = src.getParentFile();
-        if (parent == null || !parent.canWrite()) {
-            UiKit.toast(ctx, "目录不可写，无法压缩");
-            return;
-        }
-        final String zipName = uniqueName(parent.getAbsolutePath(), e.name + ".zip", null);
-        final File zipFile = new File(parent, zipName);
-        UiKit.toast(ctx, "压缩中…");
-        runTask(() -> {
-            boolean ok = false;
-            try (java.util.zip.ZipOutputStream zos = new java.util.zip.ZipOutputStream(
-                    new java.io.BufferedOutputStream(new java.io.FileOutputStream(zipFile)))) {
-                if (src.isDirectory()) {
-                    zipDir(src, src.getName(), zos);
-                } else {
-                    zipFileEntry(src, src.getName(), zos);
-                }
-                ok = true;
-            } catch (Throwable t) {
-                UiKit.toast(ctx, "压缩失败：" + t.getMessage());
-                zipFile.delete();
-            }
-            final boolean fOk = ok;
-            handler.post(() -> {
-                UiKit.toast(ctx, fOk ? "已压缩：" + zipName : "压缩失败");
-                reload(active);
-            });
-        });
-    }
-
     private void zipDir(File dir, String entryBase, java.util.zip.ZipOutputStream zos)
             throws java.io.IOException {
         File[] fs = dir.listFiles();
@@ -9691,6 +9659,13 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 把包内条目解出到另一窗格的当前目录 */
+    /**
+     * 把包内条目解出到另一窗格。
+     *
+     * <p>旧实现只认 zip（java.util.zip.ZipFile + splitZipPath 白名单），
+     * 但顶部菜单已放开非 zip 格式 → 7z/rar/tar 走到这里必然失败。
+     * 改为整包交给 ArchiveExtractor，再在目标目录里定位该条目。</p>
+     */
     private void extractZipEntryToOtherPane(final FileEntry e) {
         if (panes.size() < 2) {
             UiKit.toast(ctx, "当前为单窗格，无法解压到对侧");
@@ -9699,41 +9674,53 @@ public class FileManagerModule extends HyVqModule {
         final Pane other = (panes.get(0) == active) ? panes.get(1) : panes.get(0);
         if (other == null || other.path == null
                 || other.path.startsWith(PREFIX_ZIP)
-                || other.path.startsWith(PREFIX_TRASH)
-                ) {
+                || other.path.startsWith(PREFIX_TRASH)) {
             UiKit.toast(ctx, "另一窗格不在可写入的目录");
             return;
         }
         final String destDir = other.path;
         String[] parts = splitZipPath(e.path);
-        final String zipPath = parts[0];
+        final String archivePath = parts[0];
         final String inner = parts[1];
-        java.util.Map<String, Boolean> encCheck2 = readZipEncryptionMap(new File(zipPath));
-        if (Boolean.TRUE.equals(encCheck2.get(inner))) {
-            UiKit.toast(ctx, "该条目已加密，当前版本暂不支持解密");
+        if (inner == null || inner.isEmpty()) {
+            UiKit.toast(ctx, "请选择包内文件");
             return;
         }
+
         UiKit.toast(ctx, "解出中…");
         new Thread(() -> {
             String err = null;
             String outName = null;
-            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(new File(zipPath))) {
-                java.util.zip.ZipEntry ze = zf.getEntry(inner);
-                if (ze == null) {
-                    err = "条目不存在";
-                } else {
-                    File dest = new File(destDir, uniqueName(destDir,
-                            inner.substring(inner.lastIndexOf('/') + 1), null));
-                    try (java.io.InputStream in = zf.getInputStream(ze);
-                         java.io.OutputStream os = new java.io.FileOutputStream(dest)) {
-                        byte[] buf = new byte[8192];
-                        int n;
-                        while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
-                    }
-                    outName = dest.getName();
+            File tmpDir = null;
+            try {
+                // 解到临时目录（保留包内层级），再把目标条目搬到目标目录
+                tmpDir = new File(ctx.getCacheDir(),
+                        "zip_to_other_" + System.currentTimeMillis());
+                if (!tmpDir.mkdirs() && !tmpDir.isDirectory()) {
+                    throw new java.io.IOException("无法创建临时目录");
                 }
+                com.aliya.hyfilemgr.archive.ArchiveExtractor.Result r =
+                        com.aliya.hyfilemgr.archive.ArchiveExtractor
+                                .extract(new File(archivePath), tmpDir, null, null);
+                if (!r.ok) throw new java.io.IOException(r.error);
+
+                File picked = new File(tmpDir, inner);
+                if (!picked.exists()) {
+                    // 某些包会带顶层目录前缀，退化为按文件名搜索
+                    picked = findBySuffix(tmpDir, inner);
+                }
+                if (picked == null || !picked.exists()) {
+                    throw new java.io.IOException("包内未找到该条目");
+                }
+                File dest = new File(destDir, uniqueName(destDir,
+                        picked.getName(), null));
+                // FileOps.copy 内部已处理目录递归
+                com.aliya.hyfilemgr.filemgr.FileOps.copy(picked, dest);
+                outName = dest.getName();
             } catch (Throwable t) {
                 err = String.valueOf(t.getMessage());
+            } finally {
+                if (tmpDir != null) deleteTree(tmpDir);
             }
             final String fErr = err, fOut = outName;
             handler.post(() -> {
@@ -9741,6 +9728,24 @@ public class FileManagerModule extends HyVqModule {
                 if (fErr == null) reload(other);
             });
         }, "HyVqZipToOther").start();
+    }
+
+    /** 在临时解压目录里按相对路径后缀查找条目 */
+    private static File findBySuffix(File root, String inner) {
+        java.util.ArrayDeque<File> q = new java.util.ArrayDeque<>();
+        q.add(root);
+        String norm = inner.replace('\\', '/');
+        while (!q.isEmpty()) {
+            File cur = q.poll();
+            File[] items = cur.listFiles();
+            if (items == null) continue;
+            for (File f : items) {
+                String p = f.getAbsolutePath().replace('\\', '/');
+                if (p.endsWith("/" + norm)) return f;
+                if (f.isDirectory()) q.add(f);
+            }
+        }
+        return null;
     }
 
     /** 进入嵌套压缩包：先把内层 zip 解到缓存，再以它为根进入内部浏览 */
@@ -11018,176 +11023,6 @@ public class FileManagerModule extends HyVqModule {
         for (String k : cell.keySet()) if (!out.contains(k)) out.add(k);
         for (String k : other.keySet()) if (!out.contains(k)) out.add(k);
         return out;
-    }
-
-    /** 单连接 FTP 命令循环：USER/PASS 认证（一次性随机密码）、PASV 被动模式、
-     *  LIST/RETR/STOR/DELE/MKD/RMD。
-     *  ⭐ 安全修复：未认证的连接只能发 USER/PASS/QUIT，任何文件操作一律 530 拒绝。 */
-    private void handleFtp(final Socket s) {
-        try {
-            s.setSoTimeout(60000);
-            final java.io.BufferedReader in = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(s.getInputStream(), "ISO-8859-1"));
-            final java.io.PrintWriter out = new java.io.PrintWriter(
-                    new java.io.OutputStreamWriter(s.getOutputStream(), "ISO-8859-1"), true);
-            File cwd = FTP_ROOT;
-            boolean authed = false;
-            out.println("220 HY_VQ FTP Server ready");
-            String line;
-            while (ftpRunning && (line = in.readLine()) != null) {
-                if (line.isEmpty()) continue;
-                String cmd = line.toUpperCase(Locale.getDefault());
-                String arg = line.length() > cmd.length() ? line.substring(cmd.length()).trim() : "";
-                if (cmd.startsWith("USER")) {
-                    // 用户名固定，但不在此时校验，统一在 PASS 阶段判定
-                    out.println("331 Password required");
-                } else if (cmd.startsWith("PASS")) {
-                    String pw = line.length() > 4 ? line.substring(4).trim() : "";
-                    if (!ftpPass.isEmpty() && pw.equals(ftpPass)) {
-                        authed = true;
-                        out.println("230 Login successful");
-                    } else {
-                        authed = false;
-                        out.println("530 Login incorrect");
-                    }
-                } else if (cmd.startsWith("QUIT")) {
-                    out.println("221 Bye");
-                    break;
-                } else if (!authed) {
-                    // ⭐ 未登录：除 USER/PASS/QUIT 外一律拒绝，杜绝免密访问
-                    out.println("530 Please login with USER and PASS");
-                } else if (cmd.startsWith("TYPE") || cmd.startsWith("NOOP")) {
-                    out.println("200 OK");
-                } else if (cmd.startsWith("SYST")) {
-                    out.println("215 UNIX Type: L8");
-                } else if (cmd.startsWith("PWD") || cmd.startsWith("XPWD")) {
-                    out.println("257 \"" + cwd.getAbsolutePath() + "\"");
-                } else if (cmd.startsWith("CWD")) {
-                    File d = resolveFtp(cwd, arg);
-                    if (d != null && d.isDirectory()) {
-                        cwd = d;
-                        out.println("250 OK");
-                    } else out.println("550 No such directory");
-                } else if (cmd.startsWith("CDUP")) {
-                    File p = cwd.getParentFile();
-                    if (p != null && p.getAbsolutePath().startsWith(FTP_ROOT.getAbsolutePath())) {
-                        cwd = p;
-                        out.println("250 OK");
-                    } else out.println("550 Already at root");
-                } else if (cmd.startsWith("PASV")) {
-                    try {
-                        if (ftpDataSocket != null) {
-                            try {
-                                ftpDataSocket.close();
-                            } catch (Throwable ignored) {
-                            }
-                        }
-                        ftpDataSocket = new java.net.ServerSocket(0);
-                        String h = s.getLocalAddress().getHostAddress().replace('.', ',');
-                        int p1 = ftpDataSocket.getLocalPort() / 256;
-                        int p2 = ftpDataSocket.getLocalPort() % 256;
-                        out.println("227 Entering Passive Mode (" + h + "," + p1 + "," + p2 + ")");
-                    } catch (Throwable t) {
-                        out.println("425 Can't open data connection");
-                    }
-                } else if (cmd.startsWith("LIST") || cmd.startsWith("NLST")) {
-                    java.net.Socket ds = acceptData();
-                    if (ds == null) {
-                        out.println("425 No data connection");
-                        continue;
-                    }
-                    File dir = resolveFtp(cwd, arg);
-                    out.println("150 Opening data connection");
-                    try (java.io.PrintWriter dw = new java.io.PrintWriter(
-                            new java.io.OutputStreamWriter(ds.getOutputStream(), "ISO-8859-1"), true)) {
-                        if (dir != null && dir.isDirectory()) {
-                            File[] fs = dir.listFiles();
-                            if (fs != null) {
-                                for (File f : fs) {
-                                    String perms = f.isDirectory() ? "drwxr-xr-x" : "-rw-r--r--";
-                                    long sz = f.isDirectory() ? 4096 : f.length();
-                                    String date = java.text.DateFormat.getDateInstance(
-                                            java.text.DateFormat.MEDIUM, Locale.ENGLISH)
-                                            .format(new java.util.Date(f.lastModified()));
-                                    dw.println(perms + " 1 owner group " + sz + " " + date
-                                            + " " + f.getName());
-                                }
-                            }
-                        }
-                    }
-                    ds.close();
-                    out.println("226 Transfer complete");
-                } else if (cmd.startsWith("RETR")) {
-                    File f = resolveFtp(cwd, arg);
-                    if (f == null || !f.isFile()) {
-                        out.println("550 No such file");
-                        continue;
-                    }
-                    java.net.Socket ds = acceptData();
-                    if (ds == null) {
-                        out.println("425 No data connection");
-                        continue;
-                    }
-                    out.println("150 Opening binary data");
-                    try (java.io.BufferedOutputStream bos = new java.io.BufferedOutputStream(
-                            ds.getOutputStream());
-                         java.io.BufferedInputStream bis = new java.io.BufferedInputStream(
-                                 new java.io.FileInputStream(f))) {
-                        byte[] buf = new byte[65536];
-                        int n;
-                        while ((n = bis.read(buf)) > 0) bos.write(buf, 0, n);
-                    }
-                    ds.close();
-                    out.println("226 Transfer complete");
-                } else if (cmd.startsWith("STOR")) {
-                    File f = resolveFtp(cwd, arg);
-                    if (f == null) {
-                        out.println("550 Invalid path");
-                        continue;
-                    }
-                    java.net.Socket ds = acceptData();
-                    if (ds == null) {
-                        out.println("425 No data connection");
-                        continue;
-                    }
-                    out.println("150 Opening binary data");
-                    try (java.io.BufferedInputStream bis = new java.io.BufferedInputStream(
-                            ds.getInputStream());
-                         java.io.BufferedOutputStream bos = new java.io.BufferedOutputStream(
-                                 new java.io.FileOutputStream(f))) {
-                        byte[] buf = new byte[65536];
-                        int n;
-                        while ((n = bis.read(buf)) > 0) bos.write(buf, 0, n);
-                    }
-                    ds.close();
-                    out.println("226 Transfer complete");
-                } else if (cmd.startsWith("DELE")) {
-                    File f = resolveFtp(cwd, arg);
-                    out.println(f != null && f.isFile() && f.delete() ? "250 Deleted" : "550 Can't delete");
-                } else if (cmd.startsWith("MKD")) {
-                    File d = resolveFtp(cwd, arg);
-                    out.println(d != null && d.mkdirs() ? "257 Created" : "550 Can't create");
-                } else if (cmd.startsWith("RMD")) {
-                    File d = resolveFtp(cwd, arg);
-                    out.println(d != null && d.isDirectory() && d.delete() ? "250 Removed" : "550 Can't remove");
-                } else if (cmd.startsWith("SIZE")) {
-                    File f = resolveFtp(cwd, arg);
-                    out.println(f != null && f.isFile() ? "213 " + f.length() : "550 Not found");
-                } else if (cmd.startsWith("FEAT")) {
-                    out.println("211-Features:");
-                    out.println(" SIZE");
-                    out.println("211 End");
-                } else {
-                    out.println("502 Command not implemented");
-                }
-            }
-        } catch (Throwable ignored) {
-        } finally {
-            try {
-                s.close();
-            } catch (Throwable ignored) {
-            }
-        }
     }
 
     private static java.net.Socket acceptData() {
