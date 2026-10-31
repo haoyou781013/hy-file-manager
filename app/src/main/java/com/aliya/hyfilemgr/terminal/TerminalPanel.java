@@ -126,10 +126,12 @@ public class TerminalPanel {
 
             @Override
             public void onEnter() {
+                // ⚠️ 必须先取行内容再 newlineEcho()：
+                // newlineEcho 内部会 lineBuf.setLength(0)，之后再读就是空串，
+                // 导致 cd 解析永远拿到 ""，顶栏路径永不更新。
+                final String line = termView.currentLine();
                 termView.newlineEcho();
                 if (session != null && session.isRunning()) session.send("\n");
-                // cd 后同步顶栏 pwd
-                String line = termView.currentLine();
                 if (line.trim().startsWith("cd ")) {
                     String arg = line.trim().substring(3).trim();
                     // 去掉引号
