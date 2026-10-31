@@ -41,6 +41,36 @@
         <item name="colorOnError">#1A1A1A</item>
     </style>
 
+    <!-- ══════════════════════════════════════════════════════════
+         MD3 兼容模式（默认关闭）
+         ══════════════════════════════════════════════════════════
+         部分旧 ROM / 定制系统的 AppCompat 与 Material3 主题存在
+         资源解析冲突（colorSurfaceContainer* 系列属性缺失、
+         Theme.Material3 父链断裂），开启 MD3 后可能直接白屏或崩溃。
+         这些机型需要退回 AppCompat 主题才能正常启动。
+
+         开关默认关闭 = 使用 MD3（美观）；
+         打不开的机型在设置里手动开启兼容模式（但打不开就进不去设置——
+         所以额外支持 AndroidManifest 的 meta-data 和 adb 命令双保险）。 -->
+    <style name="Theme.HYFileManager.Compat" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/blue_600</item>
+        <item name="colorPrimaryDark">@color/blue_600</item>
+        <item name="colorAccent">@color/blue_600</item>
+        <item name="android:statusBarColor">@color/blue_600</item>
+    </style>
+
+    <style name="Theme.HYFileManager.Compat.Light" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">@color/blue_600</item>
+        <item name="colorPrimaryDark">@color/blue_600</item>
+        <item name="colorAccent">@color/blue_600</item>
+    </style>
+
+    <style name="Theme.HYFileManager.Compat.Dark" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">@color/blue_600</item>
+        <item name="colorPrimaryDark">@color/blue_600</item>
+        <item name="colorAccent">@color/blue_600</item>
+    </style>
+
     <!-- PopupWindow 入场/退场动画 -->
     <style name="AnimPopup" parent="@android:style/Animation">
         <item name="android:windowEnterAnimation">@anim/popup_in</item>

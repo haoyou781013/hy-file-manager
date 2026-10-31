@@ -32,27 +32,82 @@ public class MainActivity extends AppCompatActivity {
 
     /** 主题偏好：0=默认，1=工业风格 */
     private static final String PREF_THEME = "ui_theme";
+    /**
+     * 关闭 Material3 主题（兼容模式）。
+     *
+     * <p>部分旧 ROM / 深度定制系统的 AppCompat + Material3 主题存在资源
+     * 解析冲突（Theme.Material3 父链断裂、colorSurfaceContainer* 缺失），
+     * 开启 MD3 后会白屏或直接崩溃。这些机型需要退回 AppCompat 主题。</p>
+     *
+     * <p>默认 false（用 MD3，观感更好）。因为「打不开就进不去设置」，
+     * 另有两道保险：① 上次启动若在此崩溃，自动降级一次；
+     * ② 支持 adb 命令直接置位（见 README）。</p>
+     */
+    private static final String PREF_MD3_OFF = "md3_off";
+    /** 启动标记：用于检测「开着 MD3 起不来」的情况 */
+    private static final String PREF_MD3_BOOT_GUARD = "md3_boot_guard";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        // setTheme 必须在 super.onCreate 之前，否则主题不会生效
-        android.content.SharedPreferences sp =
-                getSharedPreferences("hyvq_filemgr", MODE_PRIVATE);
-        int theme = sp.getInt(PREF_THEME, 0);
-        if (theme == 1) {
-            // 工业风格：内置深色，不受明暗模式影响
-            setTheme(R.style.Theme_HYFileManager_Industrial);
-        } else {
-            // 默认主题：按 ui_mode 选 0=跟随系统 / 1=亮 / 2=暗
-            int mode = sp.getInt("ui_mode", 0);
-            if (mode == 1) {
-                setTheme(R.style.Theme_HYFileManager_Light);
-            } else if (mode == 2) {
-                setTheme(R.style.Theme_HYFileManager_Dark);
-            }
-        }
+        applyTheme();
         super.onCreate(savedInstanceState);
 
+        markBootOk();
+        buildUi();
+    }
+
+    /**
+     * 应用主题。必须在 super.onCreate 之前调用。
+     *
+     * <p>若上次开启 MD3 时启动失败（boot guard 未被清除），
+     * 本次自动降级为兼容主题，避免用户永远进不去。</p>
+     */
+    private void applyTheme() {
+        android.content.SharedPreferences sp =
+                getSharedPreferences("hyvq_filemgr", MODE_PRIVATE);
+
+        boolean md3Off = sp.getBoolean(PREF_MD3_OFF, false);
+        // 上次启动没走到 markBootOk → 说明 MD3 主题在这台机器上起不来，自动降级
+        boolean lastBootFailed = sp.getBoolean(PREF_MD3_BOOT_GUARD, false);
+        if (!md3Off && lastBootFailed) {
+            md3Off = true;
+            sp.edit().putBoolean(PREF_MD3_OFF, true).apply();
+        }
+
+        int theme = sp.getInt(PREF_THEME, 0);
+        int mode = sp.getInt("ui_mode", 0);
+
+        if (md3Off) {
+            if (theme == 1) {
+                // 工业风格本来就是深色，兼容模式用 Dark AppCompat 近似
+                setTheme(R.style.Theme_HYFileManager_Compat_Dark);
+            } else if (mode == 1) {
+                setTheme(R.style.Theme_HYFileManager_Compat_Light);
+            } else if (mode == 2) {
+                setTheme(R.style.Theme_HYFileManager_Compat_Dark);
+            } else {
+                setTheme(R.style.Theme_HYFileManager_Compat);
+            }
+            return;
+        }
+
+        if (theme == 1) {
+            setTheme(R.style.Theme_HYFileManager_Industrial);
+        } else if (mode == 1) {
+            setTheme(R.style.Theme_HYFileManager_Light);
+        } else if (mode == 2) {
+            setTheme(R.style.Theme_HYFileManager_Dark);
+        }
+        // 都没设 → 用 AndroidManifest 里的默认主题
+    }
+
+    /** 启动成功：清掉 boot guard */
+    private void markBootOk() {
+        getSharedPreferences("hyvq_filemgr", MODE_PRIVATE)
+                .edit().putBoolean(PREF_MD3_BOOT_GUARD, false).apply();
+    }
+
+    private void buildUi() {
         FrameLayout root = new FrameLayout(this);
         root.setLayoutParams(new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));

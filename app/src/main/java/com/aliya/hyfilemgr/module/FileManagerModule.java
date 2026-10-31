@@ -3984,6 +3984,36 @@ public class FileManagerModule extends HyVqModule {
                     uiMode != 0, v -> showModePicker());
         }
 
+        // ── MD3 兼容模式 ──
+        // 默认关闭（用 Material3）。部分旧 ROM 的 AppCompat+Material3
+        // 主题解析冲突会白屏/闪退，那些机型需开启此项退回 AppCompat 主题。
+        final boolean md3Off = fmPrefs().getBoolean("md3_off", false);
+        addInfoRow(box, "关闭 Material3 主题",
+                md3Off ? "已开启（使用 AppCompat 主题）" : "已关闭（使用 Material3 主题）",
+                md3Off, v -> {
+                    boolean next = !fmPrefs().getBoolean("md3_off", false);
+                    fmPrefs().edit().putBoolean("md3_off", next).apply();
+                    UiKit.toast(ctx, next
+                            ? "已切到 AppCompat 主题，重启生效"
+                            : "已切回 Material3 主题，重启生效");
+                    showAppearanceSettings();
+                });
+
+        // 启动保护：若 MD3 在此机型起不来，上面会自动降级一次；
+        // 这里额外给出手动恢复入口
+        if (md3Off) {
+            TextView hint = new TextView(ctx);
+            hint.setText("若开启后仍无法启动：adb shell am start 前先执行\n"
+                    + "adb shell run-as com.aliya.hyfilemgr …\n"
+                    + "或直接卸载重装（设置会保留在带外备份）");
+            hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            hint.setTextColor(UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorOnSurfaceVariant));
+            hint.setAlpha(0.7f);
+            hint.setPadding(dp(4), dp(2), dp(4), dp(8));
+            box.addView(hint);
+        }
+
         // ── 显示密度（DPI）：SeekBar ──
         final int[] dpiPresets = com.aliya.hyfilemgr.util.DpiUtils.PRESETS;
         int curDpi = com.aliya.hyfilemgr.util.DpiUtils.getOverrideDpi();
