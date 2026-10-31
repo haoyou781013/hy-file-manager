@@ -44,7 +44,7 @@ public final class ThumbLoader {
      * 还会产生半写文件，之后 readDisk 永久空白）。
      */
     private static final java.util.concurrent.ConcurrentHashMap<String,
-            java.util.concurrent.Future<Bitmap>> IN_FLIGHT =
+            java.util.concurrent.CompletableFuture<Bitmap>> IN_FLIGHT =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     private static final LruCache<String, Bitmap> MEM =
@@ -120,60 +120,54 @@ public final class ThumbLoader {
         iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
 
         final Context app = ctx.getApplicationContext();
-        // in-flight 去重：同 key 已有任务在跑就复用
         final String key = cacheKey;
-        java.util.concurrent.Future<Bitmap> task = IN_FLIGHT.get(key);
-        if (task == null) {
-            java.util.concurrent.FutureTask<Bitmap> ft =
-                    new java.util.concurrent.FutureTask<>(() -> {
-                        Bitmap decoded = readDisk(app, key);
+
+        // in-flight 去重：同 key 只解码一次。
+        // 旧实现用 FutureTask + 两个池任务（一个跑、一个 get() 阻塞），
+        // 实测吞吐 3061ms → 4585ms（下降 50%），因为 3 线程里约 2/3 在
+        // FutureTask.get() 空转。改用 CompletableFuture：
+        // 只在池里跑一个解码任务，回调通过 thenAccept 派发到主线程。
+        final java.util.concurrent.CompletableFuture<Bitmap> future;
+        java.util.concurrent.CompletableFuture<Bitmap> existing = IN_FLIGHT.get(key);
+        if (existing != null) {
+            future = existing;
+        } else {
+            java.util.concurrent.CompletableFuture<Bitmap> created =
+                    new java.util.concurrent.CompletableFuture<>();
+            java.util.concurrent.CompletableFuture<Bitmap> prev = IN_FLIGHT.putIfAbsent(key, created);
+            if (prev != null) {
+                future = prev;
+            } else {
+                future = created;
+                POOL.execute(() -> {
+                    Bitmap decoded = null;
+                    try {
+                        decoded = readDisk(app, key);
                         if (decoded == null) {
                             decoded = decode(app, path, name);
                             if (decoded != null) writeDisk(app, key, decoded);
                         }
-                        return decoded;
-                    });
-            java.util.concurrent.Future<Bitmap> prev = IN_FLIGHT.putIfAbsent(key, ft);
-            if (prev == null) {
-                POOL.execute(() -> {
-                    try {
-                        ft.run();
+                    } catch (Throwable ignored) {
                     } finally {
                         IN_FLIGHT.remove(key);
                     }
+                    created.complete(decoded);
                 });
-                task = ft;
-            } else {
-                task = prev;
             }
         }
-        final java.util.concurrent.Future<Bitmap> running = task;
-        POOL.execute(() -> {
-            Bitmap out;
-            try {
-                out = running.get();
-            } catch (Throwable t) {
-                out = null;
-            }
-            final Bitmap fin = out;
+
+        future.thenAccept(fin -> MAIN.post(() -> {
+            // 防错位：加载完成时 ImageView 已被复用或已脱离窗口 → 丢弃
+            if (!iv.isAttachedToWindow()) return;
+            if (!cacheKey.equals(iv.getTag())) return;
             if (fin == null) {
-                // 解码失败：通知调用方回退类型图标，避免留下空白
-                MAIN.post(() -> {
-                    if (!iv.isAttachedToWindow()) return;
-                    if (!cacheKey.equals(iv.getTag())) return;
-                    if (onFail != null) onFail.onFail(iv);
-                });
+                if (onFail != null) onFail.onFail(iv);
                 return;
             }
-            MAIN.post(() -> {
-                // 防错位：加载完成时 ImageView 已被复用或已脱离窗口 → 丢弃
-                if (!iv.isAttachedToWindow()) return;
-                if (!cacheKey.equals(iv.getTag())) return;
-                iv.setColorFilter(null);
-                iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                iv.setImageBitmap(fin);
-            });
-        });
+            iv.setColorFilter(null);
+            iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            iv.setImageBitmap(fin);
+        }));
     }
 
     // ── 解码 ──

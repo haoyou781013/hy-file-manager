@@ -229,10 +229,8 @@ public final class UiKit {
             window.setGravity(Gravity.CENTER);
             // centerContent=false：面板已在 shell 中居中，这里只管铺模糊背景
             applyBlur(window, context, false);
-            // applyBlur 会把窗口背景设为透明（它改用 ImageView 承载模糊图），
-            // 这里补回不透明底色，让 ImageView 绘制前的那一帧不是黑的。
-            window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(
-                    color(context, com.google.android.material.R.attr.colorSurfaceContainer)));
+            // 注意：applyBlur 不修改窗口背景（模糊图由它自己设为 BitmapDrawable），
+            // 这里的底色只是 applyBlur 内部渲染前的兜底，无需重复设置。
         }
         dialog.setCancelable(true);
 
@@ -369,6 +367,10 @@ public final class UiKit {
             // 模糊图叠加一层提亮：直接截图模糊的结果比弹窗面板暗，
             // 面板 alpha 从 0 淡入期间整屏只有这层暗图 → 观感「先变黑再变亮」。
             // 用白色半透明叠加把基底提亮，面板淡入时就不会有明暗跳变。
+            // 注意：base 已经是 boxBlur 降采样后的 1/4 尺寸图，
+            // liftBrightness 在它上面 copy 的成本比全屏小 16 倍。
+            // 仍保留 copy 是为了不改动 captureBlurredBackground 的返回对象
+            // （它可能被同一帧内多处复用）。
             android.graphics.Bitmap base = blurredOf(bg);
             android.graphics.Bitmap lifted = liftBrightness(base, 0.18f);
             android.graphics.drawable.BitmapDrawable windowBg =

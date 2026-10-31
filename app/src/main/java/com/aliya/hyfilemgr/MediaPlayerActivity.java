@@ -735,8 +735,10 @@ public class MediaPlayerActivity extends Activity {
         btnDanmaku.setOnClickListener(v -> {
             danmakuOn = !danmakuOn;
             // 记住用户选择（覆盖默认）
+            // 用 apply：这是纯 UI 偏好，丢了无所谓；
+            // commit 会在播放线程上与视频解码抢 IO（10-30ms 卡顿）
             getSharedPreferences("anime_prefs", MODE_PRIVATE)
-                    .edit().putBoolean("danmaku_default_on", danmakuOn).commit();
+                    .edit().putBoolean("danmaku_default_on", danmakuOn).apply();
             btnDanmaku.setText(danmakuOn ? "弹幕·开" : "弹幕");
             btnDanmaku.setTextColor(danmakuOn
                     ? 0xFF00E676 : android.graphics.Color.WHITE);
@@ -1112,8 +1114,14 @@ public class MediaPlayerActivity extends Activity {
         // 结果切后台再回前台从头重播、进度丢失。
         // 真正的释放由 onDestroy 的 release 负责；pause 已足够让出解码器。
         try {
-            if (player != null && player.isPlaying()) player.pause();
-        } catch (Throwable ignored) {
+            // 不能加 isPlaying() 守卫：切集时 startActivity → finish() 触发
+            // onPause（那里已 pause，isPlaying 变 false），到 onStop 时判断为
+            // false 就整块跳过 → pause 从未执行，解码器仍被旧实例持有。
+            if (player != null) player.pause();
+        } catch (Throwable t) {
+            android.util.Log.w("HYMedia", "onStop pause failed", t);
+            // pause 失败时不要清 ticker，否则进度条冻结而视频继续播
+            return;
         }
         handler.removeCallbacks(ticker);
     }

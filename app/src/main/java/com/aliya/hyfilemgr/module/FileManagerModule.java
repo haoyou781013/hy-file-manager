@@ -400,7 +400,7 @@ public class FileManagerModule extends HyVqModule {
         StringBuilder rfb = new StringBuilder();
         for (String path : recentFiles) rfb.append(path).append('\n');
         // 用 commit() 同步落盘：apply() 是异步的，进程被杀时可能丢失
-        fmPrefs().edit()
+        boolean ok = fmPrefs().edit()
                 .putBoolean(PREF_GRID_MODE, gridMode)
                 .putString(PREF_RECENT_FILES, rfb.toString())
                 .putInt(PREF_SORT_MODE, sortMode)
@@ -416,6 +416,7 @@ public class FileManagerModule extends HyVqModule {
                 .putInt(PREF_TRASH_KEEP_DAYS, trashKeepDays)
                 .putInt(PREF_DPI, com.aliya.hyfilemgr.util.DpiUtils.getOverrideDpi())
                 .commit();
+        if (!ok) android.util.Log.e("HYPrefs", "persistState commit failed");
     }
 
     // ── 视图 ──
@@ -1876,7 +1877,9 @@ public class FileManagerModule extends HyVqModule {
         recentFiles.remove(path);
         recentFiles.add(0, path);
         while (recentFiles.size() > 20) recentFiles.remove(recentFiles.size() - 1);
-        persistState();
+        // 只改内存，不落盘：openLink 后续必定调 reload()，若各自 commit
+        // 一次打开文件就是两次 fsync。recentFiles 属"丢了也无所谓"的数据，
+        // 统一在 onDetach 落盘一次即可。
     }
 
     private void openLink(Pane p, FileEntry e) {
@@ -1935,6 +1938,13 @@ public class FileManagerModule extends HyVqModule {
 
     /** 全部窗格重新加载（首次进入视图） */
     private void reloadAll() {
+        // 后台线程调用（如 restoreFromTrash 里的 runTask）会直接触碰
+        // RecyclerView 适配器 → CalledFromWrongThreadException。
+        // 统一转回主线程。
+        if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) {
+            handler.post(this::reloadAll);
+            return;
+        }
         // 写操作/刷新后目录内容可能变化：清空全部窗格目录缓存（强制重新 listFiles）
         for (Pane p : panes) {
             if (p.dirCache != null) p.dirCache.clear();
@@ -1945,7 +1955,9 @@ public class FileManagerModule extends HyVqModule {
     /** 重新加载单个窗格：AccessRouter 四源路由 → 排序 → 刷新（恢复该目录上次滚动位置） */
     private void reload(Pane p) {
         // 记录最近的真实目录，供终端作工作目录（虚拟路径时回退用它）
-        if (p != null && p.path != null
+        // 只记录**当前激活窗格**的真实路径：reloadAll 会按 L→R 连续调 reload，
+        // 若无条件赋值，最终留下的是右窗格路径，而用户操作的是左窗格。
+        if (p != null && p == active && p.path != null
                 && !p.path.startsWith("content://")
                 && !p.path.startsWith(PREFIX_TRASH)
                 && !p.path.startsWith(PREFIX_ZIP)
@@ -1953,7 +1965,10 @@ public class FileManagerModule extends HyVqModule {
             lastRealPath = p.path;
         }
         if (p == null || p.path == null) return;
-        persistState(); // 目录切换即落盘（下次启动回到这里）
+        // 不在此 persistState()：persistState 的注释已明确「路径不再保存」，
+        // 而 reload 是每次切目录/刷新/操作的公共入口 →
+        // 每翻一层目录一次同步 commit（13 键 fsync，UI 线程）。
+        // 真正需要落盘的是设置类改动，那些 handler 已各自调用。
         // 滚动位置记忆（参考 MaterialFiles）：离开目录前缓存布局状态，**仅在特定场景恢复**。
         // ⭐ 用户反馈：目录之间随便点一下也恢复旧位置，会让人莫名"上滑"。
         //   故改为：只有「切到别处（如设置）再返回」才回到原位置；
@@ -3305,6 +3320,7 @@ public class FileManagerModule extends HyVqModule {
         closeSettingsEmbed();
     }
 
+
     /** 设置行：标题 + 副标题 + 图标 + 右箭头 */
     private void addSettingsRow(LinearLayout parent, String title, String subtitle,
                                 int iconRes, View.OnClickListener onClick) {
@@ -3458,7 +3474,7 @@ public class FileManagerModule extends HyVqModule {
     private View fileContentView;
 
     /** 最近一次浏览过的真实目录（虚拟路径时终端用它作工作目录） */
-    private String lastRealPath = null;
+    private volatile String lastRealPath = null;
 
     /** 当前内容视图：三者互斥 */
     private enum ContentMode { FILES, SETTINGS, TERMINAL }
