@@ -317,6 +317,7 @@ public class FileManagerModule extends HyVqModule {
 
     private TextView pathText;
     /** 顶栏中部插槽（文件=面包屑 / 终端=标题） */
+    private ImageView topBarLeftIcon;
     private FrameLayout topBarCenterSlot;
     private View topBarCrumbView;
     private View topBarFileActions;
@@ -575,8 +576,20 @@ public class FileManagerModule extends HyVqModule {
         int pad = dp(3);
         bar.setPadding(pad, pad, pad, pad);
 
-        // 左上角三条杠（汉堡）导航：点击弹出内部小侧边栏（层级导航 + SAF 挂载目录）
-        bar.addView(toolIcon(R.drawable.ic_menu, v -> showNavSidebar()));
+        // 左上角：文件模式显示汉堡（打开侧边栏），终端/设置模式显示返回（回文件列表）
+        topBarLeftIcon = toolIcon(R.drawable.ic_menu, v -> {
+            if (contentMode == ContentMode.FILES) {
+                showNavSidebar();
+            } else {
+                // 终端/设置模式：返回文件列表
+                if (contentMode == ContentMode.TERMINAL) {
+                    closeTerminal();
+                } else {
+                    closeSettingsEmbed();
+                }
+            }
+        });
+        bar.addView(topBarLeftIcon);
 
         // 中部区域：文件模式显示面包屑，终端模式显示「终端 | pwd」。
         // 用一个 FrameLayout 承载，两种内容互斥显示，共享同一个顶栏。
@@ -3161,6 +3174,7 @@ public class FileManagerModule extends HyVqModule {
     private View buildSettingsRoot() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(buildSettingsBackRow("返回文件列表"));
         box.addView(UiKit.sectionHeader(ctx, "设置"));
 
         // ── 终端 ──
@@ -3299,6 +3313,35 @@ public class FileManagerModule extends HyVqModule {
         setContentMode(ContentMode.FILES);
     }
 
+    /** 设置页顶部的返回行（比底部的按钮更方便，符合常见设置页习惯） */
+    private View buildSettingsBackRow(String label) {
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(4), dp(10), dp(4), dp(10));
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setBackgroundResource(R.drawable.bg_ripple_round);
+        row.setOnClickListener(v -> showSettingsPage());
+
+        ImageView icon = new ImageView(ctx);
+        icon.setImageResource(R.drawable.ic_back);
+        icon.setColorFilter(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimary));
+        row.addView(icon, new LinearLayout.LayoutParams(dp(20), dp(20)));
+
+        TextView tv = new TextView(ctx);
+        tv.setText(label);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tv.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimary));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        lp.leftMargin = dp(6);
+        row.addView(tv, lp);
+        return row;
+    }
+
     /** 打开设置主页（内嵌视图） */
     private void showSettingsPage() {
         showInSettingsDialog(this::buildSettingsRoot);
@@ -3373,6 +3416,7 @@ public class FileManagerModule extends HyVqModule {
     private View buildPermissionManager() {
         if (settingsTopTitle != null) settingsTopTitle.setText("权限管理");
         LinearLayout box = new LinearLayout(ctx);
+        box.addView(buildSettingsBackRow("返回设置主页"));
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "权限管理"));
 
@@ -3531,6 +3575,12 @@ public class FileManagerModule extends HyVqModule {
             }
         }
 
+        // 左上角图标：文件模式=汉堡，终端/设置=返回
+        if (topBarLeftIcon != null) {
+            topBarLeftIcon.setImageResource(fileVisible
+                    ? R.drawable.ic_menu : R.drawable.ic_back);
+        }
+
         // 顶栏：三选一
         if (fileVisible) {
             removeTerminalTopTitle();
@@ -3646,6 +3696,24 @@ public class FileManagerModule extends HyVqModule {
         if (terminalTopPwd != null && dir != null) terminalTopPwd.setText(dir);
     }
 
+    /**
+     * 终端默认工作目录：软件私有 files/home（类似 Termux 的 $HOME）。
+     *
+     * <p>放在 files/ 而不是 cache/：cache 会被系统随时清理，
+     * 用户在终端里建的文件不能丢。</p>
+     */
+    private String termHomeDir() {
+        try {
+            File home = new File(ctx.getFilesDir(), "home");
+            if (!home.exists() && !home.mkdirs() && !home.isDirectory()) {
+                return ctx.getFilesDir().getAbsolutePath();
+            }
+            return home.getAbsolutePath();
+        } catch (Throwable t) {
+            return "/sdcard";
+        }
+    }
+
     /** 终端面板（内置，同一 Activity 内叠加显示） */
     private com.aliya.hyfilemgr.terminal.TerminalPanel terminalPanel;
 
@@ -3680,23 +3748,14 @@ public class FileManagerModule extends HyVqModule {
                 if (!virtualPath && new File(p2).isDirectory()) dir = p2;
             }
             if (dir == null) {
-                // 回退：另一窗格 → 上次真实路径 → /sdcard
-                Pane other = (active == paneL) ? paneR : paneL;
-                if (other != null && other.path != null
-                        && !other.path.startsWith("content://")
-                        && !other.path.startsWith(PREFIX_TRASH)
-                        && !other.path.startsWith(PREFIX_ZIP)
-                        && new File(other.path).isDirectory()) {
-                    dir = other.path;
-                } else if (lastRealPath != null && new File(lastRealPath).isDirectory()) {
-                    dir = lastRealPath;
-                } else {
-                    dir = "/sdcard";
-                }
+                // 回退：软件私有目录（类似 Termux 的 HOME）
+                dir = termHomeDir();
             }
 
             terminalPanel = new com.aliya.hyfilemgr.terminal.TerminalPanel(
                     ctx, dir, this::closeTerminal);
+            // pwd 变化实时同步到共享顶栏（此前只读一次，cd 后顶栏永远停在旧值）
+            terminalPanel.setOnWorkDirChange(this::updateTerminalTopPwd);
             View pv = terminalPanel.getView();
             contentWrapRef.addView(pv, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -3881,6 +3940,7 @@ public class FileManagerModule extends HyVqModule {
     private View buildAppearanceSettings() {
         if (settingsTopTitle != null) settingsTopTitle.setText("个性化");
         LinearLayout box = new LinearLayout(ctx);
+        box.addView(buildSettingsBackRow("返回设置主页"));
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "个性化"));
 
@@ -4100,6 +4160,7 @@ public class FileManagerModule extends HyVqModule {
     private View buildFileSettings() {
         if (settingsTopTitle != null) settingsTopTitle.setText("文件管理");
         LinearLayout box = new LinearLayout(ctx);
+        box.addView(buildSettingsBackRow("返回设置主页"));
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "文件管理"));
 

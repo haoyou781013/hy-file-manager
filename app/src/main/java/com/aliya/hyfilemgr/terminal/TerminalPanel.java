@@ -22,6 +22,11 @@ import android.widget.TextView;
 public class TerminalPanel {
 
     /** 关闭回调（由宿主移除面板） */
+    /** pwd 变化回调（供共享顶栏实时更新） */
+    public interface OnWorkDirChange {
+        void onWorkDirChange(String dir);
+    }
+
     public interface OnClose {
         void onClose();
     }
@@ -40,6 +45,7 @@ public class TerminalPanel {
     private TextView ctrlKey;
 
     private String workDir;
+    private OnWorkDirChange onWorkDirChange;
 
     public TerminalPanel(Context ctx, String workDir, OnClose onClose) {
         this.ctx = ctx;
@@ -126,9 +132,29 @@ public class TerminalPanel {
                 String line = termView.currentLine();
                 if (line.trim().startsWith("cd ")) {
                     String arg = line.trim().substring(3).trim();
+                    // 去掉引号
+                    if (arg.length() >= 2
+                            && (arg.startsWith("\"") && arg.endsWith("\"")
+                                || arg.startsWith("'") && arg.endsWith("'"))) {
+                        arg = arg.substring(1, arg.length() - 1);
+                    }
                     if (!arg.isEmpty() && !arg.startsWith("-")) {
-                        workDir = arg.startsWith("/") ? arg
-                                : (workDir.endsWith("/") ? workDir + arg : workDir + "/" + arg);
+                        String next;
+                        if (arg.startsWith("/")) {
+                            next = arg;
+                        } else if ("~".equals(arg)) {
+                            next = workDir;
+                        } else if (arg.startsWith("~/")) {
+                            next = workDir + arg.substring(1);
+                        } else {
+                            next = workDir.endsWith("/") ? workDir + arg : workDir + "/" + arg;
+                        }
+                        // 规范化 .. 与多余斜杠
+                        next = normalizePath(next);
+                        if (!android.text.TextUtils.equals(next, workDir)) {
+                            workDir = next;
+                            if (onWorkDirChange != null) onWorkDirChange.onWorkDirChange(workDir);
+                        }
                     }
                 }
             }
@@ -336,6 +362,27 @@ public class TerminalPanel {
     }
 
     // ── 会话 ──
+
+    public void setOnWorkDirChange(OnWorkDirChange cb) {
+        this.onWorkDirChange = cb;
+    }
+
+    /** 规范化绝对路径：折叠 . 与 ..，去掉多余斜杠 */
+    private static String normalizePath(String path) {
+        if (path == null || path.isEmpty()) return "/";
+        java.util.ArrayDeque<String> st = new java.util.ArrayDeque<>();
+        for (String seg : path.split("/")) {
+            if (seg.isEmpty() || ".".equals(seg)) continue;
+            if ("..".equals(seg)) {
+                if (!st.isEmpty()) st.removeLast();
+            } else {
+                st.addLast(seg);
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String seg : st) sb.append('/').append(seg);
+        return sb.length() == 0 ? "/" : sb.toString();
+    }
 
     /** 当前工作目录（供共享顶栏显示） */
     public String getWorkDir() {
