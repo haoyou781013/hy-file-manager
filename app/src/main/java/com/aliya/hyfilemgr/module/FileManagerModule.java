@@ -392,6 +392,7 @@ public class FileManagerModule extends HyVqModule {
     @Override
     public void onAttach(Context context, ModuleServices services) {
         this.ctx = context.getApplicationContext();
+        this.detached = false;
         com.aliya.hyfilemgr.filemgr.ThumbLoader.init(this.ctx);
         refreshAnimScale();
         if (context instanceof Activity) hostActivity = (Activity) context;
@@ -401,6 +402,8 @@ public class FileManagerModule extends HyVqModule {
 
     @Override
     public void onDetach() {
+        detached = true;
+        dismissAllPopups();
         persistState();
         if (activeInstance == this) activeInstance = null;
         // 释放 Activity 强引用：否则旋转/重建后旧 Activity 被钉住，
@@ -999,8 +1002,8 @@ public class FileManagerModule extends HyVqModule {
         int p4 = dp(4);
         panel.setPadding(p4, p4, p4, p4);
 
-        final PopupWindow popup = new PopupWindow(panel,
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        final PopupWindow popup = trackPopup(new PopupWindow(panel,
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true));
         popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
         popup.setElevation(dp(8));
         // 入场/退场动画：从右下角轻微放大淡入，避免「啪」地出现
@@ -2898,8 +2901,8 @@ public class FileManagerModule extends HyVqModule {
         int p4 = dp(4);
         panel.setPadding(p4, p4, p4, p4);
 
-        final PopupWindow popup = new PopupWindow(panel,
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        final PopupWindow popup = trackPopup(new PopupWindow(panel,
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true));
         popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
         popup.setElevation(dp(8));
 
@@ -3629,6 +3632,44 @@ public class FileManagerModule extends HyVqModule {
 
     /** 最近一次浏览过的真实目录（虚拟路径时终端用它作工作目录） */
     private volatile String lastRealPath = null;
+
+    /**
+     * 模块是否已 detach。PopupWindow 不属于任何 ViewGroup，
+     * Activity 重建（切主题 / recreate）后旧实例的 PopupWindow 仍挂在 window 上，
+     * 表现为「弹窗残留在屏幕上」。detach 时统一 dismiss。
+     */
+    private boolean detached = false;
+
+    /** 当前显示中的 PopupWindow（最多两个：上下文菜单 + 格式下拉） */
+    private final java.util.List<android.widget.PopupWindow> livePopups =
+            new java.util.ArrayList<>();
+
+    /** 关掉所有还活着的 PopupWindow（detach / 重建前调用） */
+    private void dismissAllPopups() {
+        for (android.widget.PopupWindow p : new java.util.ArrayList<>(livePopups)) {
+            try {
+                if (p != null && p.isShowing()) p.dismiss();
+            } catch (Throwable ignored) {
+            }
+        }
+        livePopups.clear();
+    }
+
+    /**
+     * 登记一个 PopupWindow，让它在 detach 时被自动关闭。
+     *
+     * <p>PopupWindow 不挂在 View 树上，Activity recreate 后旧实例的窗口
+     * 不会被系统回收，会以「幽灵弹窗」形式留在屏幕上——之前 4 个
+     * PopupWindow 全是局部变量、无人持有，正是这个泄漏。</p>
+     */
+    private android.widget.PopupWindow trackPopup(android.widget.PopupWindow p) {
+        if (p != null) {
+            livePopups.add(p);
+            p.setOnDismissListener(() -> livePopups.remove(p));
+        }
+        return p;
+    }
+
 
     /** 当前内容视图：三者互斥 */
     private enum ContentMode { FILES, SETTINGS }
@@ -8672,8 +8713,8 @@ public class FileManagerModule extends HyVqModule {
         int p4 = dp(4);
         panel.setPadding(p4, p4, p4, p4);
 
-        final PopupWindow popup = new PopupWindow(panel,
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        final PopupWindow popup = trackPopup(new PopupWindow(panel,
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true));
         popup.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
         popup.setElevation(dp(8));
 
@@ -9014,7 +9055,7 @@ public class FileManagerModule extends HyVqModule {
         box.addView(tvFormat);
         // 格式下拉：PopupWindow 独立窗口，不参与弹窗布局，
         // 展开/收起弹窗高度完全不变，也不受父容器裁剪影响。
-        final PopupWindow fmtPopup = new PopupWindow(ctx);
+        final PopupWindow fmtPopup = trackPopup(new PopupWindow(ctx));
         final ScrollView fmtScroll = new ScrollView(ctx);
         fmtScroll.setVerticalScrollBarEnabled(true);
         fmtScroll.setBackground(UiKit.rounded(ctx, dp(10),

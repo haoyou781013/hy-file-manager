@@ -278,8 +278,36 @@ public final class UiKit {
             shell.addView(scrim, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
-        shell.addView(panel, new FrameLayout.LayoutParams(panelW,
-                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        // ⚠️ 高度上限：面板原本是 WRAP_CONTENT，内容一多（压缩对话框的
+        // 文件名/格式/等级/密码/多个复选/按钮）就会超出屏幕，
+        // 底部按钮被裁掉且**无法滚动** —— 横屏或大字体下必然踩到。
+        // 这里给面板一个屏幕 80% 的硬上限，并把内容区包进 ScrollView。
+        int screenH = context.getResources().getDisplayMetrics().heightPixels;
+        int maxPanelH = (int) (screenH * 0.8f);
+
+        FrameLayout.LayoutParams panelLp =
+                new FrameLayout.LayoutParams(panelW, ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.CENTER);
+        panel.setLayoutParams(panelLp);
+        panel.setMinimumHeight(0);
+        // 用「最大高度」约束：View 本身不支持 maxHeight，
+        // 改为把 panel 包一层 ScrollView，由 ScrollView 撑满上限并在内部滚动。
+        android.widget.ScrollView panelScroll = new android.widget.ScrollView(context);
+        panelScroll.setVerticalScrollBarEnabled(true);
+        panelScroll.setOverScrollMode(android.view.View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+        panelScroll.setClipToPadding(false);
+        // 面板自身的圆角背景移到 ScrollView 之外的容器，
+        // 否则滚动时背景会跟着内容走、露出未圆角的空白
+        FrameLayout panelHolder = new FrameLayout(context);
+        panelHolder.setBackground(panel.getBackground());
+        panel.setBackground(null);
+        panelScroll.addView(panel, new android.widget.ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        panelHolder.addView(panelScroll, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        panelLp.height = maxPanelH;
+        shell.addView(panelHolder, panelLp);
 
         dialog.setContentView(shell);
         if (dialog.getWindow() != null) {
