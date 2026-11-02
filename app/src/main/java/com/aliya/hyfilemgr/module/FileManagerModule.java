@@ -1796,9 +1796,10 @@ public class FileManagerModule extends HyVqModule {
                         File tf = new File(e.path);
                         // 压缩包：直接进入内部浏览（beta.8），不再走解压或外部打开
                         if (isZip(e)) {
-                            // 只有 zip/jar/apk 进内部浏览；7z/rar/tar 等
-                            // enterZip 会 ZipException 且用户被困空目录
-                            if (isZipReadable(e)) enterZip(e.path);
+                            // 现在所有归档格式都能内部浏览（listArchiveItems 统一枚举）：
+                            // zip/7z/rar/tar 家族 → 进虚拟路径
+                            // 单流格式（gz/bz2/xz/zst）没有条目 → 直接解压
+                            if (isArchiveBrowsable(e)) enterZip(e.path);
                             else extractZip(e);
                         } else if (isTextFile(tf.getName())) {
                             openTextEditor(tf);   // 文本/代码文件 → 内置编辑器
@@ -8999,6 +9000,25 @@ public class FileManagerModule extends HyVqModule {
                 || lower.endsWith(".apk");
     }
 
+    /**
+     * 该压缩包能否**内部浏览**（列出条目）。
+     *
+     * <p>与 isZipReadable（只认 zip/jar/apk，用于 java.util.zip 读取）
+     * 的区别：这里判断的是 listArchiveItems 是否支持，
+     * 已覆盖 zip / 7z / rar / tar 家族。
+     * 单流格式（gz/bz2/xz/zst）是「一个文件压成一个流」，没有条目结构，
+     * 只能直接解压，不能浏览。</p>
+     */
+    private static boolean isArchiveBrowsable(FileEntry e) {
+        if (e == null || e.name == null) return false;
+        String n = e.name.toLowerCase(java.util.Locale.ROOT);
+        if (n.endsWith(".zip") || n.endsWith(".jar") || n.endsWith(".apk")
+                || n.endsWith(".xapk") || n.endsWith(".7z") || n.endsWith(".rar")) {
+            return true;
+        }
+        return n.endsWith(".tar") || n.contains(".tar.") || n.endsWith(".tgz");
+    }
+
     private static boolean isZip(FileEntry e) {
         return e.name != null
                 && com.aliya.hyfilemgr.archive.ArchiveExtractor.canExtract(e.name);
@@ -9826,6 +9846,111 @@ public class FileManagerModule extends HyVqModule {
         reload(active);
     }
 
+
+    // ══════════ 统一压缩包条目枚举（预览用） ══════════
+
+    /** 一条归档内条目的最小信息，与具体格式无关 */
+    private static final class ArchiveItem {
+        final String name;      // 包内路径，用 / 分隔
+        final long size;        // 未压缩大小，-1 表示未知
+        final long time;        // mtime，0 表示未知
+        ArchiveItem(String name, long size, long time) {
+            this.name = name; this.size = size; this.time = time;
+        }
+    }
+
+    /**
+     * 列出压缩包内所有条目，与格式无关。
+     *
+     * <p>此前只有 zip/jar/apk 能内部浏览（java.util.zip.ZipFile），
+     * 7z / rar / tar 家族单击会直接走解压。这里把「取条目列表」抽出来：
+     * zip 走 ZipFile、7z 走 SevenZFile、tar 家族走 ArchiveInputStream、
+     * rar 走 junrar Archive。</p>
+     *
+     * <p>大包代价：tar 家族必须单遍顺序扫（无中央目录），7z/zip/rar 可随机访问。
+     * 因此结果由调用方按「压缩包绝对路径」缓存，滚动/进子目录不重复扫。</p>
+     *
+     * @return 条目列表；失败抛异常由调用方转成提示
+     */
+    private static java.util.List<ArchiveItem> listArchiveItems(File archive)
+            throws Exception {
+        java.util.List<ArchiveItem> out = new java.util.ArrayList<>();
+        String lower = archive.getName().toLowerCase(java.util.Locale.ROOT);
+
+        if (lower.endsWith(".zip") || lower.endsWith(".jar")
+                || lower.endsWith(".apk") || lower.endsWith(".xapk")) {
+            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(archive)) {
+                java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
+                while (en.hasMoreElements()) {
+                    java.util.zip.ZipEntry ze = en.nextElement();
+                    out.add(new ArchiveItem(ze.getName(), ze.getSize(), ze.getTime()));
+                }
+            }
+            return out;
+        }
+
+        if (lower.endsWith(".7z")) {
+            try (org.apache.commons.compress.archivers.sevenz.SevenZFile sz =
+                         new org.apache.commons.compress.archivers.sevenz.SevenZFile(archive)) {
+                for (org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry e
+                        : sz.getEntries()) {
+                    out.add(new ArchiveItem(e.getName(), e.getSize(), e.getLastModifiedDate() == null
+                            ? 0 : e.getLastModifiedDate().getTime()));
+                }
+            }
+            return out;
+        }
+
+        if (lower.endsWith(".rar")) {
+            try (com.github.junrar.Archive a = new com.github.junrar.Archive(archive)) {
+                for (com.github.junrar.rarfile.FileHeader h : a.getFileHeaders()) {
+                    out.add(new ArchiveItem(h.getFileName(), h.getFullUnpackSize(),
+                            h.getMTime() == null ? 0 : h.getMTime().getTime()));
+                }
+            }
+            return out;
+        }
+
+        // tar 家族：tar / tar.gz / tar.bz2 / tar.xz / tar.zst
+        // 单流格式（gz/bz2/xz/zst）不是归档，没有条目可列 → 返回空
+        if (!lower.endsWith(".tar") && !lower.contains(".tar.")) return out;
+
+        try (java.io.InputStream fin = new java.io.BufferedInputStream(
+                     new java.io.FileInputStream(archive));
+             org.apache.commons.compress.archivers.ArchiveInputStream<?> ain =
+                     wrapArchiveStream(fin, archive.getName())) {
+            if (ain == null) return out;
+            org.apache.commons.compress.archivers.ArchiveEntry ae;
+            while ((ae = ain.getNextEntry()) != null) {
+                out.add(new ArchiveItem(ae.getName(), ae.getSize(),
+                        ae.getLastModifiedDate() == null ? 0
+                                : ae.getLastModifiedDate().getTime()));
+            }
+        }
+        return out;
+    }
+
+    /** 按扩展名把输入流包成 tar / tar.gz / tar.bz2 / tar.xz / tar.zst 的读流 */
+    private static org.apache.commons.compress.archivers.ArchiveInputStream<?>
+            wrapArchiveStream(java.io.InputStream in, String fileName) throws Exception {
+        String lower = fileName.toLowerCase(java.util.Locale.ROOT);
+        java.io.InputStream dec = in;
+        if (lower.contains(".tar.gz") || lower.endsWith(".tgz")) {
+            dec = new org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream(in);
+        } else if (lower.contains(".tar.bz2")) {
+            dec = new org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream(in);
+        } else if (lower.contains(".tar.xz")) {
+            dec = new org.apache.commons.compress.compressors.xz.XZCompressorInputStream(in);
+        } else if (lower.contains(".tar.zst")) {
+            dec = new com.github.luben.zstd.ZstdInputStream(in);
+        }
+        return new org.apache.commons.compress.archivers.tar.TarArchiveInputStream(dec);
+    }
+
+    /** 压缩包内条目列表缓存：包路径 → 条目（避免每次进子目录重扫 tar） */
+    private final java.util.Map<String, java.util.List<ArchiveItem>> archiveItemsCache =
+            new java.util.HashMap<>();
+
     private void loadZip(Pane p) {
         p.entries.clear();
         String[] parts = splitZipPath(p.path);
@@ -9836,42 +9961,60 @@ public class FileManagerModule extends HyVqModule {
             p.lastResult = AccessResult.empty("压缩包不存在");
             return;
         }
+
+        // 统一枚举：zip / 7z / rar / tar 家族都走同一条路径
+        java.util.List<ArchiveItem> items = archiveItemsCache.get(zipPath);
+        if (items == null) {
+            try {
+                items = listArchiveItems(zip);
+                archiveItemsCache.put(zipPath, items);
+            } catch (Throwable t) {
+                p.lastResult = AccessResult.empty("无法读取压缩包：" + t.getMessage());
+                return;
+            }
+        }
+
         java.util.TreeMap<String, FileEntry> dirs = new java.util.TreeMap<>();
         java.util.TreeMap<String, FileEntry> files = new java.util.TreeMap<>();
-        // 先解析中央目录拿到加密表（不依赖反射）
-        java.util.Map<String, Boolean> encMap = readZipEncryptionMap(zip);
-        try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(zip)) {
-            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
-            String prefix = inner.isEmpty() ? "" : inner + "/";
-            while (en.hasMoreElements()) {
-                java.util.zip.ZipEntry ze = en.nextElement();
-                String name = ze.getName();
-                if (!name.startsWith(prefix)) continue;
-                String rel = name.substring(prefix.length());
-                if (rel.isEmpty()) continue;
-                boolean encrypted = Boolean.TRUE.equals(encMap.get(name));
-                String encMark = encrypted ? " · 加密" : "";
-                int slash = rel.indexOf('/');
-                if (slash >= 0) {
-                    String dirName = rel.substring(0, slash);
-                    if (!dirs.containsKey(dirName)) {
-                        String childVirt = p.path + dirName + "/";
-                        boolean nested = dirName.toLowerCase(java.util.Locale.ROOT).endsWith(".zip");
-                        dirs.put(dirName, new FileEntry(childVirt, dirName,
-                                FileEntry.Type.VIRTUAL_DIR, 0, 0, true,
-                                nested ? "嵌套压缩包" : "文件夹", false));
-                    }
-                } else {
-                    String childVirt = p.path + rel;
-                    files.put(rel, new FileEntry(childVirt, rel,
-                            FileEntry.Type.VIRTUAL_FILE, ze.getSize(), ze.getTime(), true,
-                            humanSize(ze.getSize()) + encMark, false));
+        // 加密标记只对 zip 有意义（能读到中央目录标志位）
+        java.util.Map<String, Boolean> encMap =
+                zip.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".zip")
+                        ? readZipEncryptionMap(zip)
+                        : java.util.Collections.emptyMap();
+
+        String prefix = inner.isEmpty() ? "" : inner + "/";
+        for (ArchiveItem it : items) {
+            String name = it.name;
+            if (name == null || !name.startsWith(prefix)) continue;
+            String rel = name.substring(prefix.length());
+            if (rel.isEmpty()) continue;
+
+            int slash = rel.indexOf('/');
+            if (slash >= 0) {
+                String dirName = rel.substring(0, slash);
+                if (!dirs.containsKey(dirName)) {
+                    String childVirt = p.path + dirName + "/";
+                    String dl = dirName.toLowerCase(java.util.Locale.ROOT);
+                    boolean nested = dl.endsWith(".zip") || dl.endsWith(".7z")
+                            || dl.endsWith(".rar") || dl.endsWith(".tar")
+                            || dl.contains(".tar.") || dl.endsWith(".gz")
+                            || dl.endsWith(".bz2") || dl.endsWith(".xz")
+                            || dl.endsWith(".zst");
+                    dirs.put(dirName, new FileEntry(childVirt, dirName,
+                            FileEntry.Type.VIRTUAL_DIR, 0, 0, true,
+                            nested ? "嵌套压缩包" : "文件夹", false));
                 }
+            } else {
+                String childVirt = p.path + rel;
+                boolean encrypted = Boolean.TRUE.equals(encMap.get(name));
+                String sub = (it.size >= 0 ? humanSize(it.size) : "—")
+                        + (encrypted ? " · 加密" : "");
+                files.put(rel, new FileEntry(childVirt, rel,
+                        FileEntry.Type.VIRTUAL_FILE, it.size, it.time, true,
+                        sub, false));
             }
-        } catch (Throwable t) {
-            p.lastResult = AccessResult.empty("无法读取压缩包：" + t.getMessage());
-            return;
         }
+
         // 置顶 ".." 返回条目：
         //  · 包内子目录 → 回到包内上一级
         //  · 压缩包根目录 → 退出预览，回到压缩包所在文件夹
@@ -9880,7 +10023,6 @@ public class FileManagerModule extends HyVqModule {
             String up = cut < 0 ? "" : inner.substring(0, cut + 1);
             p.entries.add(FileEntry.parent(PREFIX_ZIP + zipPath + "/" + up));
         } else {
-            // 根目录：.. 指向 zip 文件所在的普通目录
             String zipDir = new File(zipPath).getParent();
             p.entries.add(FileEntry.parent(zipDir == null
                     ? Environment.getExternalStorageDirectory().getAbsolutePath()
@@ -9888,7 +10030,12 @@ public class FileManagerModule extends HyVqModule {
         }
         p.entries.addAll(dirs.values());
         p.entries.addAll(files.values());
-        p.lastResult = AccessResult.empty("压缩包 · " + zip.getName());
+        if (items.isEmpty()) {
+            p.lastResult = AccessResult.empty("压缩包 · " + zip.getName()
+                    + "（单文件流格式，无内部条目）");
+        } else {
+            p.lastResult = AccessResult.empty("压缩包 · " + zip.getName());
+        }
     }
 
     /** 把包内条目解出到另一窗格的当前目录 */
