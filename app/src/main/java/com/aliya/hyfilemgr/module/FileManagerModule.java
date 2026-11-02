@@ -9376,8 +9376,25 @@ public class FileManagerModule extends HyVqModule {
                 UiKit.toast(ctx, "文件名不能为空");
                 return;
             }
-            // 若用户自己写了扩展名就不重复添加
-            if (!name.toLowerCase().endsWith("." + ext)) name = name + "." + ext;
+            // 若用户自己写了扩展名就不重复添加。
+            // 注意 tar.gz 这种多段扩展名：用户可能只写了 .tar 或 .gz，
+            // 都视为「没写全」，统一补成完整后缀。
+            String lower = name.toLowerCase();
+            String suffix = "." + ext;
+            if (!lower.endsWith(suffix)) {
+                // 先剥掉用户误写的单段后缀，避免 foo.tar.tar.gz / foo.gz.tar.gz
+                int dot = ext.indexOf('.');
+                if (dot > 0) {
+                    String lastSeg = "." + ext.substring(dot + 1);       // ".gz"
+                    String firstSeg = "." + ext.substring(0, dot);        // ".tar"
+                    if (lower.endsWith(lastSeg)) {
+                        name = name.substring(0, name.length() - lastSeg.length());
+                    } else if (lower.endsWith(firstSeg)) {
+                        name = name.substring(0, name.length() - firstSeg.length());
+                    }
+                }
+                name = name + suffix;
+            }
             String pwd = "1".equals(COMPRESS_FORMATS[fmtIdx[0]][2])
                     ? etPwd.getText().toString() : "";
             UiKit.dismissWithAnim(d);
@@ -9425,6 +9442,8 @@ public class FileManagerModule extends HyVqModule {
                             final int level, final String password,
                             final boolean single, final boolean delSource,
                             final boolean toOtherPane) {
+        // 密码兜底：compressWithCommons 的调用方若传 null 会 NPE
+        final String pwd = password == null ? "" : password;
         // 目标目录
         File outDir;
         if (toOtherPane) {
@@ -9438,9 +9457,13 @@ public class FileManagerModule extends HyVqModule {
             UiKit.toast(ctx, "目标目录不可写");
             return;
         }
-        final File out = new File(outDir, uniqueName(outDir.getAbsolutePath(), outName, null));
         UiKit.toast(ctx, "压缩中…");
         runTask(() -> {
+            // 名字必须在本线程生成：uniqueName 是「检查再创建」，
+            // 在主线程提前算好会在用户快速点两次时产生竞态——
+            // 两次都拿到同一个不存在的名字，后一个 FileOutputStream 覆盖前一个。
+            final File out = new File(outDir,
+                    uniqueName(outDir.getAbsolutePath(), outName, null));
             boolean ok = false;
             String err = null;
             try {
@@ -9554,8 +9577,13 @@ public class FileManagerModule extends HyVqModule {
                                         String password) throws java.io.IOException {
         if ("7z".equals(ext)) return compress7z(src, out, single, password);
 
-        // ── 单文件流压缩：gz / bz2 / xz / zst（源是目录时不走这里）──
-        if (!src.isDirectory() && isSingleStreamExt(ext)) {
+        // ── 单文件流压缩：gz / bz2 / xz / zst ──
+        // 源是目录时不能裸压单流（会生成无压缩器的裸 tar 却叫 .gz），
+        // 但也不能报错——调用方已按 ext 拼好文件名，这里降级为 tar.xxx 保持一致。
+        if (src.isDirectory() && isSingleStreamExt(ext)) {
+            // 走到下面的 tar 分支，但需要真实压缩器：对 tarInnerExt 特判
+            // （见下方 inner 的取值处）
+        } else if (!src.isDirectory() && isSingleStreamExt(ext)) {
             try (java.io.InputStream in = new java.io.BufferedInputStream(
                         new java.io.FileInputStream(src));
                  java.io.OutputStream os = new java.io.BufferedOutputStream(
@@ -9572,7 +9600,10 @@ public class FileManagerModule extends HyVqModule {
         java.io.OutputStream base = new java.io.BufferedOutputStream(
                 new java.io.FileOutputStream(out));
         try {
-            String inner = tarInnerExt(ext);      // "tar.gz" → "gz"，"tar" → null
+            // "tar.gz" → "gz"；"tar" → null（不套压缩器）
+            // 单流格式（gz/bz2/xz/zst）直接当压缩器用——这是「源是目录」时的降级路径，
+            // 否则 tarInnerExt("gz") 会返回 null，生成裸 tar 却挂 .gz 后缀
+            String inner = isSingleStreamExt(ext) ? ext : tarInnerExt(ext);
             java.io.OutputStream chain = inner == null ? base : wrapCompressor(base, inner);
             org.apache.commons.compress.archivers.tar.TarArchiveOutputStream tar =
                     new org.apache.commons.compress.archivers.tar.TarArchiveOutputStream(chain);
@@ -9622,13 +9653,21 @@ public class FileManagerModule extends HyVqModule {
                 return new org.apache.commons.compress.compressors.bzip2
                         .BZip2CompressorOutputStream(os);
             case "xz":
-                // commons-compress 的 XZCompressorOutputStream(OutputStream, int preset)
-                // preset 6 = 库默认（大小与速度平衡）；0-9，9 最慢最小
+                // preset 0-9。库默认是 6，但 6 的 LZMA2 字典 8MiB、
+                // 编码器峰值内存约 94MB，低内存 Android 设备容易 OOM。
+                // 取 4（字典 4MiB，约 12MB）——手机上压缩率差异很小。
                 return new org.apache.commons.compress.compressors.xz
-                        .XZCompressorOutputStream(os, 6);
+                        .XZCompressorOutputStream(os, 4);
             case "zst":
-                // zstd-jni 需要 aarch64 原生库；版本被钉在 1.5.5-11（新版要 compileSdk 37）
-                return new com.github.luben.zstd.ZstdOutputStream(os);
+                // zstd-jni 需要原生库；版本被钉在 1.5.5-11（新版要 compileSdk 37）。
+                // ABI 不匹配时抛 UnsatisfiedLinkError / NoClassDefFoundError，
+                // 那是 Error 不是 Exception，必须显式转成 IOException，
+                // 否则上层只看到「压缩失败」而没有可读原因。
+                try {
+                    return new com.github.luben.zstd.ZstdOutputStream(os);
+                } catch (UnsatisfiedLinkError | NoClassDefFoundError e) {
+                    throw new java.io.IOException("此设备不支持 ZSTD（原生库加载失败）", e);
+                }
             default:
                 throw new java.io.IOException("不支持的压缩格式：" + kind);
         }
