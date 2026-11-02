@@ -5524,7 +5524,10 @@ public class FileManagerModule extends HyVqModule {
                     if (!f.exists()) continue;
                     try {
                         if (inTrash) {
-                            deleteTree(f); // 回收站：物理删除
+                            // 回收站：物理删除，连同 .trashmeta 一起清掉
+                            // （否则 meta 会成为孤儿文件，且下次同名条目会复用旧路径）
+                            deleteTrashMeta(f);
+                            deleteTree(f);
                         } else {
                             // 移入回收站（保留原路径层级，恢复=移回原位置）
                             // 采用本次确认页上的勾选（默认跟随设置，改动仅本次生效）
@@ -10162,12 +10165,23 @@ public class FileManagerModule extends HyVqModule {
         p.lastResult = AccessResult.empty("回收站");
     }
 
+    /**
+     * 收集回收站条目。
+     *
+     * <p>旧实现递归到叶子，把目录结构拍平——用户看到一堆散文件，
+     * 不知道它们原本属于哪个文件夹，空目录更是完全消失。
+     * 现在<b>只取顶层条目</b>，目录原样保留（点进去再展开）。</p>
+     */
     private void collectTrash(File dir, List<FileEntry> out) {
         File[] fs = dir.listFiles();
         if (fs == null) return;
         for (File f : fs) {
-            if (f.isDirectory()) collectTrash(f, out);
-            else out.add(FileEntry.file(f.getAbsolutePath(), f.length(), f.lastModified()));
+            if (isTrashMeta(f)) continue;   // 元数据不是用户可恢复的条目
+            if (f.isDirectory()) {
+                out.add(FileEntry.dir(f.getAbsolutePath(), f.lastModified()));
+            } else {
+                out.add(FileEntry.file(f.getAbsolutePath(), f.length(), f.lastModified()));
+            }
         }
     }
 
@@ -10235,14 +10249,88 @@ public class FileManagerModule extends HyVqModule {
         return n;
     }
 
-    /** 移入回收站：目标 = TRASH_DIR + 原绝对路径（保留层级，恢复=移回原位置）；重名加时间戳 */
+
+    // ── 回收站元数据：记录原始绝对路径，避免重名加后缀后反推失准 ──
+
+    private static final String TRASH_META_SUFFIX = ".trashmeta";
+
+    /** 写 meta：同级文件 `<条目名>.trashmeta`，内容为原始绝对路径 */
+    private static void writeTrashMeta(File entry, String originalPath) {
+        try {
+            File meta = new File(entry.getParentFile(),
+                    entry.getName() + TRASH_META_SUFFIX);
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(meta)) {
+                fos.write(originalPath.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 删除某条目对应的 .trashmeta（不存在则静默） */
+    private static void deleteTrashMeta(File entry) {
+        try {
+            File meta = new File(entry.getParentFile(),
+                    entry.getName() + TRASH_META_SUFFIX);
+            if (meta.exists()) //noinspection ResultOfMethodCallIgnored
+                meta.delete();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 读 meta；无 meta 时返回 null（旧格式条目，走相对路径反推） */
+    private static String readTrashMeta(File entry) {
+        try {
+            File meta = new File(entry.getParentFile(),
+                    entry.getName() + TRASH_META_SUFFIX);
+            if (!meta.isFile() || meta.length() > 8192) return null;
+            byte[] b = new byte[(int) meta.length()];
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(meta)) {
+                int off = 0;
+                while (off < b.length) {
+                    int r = fis.read(b, off, b.length - off);
+                    if (r <= 0) break;
+                    off += r;
+                }
+                String p = new String(b, 0, off, java.nio.charset.StandardCharsets.UTF_8).trim();
+                return p.isEmpty() ? null : p;
+            }
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** meta 文件本身不该出现在回收站列表里 */
+    private static boolean isTrashMeta(File f) {
+        return f.getName().endsWith(TRASH_META_SUFFIX);
+    }
+
+    /** 移入回收站。
+     *
+     * <p><b>路径设计</b>：回收站内布局为 {@code .HyVqTrash/<相对外部存储的路径>}，
+     * 例如 {@code /sdcard/DCIM/a.jpg} → {@code .HyVqTrash/DCIM/a.jpg}。
+     * 旧实现用 {@code TRASH_DIR + 绝对路径}，会在中间多插一层
+     * {@code /storage/emulated/0}，结构混乱且与 {@code /sdcard} 软链不同源。</p>
+     *
+     * <p><b>同名冲突</b>：追加 {@code ~<时间戳>} 后缀，并在同级写
+     * {@code <名>.trashmeta}（内容为原始绝对路径），
+     * 这样恢复时不必再靠路径反推——反推在加过后缀后必然错。</p>
+     */
     private boolean moveToTrash(File f) {
         try {
-            String target = TRASH_DIR + f.getAbsolutePath();
+            // 相对外部存储根：/sdcard/DCIM/a.jpg → DCIM/a.jpg
+            String root = Environment.getExternalStorageDirectory().getAbsolutePath();
+            String abs = f.getAbsolutePath();
+            String rel = abs.startsWith(root + "/")
+                    ? abs.substring(root.length() + 1)
+                    : f.getName();   // 不在外部存储下（/data 等）→ 只存文件名
+            String target = TRASH_DIR + "/" + rel;
             File dest = new File(target);
             File pd = dest.getParentFile();
-            if (pd != null) pd.mkdirs();
-            if (dest.exists()) dest = new File(target + "." + System.currentTimeMillis());
+            if (pd != null) //noinspection ResultOfMethodCallIgnored
+                pd.mkdirs();
+            if (dest.exists()) {
+                dest = new File(target + "~" + System.currentTimeMillis());
+            }
             boolean moved;
             if (f.renameTo(dest)) {
                 moved = true;
@@ -10259,12 +10347,34 @@ public class FileManagerModule extends HyVqModule {
                 // 按 mtime 判过期 → 删一张旧照片会立刻被清理。
                 //noinspection ResultOfMethodCallIgnored
                 dest.setLastModified(System.currentTimeMillis());
+                // 记录原始绝对路径：恢复时直接读，不再靠相对路径反推
+                writeTrashMeta(dest, abs);
             }
             return moved;
         } catch (Throwable t) {
             android.util.Log.w("HYTrash", "moveToTrash failed: " + f, t);
             return false;
         }
+    }
+
+
+    /**
+     * 旧格式回收站路径反推（无 .trashmeta 的条目）。
+     *
+     * <p>旧实现把 {@code TRASH_DIR + 绝对路径} 作为存放位置，所以条目形如
+     * {@code .HyVqTrash/storage/emulated/0/DCIM/a.jpg}。
+     * 新实现是 {@code .HyVqTrash/DCIM/a.jpg}。这里两者都要认。</p>
+     */
+    private static String legacyOrigPath(String trashAbsPath) {
+        String rel = trashAbsPath.substring(TRASH_DIR.length());
+        if (rel.startsWith("/")) rel = rel.substring(1);
+        String root = Environment.getExternalStorageDirectory().getAbsolutePath();
+        // 旧格式：相对路径以 "storage/emulated/0/" 开头 → 前面补 /
+        if (rel.startsWith("storage/") || rel.startsWith("sdcard/")) {
+            return "/" + rel;
+        }
+        // 新格式或 /data 下的条目
+        return root + "/" + rel;
     }
 
     /** 从回收站恢复：trash 路径去掉 TRASH_DIR 前缀即原绝对路径；父目录重建；重名自动 (1) */
@@ -10274,7 +10384,12 @@ public class FileManagerModule extends HyVqModule {
             UiKit.toast(ctx, "仅回收站内条目可恢复");
             return;
         }
-        final String orig = e.path.substring(TRASH_DIR.length());
+        // 优先读 .trashmeta 里记的原始绝对路径；
+        // 旧格式条目（无 meta）才回退到「相对路径反推」
+        String fromMeta = readTrashMeta(f);
+        final String orig = fromMeta != null
+                ? fromMeta
+                : legacyOrigPath(e.path);
         UiKit.toast(ctx, "恢复中…");
         runTask(() -> {
             boolean ok = false;
