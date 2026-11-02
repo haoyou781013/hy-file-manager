@@ -9860,12 +9860,38 @@ public class FileManagerModule extends HyVqModule {
 
     /** 一条归档内条目的最小信息，与具体格式无关 */
     private static final class ArchiveItem {
-        final String name;      // 包内路径，用 / 分隔
+        final String name;      // 包内路径，用 / 分隔，已归一化（去掉 ./ 前缀、多余斜杠、尾部 /）
         final long size;        // 未压缩大小，-1 表示未知
         final long time;        // mtime，0 表示未知
+        final boolean isDir;    // 是否是目录条目（tar/7z 会显式记录空目录）
         ArchiveItem(String name, long size, long time) {
-            this.name = name; this.size = size; this.time = time;
+            this(name, size, time, false);
         }
+        ArchiveItem(String name, long size, long time, boolean isDir) {
+            this.name = normalizeEntryName(name);
+            this.size = size; this.time = time; this.isDir = isDir;
+        }
+    }
+
+    /**
+     * 归一化归档条目名。
+     *
+     * <p>tar 常带 {@code ./} 前缀（{@code tar czf x.tar.gz -C dir .} 就会这样），
+     * 不处理的话 loadZip 里 {@code rel.indexOf('/')} 会落在位置 1，
+     * {@code dirName} 取成空串，整包条目全部丢失。</p>
+     *
+     * <p>同时去掉前导 / 与重复斜杠，防止拼出 {@code //} 或绝对路径。</p>
+     */
+    private static String normalizeEntryName(String raw) {
+        if (raw == null) return "";
+        String n = raw.replace('\\', '/');
+        while (n.startsWith("./")) n = n.substring(2);
+        while (n.startsWith("/")) n = n.substring(1);
+        while (n.contains("//")) n = n.replace("//", "/");
+        // 目录条目常以 / 结尾（tar 的 "./sub/"）：去掉尾部斜杠，
+        // 否则 "sub/" 在按 / 切分时 dirName 会取成 "sub" 但 rel 为空导致条目丢失
+        while (n.endsWith("/")) n = n.substring(0, n.length() - 1);
+        return n;
     }
 
     /**
@@ -9892,7 +9918,8 @@ public class FileManagerModule extends HyVqModule {
                 java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
                 while (en.hasMoreElements()) {
                     java.util.zip.ZipEntry ze = en.nextElement();
-                    out.add(new ArchiveItem(ze.getName(), ze.getSize(), ze.getTime()));
+                    out.add(new ArchiveItem(ze.getName(), ze.getSize(), ze.getTime(),
+                            ze.isDirectory()));
                 }
             }
             return out;
@@ -9903,8 +9930,15 @@ public class FileManagerModule extends HyVqModule {
                          new org.apache.commons.compress.archivers.sevenz.SevenZFile(archive)) {
                 for (org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry e
                         : sz.getEntries()) {
-                    out.add(new ArchiveItem(e.getName(), e.getSize(), e.getLastModifiedDate() == null
-                            ? 0 : e.getLastModifiedDate().getTime()));
+                    // getLastModifiedDate() 在条目没有该字段时**抛
+                    // UnsupportedOperationException**，不是返回 null。
+                    // 必须先 hasLastModifiedDate() 判断，否则整个枚举直接失败。
+                    long t = 0;
+                    if (e.getHasLastModifiedDate()) {
+                        java.util.Date d = e.getLastModifiedDate();
+                        if (d != null) t = d.getTime();
+                    }
+                    out.add(new ArchiveItem(e.getName(), e.getSize(), t, e.isDirectory()));
                 }
             }
             return out;
@@ -9914,7 +9948,8 @@ public class FileManagerModule extends HyVqModule {
             try (com.github.junrar.Archive a = new com.github.junrar.Archive(archive)) {
                 for (com.github.junrar.rarfile.FileHeader h : a.getFileHeaders()) {
                     out.add(new ArchiveItem(h.getFileName(), h.getFullUnpackSize(),
-                            h.getMTime() == null ? 0 : h.getMTime().getTime()));
+                            h.getMTime() == null ? 0 : h.getMTime().getTime(),
+                            h.isDirectory()));
                 }
             }
             return out;
@@ -9933,7 +9968,8 @@ public class FileManagerModule extends HyVqModule {
             while ((ae = ain.getNextEntry()) != null) {
                 out.add(new ArchiveItem(ae.getName(), ae.getSize(),
                         ae.getLastModifiedDate() == null ? 0
-                                : ae.getLastModifiedDate().getTime()));
+                                : ae.getLastModifiedDate().getTime(),
+                        ae.isDirectory()));
             }
         }
         return out;
@@ -9986,6 +10022,10 @@ public class FileManagerModule extends HyVqModule {
             }
         }
 
+        android.util.Log.d("HyArchive", "loadZip path=" + p.path
+                + " zipPath=" + zipPath + " inner=[" + inner + "]"
+                + " items=" + items.size());
+
         java.util.TreeMap<String, FileEntry> dirs = new java.util.TreeMap<>();
         java.util.TreeMap<String, FileEntry> files = new java.util.TreeMap<>();
         // 加密标记只对 zip 有意义（能读到中央目录标志位）
@@ -9994,16 +10034,25 @@ public class FileManagerModule extends HyVqModule {
                         ? readZipEncryptionMap(zip)
                         : java.util.Collections.emptyMap();
 
-        String prefix = inner.isEmpty() ? "" : inner + "/";
+        // inner 来自 splitZipPath，形如 "sub/"（带尾部斜杠）。
+        // 直接 inner + "/" 会拼成 "sub//"，与条目名 "sub/b.txt" 永远匹配不上 ——
+        // 这就是「根目录能列出、点进子目录一片空白」的根因。
+        String innerNorm = inner;
+        while (innerNorm.endsWith("/")) innerNorm = innerNorm.substring(0, innerNorm.length() - 1);
+        String prefix = innerNorm.isEmpty() ? "" : innerNorm + "/";
         for (ArchiveItem it : items) {
             String name = it.name;
-            if (name == null || !name.startsWith(prefix)) continue;
+            if (name == null || name.isEmpty()) continue;   // "./" 归一化后为空
+            if (!name.startsWith(prefix)) continue;
             String rel = name.substring(prefix.length());
+            while (rel.startsWith("/")) rel = rel.substring(1);
             if (rel.isEmpty()) continue;
 
             int slash = rel.indexOf('/');
-            if (slash >= 0) {
-                String dirName = rel.substring(0, slash);
+            // it.isDir：tar/7z 会显式给出目录条目（内容是空的），
+            // 不能只靠名称里有没有 / 来判断
+            if (it.isDir || slash >= 0) {
+                String dirName = it.isDir ? rel : rel.substring(0, slash);
                 if (!dirs.containsKey(dirName)) {
                     String childVirt = p.path + dirName + "/";
                     String dl = dirName.toLowerCase(java.util.Locale.ROOT);
@@ -10042,6 +10091,8 @@ public class FileManagerModule extends HyVqModule {
         }
         p.entries.addAll(dirs.values());
         p.entries.addAll(files.values());
+        android.util.Log.d("HyArchive", "loadZip result dirs=" + dirs.size()
+                + " files=" + files.size() + " entries=" + p.entries.size());
         if (items.isEmpty()) {
             p.lastResult = AccessResult.empty("压缩包 · " + zip.getName()
                     + "（单文件流格式，无内部条目）");
