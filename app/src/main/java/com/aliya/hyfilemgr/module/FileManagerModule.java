@@ -7598,13 +7598,15 @@ public class FileManagerModule extends HyVqModule {
 
         // 后台解压，避免大包阻塞 UI
         final File srcFile = f;
-        runTask(() -> {
+        withArchiveSecret(srcFile, secret -> runTask(() -> {
             com.aliya.hyfilemgr.archive.ArchiveExtractor.Result res =
                     com.aliya.hyfilemgr.archive.ArchiveExtractor.extract(
-                            srcFile, destDir, null, null);
+                            srcFile, destDir, secret, null);
             handler.post(() -> {
                 if (res.ok) {
-                    UiKit.toast(ctx, "已解压 " + res.files + " 个文件到 " + destDir.getName());
+                    UiKit.toast(ctx, "已解压 " + res.files + " 个文件到 " + destDir.getName()
+                            + (res.skipped.isEmpty() ? ""
+                               : "（跳过 " + res.skipped.size() + " 个非法路径条目）"));
                     reloadAll();
                 } else {
                     UiKit.toast(ctx, "解压失败：" + res.error);
@@ -7619,7 +7621,7 @@ public class FileManagerModule extends HyVqModule {
                     }
                 }
             });
-        });
+        }));
         return null;   // 已转后台，无即时错误
     }
 
@@ -9586,13 +9588,15 @@ public class FileManagerModule extends HyVqModule {
         final File outDir = new File(parent, uniqueName(parent.getAbsolutePath(), base, null));
 
         UiKit.toast(ctx, "解压中…");
-        runTask(() -> {
+        withArchiveSecret(archive, secret -> runTask(() -> {
             com.aliya.hyfilemgr.archive.ArchiveExtractor.Result res =
                     com.aliya.hyfilemgr.archive.ArchiveExtractor.extract(
-                            archive, outDir, null, null);
+                            archive, outDir, secret, null);
             handler.post(() -> {
                 if (res.ok) {
-                    UiKit.toast(ctx, "已解压 " + res.files + " 个文件到 " + outDir.getName());
+                    UiKit.toast(ctx, "已解压 " + res.files + " 个文件到 " + outDir.getName()
+                            + (res.skipped.isEmpty() ? ""
+                               : "（跳过 " + res.skipped.size() + " 个非法路径条目）"));
                     reloadAll();
                 } else {
                     UiKit.toast(ctx, "解压失败：" + res.error);
@@ -9606,7 +9610,7 @@ public class FileManagerModule extends HyVqModule {
                     }
                 }
             });
-        });
+        }));
     }
 
     private static String fixGbkName(String name) {
@@ -9689,6 +9693,66 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 进入某个 ZIP 的根：切换活跃窗格到 zip:// 虚拟路径 */
+
+    /**
+     * 若压缩包是加密的，先弹输入框收集凭据，再执行 {@code action}；
+     * 否则直接执行（action 收到 null）。
+     *
+     * <p>此前两个解压入口都硬编码传 null，导致「本 App 加密压出的包本 App 打不开」。
+     * 检测能力已有（{@link #readZipEncryptionMap} 解析 zip 中央目录），
+     * 7z 无法预读加密标志，索性一律问一次——用户点取消则中止。</p>
+     *
+     * @param archive 待解压的压缩包
+     * @param action  收到凭据后执行（可为空串）
+     */
+    private void withArchiveSecret(final File archive,
+                                   final java.util.function.Consumer<String> action) {
+        String name = archive.getName().toLowerCase(java.util.Locale.ROOT);
+        boolean encrypted;
+        if (name.endsWith(".zip") || name.endsWith(".jar") || name.endsWith(".apk")
+                || name.endsWith(".xapk")) {
+            java.util.Map<String, Boolean> m = readZipEncryptionMap(archive);
+            encrypted = false;
+            for (Boolean v : m.values()) {
+                if (Boolean.TRUE.equals(v)) { encrypted = true; break; }
+            }
+        } else if (name.endsWith(".7z")) {
+            // 7z 的加密标志在文件头里，预读代价高；直接问一次，
+            // 未加密的包用户留空即可
+            encrypted = true;
+        } else {
+            encrypted = false;
+        }
+        if (!encrypted) { action.accept(""); return; }
+
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "压缩包已加密"));
+        TextView hint = new TextView(ctx);
+        hint.setText("输入解压凭据（留空则按未加密处理）");
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hint.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        hint.setPadding(dp(4), 0, dp(4), dp(8));
+        box.addView(hint);
+        final EditText et = new EditText(ctx);
+        et.setSingleLine(true);
+        et.setHint("留空表示无");
+        box.addView(et);
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim(d)));
+        btns.addView(textButton("解压", v -> {
+            String s2 = et.getText().toString();
+            UiKit.dismissWithAnim(d);
+            action.accept(s2);
+        }));
+        box.addView(btns);
+        d.show();
+    }
+
     private void enterZip(String zipPath) {
         active.path = PREFIX_ZIP + zipPath + "/";
         reload(active);

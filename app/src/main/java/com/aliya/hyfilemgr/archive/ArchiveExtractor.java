@@ -89,7 +89,7 @@ public final class ArchiveExtractor {
                 case "zip": case "jar": case "apk": case "xapk":
                     return extractZip(src, destDir, password, progress);
                 case "7z":
-                    return extract7z(src, destDir, progress);
+                    return extract7z(src, destDir, password, progress);
                 case "rar":
                     return extractRar(src, destDir, password, progress);
                 case "tar":
@@ -198,9 +198,23 @@ public final class ArchiveExtractor {
 
     // ── 7Z ──
 
-    private static Result extract7z(File src, File destDir, Progress progress) throws IOException {
+    /**
+     * 7z 解压。
+     *
+     * <p>{@code password} 非空时用 commons-compress 1.26 的双参构造器解密——
+     * 此前该参数缺失，导致「本 App 加密压出的 7z 本 App 打不开」。</p>
+     *
+     * <p>写入统一走 {@link #copy(InputStream, OutputStream, Guard)}，
+     * 让单文件上限与总量上限对 7z 也生效（此前是裸 read/write 循环，
+     * 只有条目数一条防线，7z 炸弹可无限写盘）。</p>
+     */
+    private static Result extract7z(File src, File destDir, String password,
+                                    Progress progress) throws IOException {
         int n = 0;
-        try (SevenZFile sz = new SevenZFile(src)) {
+        Result r = new Result();
+        try (SevenZFile sz = (password == null || password.isEmpty())
+                ? new SevenZFile(src)
+                : new SevenZFile(src, password.toCharArray())) {
             Guard guard = new Guard(destDir);
             SevenZArchiveEntry entry;
             byte[] buf = new byte[8192];
@@ -213,19 +227,44 @@ public final class ArchiveExtractor {
                     continue;
                 }
                 File out = safeChild(destDir, entry.getName());
-                if (out == null) continue;
+                if (out == null) {
+                    guard.skip(entry.getName());
+                    continue;
+                }
                 File p = out.getParentFile();
                 if (p != null) //noinspection ResultOfMethodCallIgnored
                     p.mkdirs();
                 try (OutputStream os = new FileOutputStream(out)) {
+                    // SevenZFile 不是 InputStream（只有 read(byte[]) 系列），
+                    // 不能复用 copy()，这里内联同样的配额逻辑
+                    long written = 0;
                     int len;
-                    while ((len = sz.read(buf)) > 0) os.write(buf, 0, len);
+                    while ((len = sz.read(buf)) > 0) {
+                        os.write(buf, 0, len);
+                        written += len;
+                        guard.compressedBytes += len;
+                        if (written > Guard.MAX_ENTRY_BYTES) {
+                            throw new IOException("单个文件解压后超过 "
+                                    + (Guard.MAX_ENTRY_BYTES / (1024 * 1024)) + "MB，已中止");
+                        }
+                        guard.addBytes(len);
+                    }
                 }
                 n++;
                 if (progress != null) progress.onEntry(entry.getName(), n);
             }
+            // Result.skipped 是 final 字段，只能 addAll 不能赋值
+            r.skipped.addAll(guard.takeSkipped());
+        } catch (IOException | RuntimeException e) {
+            String msg = e.getMessage();
+            boolean looksLikeBadCredential = msg != null
+                    && (msg.contains("password") || msg.contains("CRC")
+                        || msg.contains("Encrypted") || msg.contains("encrypt"));
+            if (looksLikeBadCredential) {
+                return Result.fail("7z 解压失败（可能是加密凭据不正确）：" + msg);
+            }
+            throw e;   // 配额超限等由上层统一处理，保持原样
         }
-        Result r = new Result();
         r.ok = true;
         r.files = n;
         return r;
@@ -408,6 +447,7 @@ public final class ArchiveExtractor {
         // 去掉压缩扩展名作为输出名：a.txt.gz → a.txt
         // 边界：文件名为 ".gz" 或 "gz"（无扩展名）时去掉后为空/同名，
         // 直接写会覆盖源文件，必须加后缀。
+        Guard guard = new Guard(destDir);
         String base = src.getName();
         int dot = base.lastIndexOf('.');
         if (dot > 0) {
@@ -434,7 +474,8 @@ public final class ArchiveExtractor {
             default: dec = raw; break;
         }
         try (OutputStream os = new FileOutputStream(out)) {
-            copy(dec, os);
+            // 单流解压此前完全无配额：gz/bz2/xz/zst 可无限写盘
+            copy(dec, os, guard);
         } finally {
             try { dec.close(); } catch (Throwable ignored) { }
         }
@@ -557,9 +598,17 @@ public final class ArchiveExtractor {
 
         int entries;
         long total;
-        /** 已读入的压缩字节数（用于压缩比判定） */
+        /**
+         * 已读入的压缩字节数（用于压缩比判定）。
+         *
+         * <p>⚠️ 此前该字段声明后从未被赋值，恒为 0，
+         * 导致 {@link #addBytes} 里的压缩比判断永不触发——是死代码。
+         * 现由 {@link #copy(InputStream, OutputStream, Guard)} 在每轮回写时累加。</p>
+         */
         long compressedBytes;
         final long totalCap;
+        /** Zip-Slip 命中的条目名（最多 50 条，按原顺序） */
+        final java.util.List<String> skipped = new java.util.ArrayList<>();
 
         Guard(File destDir) {
             long usable = destDir == null ? 0 : destDir.getUsableSpace();
@@ -588,6 +637,16 @@ public final class ArchiveExtractor {
                         + (totalCap / (1024 * 1024)) + "MB，已中止");
             }
         }
+
+        /** 记录一个因不安全路径被跳过的条目（上限 50，避免全量收集） */
+        void skip(String name) {
+            if (name != null && skipped.size() < 50) skipped.add(name);
+        }
+
+        /** 取出跳过列表（调用方负责拼进提示） */
+        java.util.List<String> takeSkipped() {
+            return skipped;
+        }
     }
 
     /** 带配额的 copy：按实际写出字节累计，超限即断 */
@@ -602,6 +661,11 @@ public final class ArchiveExtractor {
         while ((n = in.read(buf)) > 0) {
             out.write(buf, 0, n);
             written += n;
+            if (guard != null) {
+                // 累计「已读压缩字节」用于压缩比：InputStream 读出的就是压缩后的字节流，
+                // 与 written（解压后）之比即实际压缩率
+                guard.compressedBytes += n;
+            }
             if (written > Guard.MAX_ENTRY_BYTES) {
                 throw new IOException("单个文件解压后超过 "
                         + (Guard.MAX_ENTRY_BYTES / (1024 * 1024)) + "MB，已中止");
