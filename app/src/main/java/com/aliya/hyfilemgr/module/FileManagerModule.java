@@ -261,6 +261,48 @@ public class FileManagerModule extends HyVqModule {
     private int lastUndoStart = -1;
 
     // ── 窗格抽象：每个窗格 = 独立路径/条目/多选/滚动（对齐 MT 真双独立窗口） ──
+    // ══════════════════════════════════════════════════════════
+    // 动效常量（Material 3 duration token）
+    //   short1-4 = 50/100/150/200，medium1-4 = 250/300/350/400
+    //   官方阈值：入场 225ms、离场 195ms、>400ms 被感知为慢
+    // ══════════════════════════════════════════════════════════
+    /** 列表项 add（M3 short3） */
+    private static final int ANIM_ITEM_ADD = 150;
+    /** 列表项 remove（M3 short3） */
+    private static final int ANIM_ITEM_REMOVE = 150;
+    /** 列表项 move（M3 short3） */
+    private static final int ANIM_ITEM_MOVE = 150;
+    /** 列表项 change（M3 short2） */
+    private static final int ANIM_ITEM_CHANGE = 100;
+
+    /** stagger 单项快照时长（M3 short2 的一半，保持轻盈） */
+    private static final int ANIM_STAGGER_ITEM = 90;
+    /** stagger 相邻间隔：官方上限 20ms，取 12ms 留余量 */
+    private static final int ANIM_STAGGER_STEP = 12;
+    /** stagger 总延迟上限：官方 >400ms 被感知为慢，收敛到 150ms */
+    private static final int ANIM_STAGGER_MAX_DELAY = 150;
+
+    /**
+     * 系统动画缩放倍率（设置 → 无障碍/开发者选项 的「动画时长缩放」）。
+     *
+     * <p>系统对 {@code ViewPropertyAnimator}/{@code ObjectAnimator} 会自动应用该值，
+     * 但**手写 postDelayed 延时不会**被缩放；且无障碍「移除动画」
+     * （Android 14+ {@code accessibility_force_reduce_motion}）不改这个值。
+     * 因此本字段用于显式判零：为 0 时跳过所有自定义动画。</p>
+     */
+    private static float animScale = 1f;
+
+    /**
+     * 本窗格是否还没播过入场动画（每次冷启动只播一次）。
+     *
+     * <p>官方规范：stagger 仅限「新建 surface」——首次进入列表 / 空态→有内容。
+     * 翻目录、排序、删除后刷新都是「同一 surface 的重载」，重播会让用户
+     * 连续翻目录时反复看到入场动画（被点名的过度动效）。</p>
+     *
+     * <p>置 true：冷启动后首次加载。置 false：导航到新目录、或已播过一次。</p>
+     */
+    private boolean staggerPending = true;
+
     private static final class Pane {
         String path;
         /** 进入 SAF 授权目录（content://）前的路径：授权根的".."返回这里 */
@@ -354,6 +396,7 @@ public class FileManagerModule extends HyVqModule {
     public void onAttach(Context context, ModuleServices services) {
         this.ctx = context.getApplicationContext();
         com.aliya.hyfilemgr.filemgr.ThumbLoader.init(this.ctx);
+        refreshAnimScale();
         if (context instanceof Activity) hostActivity = (Activity) context;
         activeInstance = this;
         restoreState();
@@ -369,6 +412,37 @@ public class FileManagerModule extends HyVqModule {
         // 不清 handler：它是本模块唯一 UI 回调通道，25 处 post 都在用，
         // 清空会丢弃排队中的解压/粘贴/搜索完成回调
         if (dpiHandler != null) dpiHandler.removeCallbacksAndMessages(null);
+    }
+
+    /**
+     * 读取系统「动画时长缩放」（开发者选项 / 无障碍）。
+     *
+     * <p>系统对 {@code ViewPropertyAnimator}/{@code ObjectAnimator} 会自动应用该值，
+     * 但本项目有 6 处手写 {@code postDelayed} 延时不受缩放影响，另有一些
+     * 自定义入场动画需要显式判零。为 0 表示用户关闭动画（或无动画无障碍已开），
+     * 此时应跳过所有自定义动效。</p>
+     */
+    private void refreshAnimScale() {
+        try {
+            animScale = android.provider.Settings.Global.getFloat(
+                    ctx.getContentResolver(),
+                    android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f);
+        } catch (Throwable t) {
+            animScale = 1f;   // 读不到就当正常值，不要因设置读取失败而瘫痪动效
+        }
+        // 注意：android.jar 里**没有** AccessibilityManager.isReduceMotionEnabled()
+        // （那是 Compose 的 LocalMotionDurationScale，不是平台 API）。
+        // 平台侧只有下面三个 Global 缩放值，任一为 0 即视为「用户要求无动画」。
+        try {
+            float win = android.provider.Settings.Global.getFloat(
+                    ctx.getContentResolver(),
+                    android.provider.Settings.Global.WINDOW_ANIMATION_SCALE, 1f);
+            float trans = android.provider.Settings.Global.getFloat(
+                    ctx.getContentResolver(),
+                    android.provider.Settings.Global.TRANSITION_ANIMATION_SCALE, 1f);
+            if (win <= 0f && trans <= 0f) animScale = 0f;
+        } catch (Throwable ignored) {
+        }
     }
 
     /** 恢复持久化的浏览状态（排序模式 / 是否显示隐藏文件 / 双窗格上次路径）。
@@ -1066,12 +1140,14 @@ public class FileManagerModule extends HyVqModule {
         p.adapter.setDensity(listDensity);
         rv.setAdapter(p.adapter);
         // 列表项动画：淡入淡出 + 位移，比默认更柔和
+        // 时长取自 Material 3 duration token（不用 180/160 这类散值）：
+        //   add/remove/move = short3(150)，change = short2(100)
         androidx.recyclerview.widget.DefaultItemAnimator ia =
                 new androidx.recyclerview.widget.DefaultItemAnimator();
-        ia.setAddDuration(180);
-        ia.setRemoveDuration(160);
-        ia.setMoveDuration(180);
-        ia.setChangeDuration(160);
+        ia.setAddDuration(ANIM_ITEM_ADD);
+        ia.setRemoveDuration(ANIM_ITEM_REMOVE);
+        ia.setMoveDuration(ANIM_ITEM_MOVE);
+        ia.setChangeDuration(ANIM_ITEM_CHANGE);
         rv.setItemAnimator(ia);
         rv.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
@@ -1775,6 +1851,7 @@ public class FileManagerModule extends HyVqModule {
         p.backStack.push(p.path);
         p.fwdStack.clear();          // 新分支，清空前进栈
         p.path = newPath;
+        staggerPending = false;      // 翻目录不是「新建 surface」，不播入场动画
         reload(p);
         refreshNavButtons();
     }
@@ -1787,6 +1864,7 @@ public class FileManagerModule extends HyVqModule {
         }
         p.fwdStack.push(p.path);
         p.path = p.backStack.pop();
+        staggerPending = false;
         reload(p);
         refreshNavButtons();
     }
@@ -1799,6 +1877,7 @@ public class FileManagerModule extends HyVqModule {
         }
         p.backStack.push(p.path);
         p.path = p.fwdStack.pop();
+        staggerPending = false;
         reload(p);
         refreshNavButtons();
     }
@@ -2108,8 +2187,15 @@ public class FileManagerModule extends HyVqModule {
         if (p.entries.isEmpty() && p.lastResult.error != null && !p.lastResult.error.isEmpty()) {
             UiKit.toast(ctx, p.lastResult.error);
         }
-        // MT 风格刷新动画：条目从上到下依次快速出现
-        playStaggerAnimation(p.list);
+        // 入场动画只在「新建 surface」时播：首次进入该窗格、或空目录→有内容。
+        // 翻目录/排序/删除后刷新都不播（官方 stagger 适用边界）。
+        // 入场动画只在「新建 surface」时播：冷启动后的首次加载。
+        // 翻目录/排序/删除后刷新都不播（官方 stagger 适用边界）。
+        // 目录为空时不播（没有可入场的子项），保持 staggerPending 等下次。
+        if (staggerPending && !p.entries.isEmpty()) {
+            staggerPending = false;   // 全局只消费一次
+            playStaggerAnimation(p.list);
+        }
         if (p == active && pathText != null) {
             pathText.setText(displayPath(p.path));
             updateBottomNav();
@@ -2117,18 +2203,37 @@ public class FileManagerModule extends HyVqModule {
         updateClipBar();
     }
 
-    /** MT 风格刷新动画：条目从上到下依次淡入（纯透明度 0.5→1，无上下位移，柔和无抖动） */
+    /**
+     * MT 风格入场动画：条目从上到下依次淡入（纯透明度 0.5→1，无位移不抖动）。
+     *
+     * <p><b>只在「新建 surface」时调用</b>——Material 官方规范：
+     * stagger 仅适用于首次进入列表 / 空态→有内容；
+     * 翻目录、排序、删除后刷新都属于「同一 surface 的重载」，重播会让用户
+     * 连续翻目录时反复看到入场动画（被点名的过度动效）。</p>
+     *
+     * <p>三条硬约束（来自官方规范）：</p>
+     * <ul>
+     *   <li>相邻项间隔 ≤ 20ms（这里取 {@link #ANIM_STAGGER_STEP} = 12ms）</li>
+     *   <li>总延迟收敛到 {@link #ANIM_STAGGER_MAX_DELAY} = 150ms，
+     *       避免列表变长后延迟线性膨胀（100 项 × 12ms = 1188ms）</li>
+     *   <li>系统动画缩放为 0（无障碍「移除动画」）时直接跳过</li>
+     * </ul>
+     */
     private void playStaggerAnimation(final RecyclerView rv) {
         if (rv == null) return;
+        // 用户关闭动画 / 无障碍「移除动画」时不动
+        if (animScale <= 0f) return;
         rv.post(() -> {
             int n = rv.getChildCount();
             for (int i = 0; i < n; i++) {
                 View child = rv.getChildAt(i);
                 if (child == null) continue;
-                // 只做透明度动画（0.5→1，无位移不抖动）：从上到下依次淡入
+                // 延迟上限：超出后不再累加，全部同时开始
+                long delay = Math.min((long) i * ANIM_STAGGER_STEP, ANIM_STAGGER_MAX_DELAY);
                 child.setAlpha(0.5f);
                 child.animate().alpha(1f)
-                        .setDuration(90).setStartDelay(i * 12L).start();
+                        .setDuration(ANIM_STAGGER_ITEM)
+                        .setStartDelay(delay).start();
             }
         });
     }
