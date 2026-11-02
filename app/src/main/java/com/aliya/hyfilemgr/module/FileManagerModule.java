@@ -946,7 +946,7 @@ public class FileManagerModule extends HyVqModule {
                     UiKit.toast(ctx, "已复制当前路径");
                 }
             } catch (Throwable t) {
-                UiKit.toast(ctx, "复制失败：" + t.getMessage());
+                UiKit.alert(ctx, "复制失败：" + t.getMessage());
             }
         }));
 
@@ -969,7 +969,7 @@ public class FileManagerModule extends HyVqModule {
                 et.setText(text.toString().trim());
                 et.setSelection(et.getText().length());
             } catch (Throwable t) {
-                UiKit.toast(ctx, "粘贴失败：" + t.getMessage());
+                UiKit.alert(ctx, "粘贴失败：" + t.getMessage());
             }
         }));
 
@@ -2007,7 +2007,7 @@ public class FileManagerModule extends HyVqModule {
             if (isTextFile(f.getName())) openTextEditor(f);
             else openFile(f);
         } else {
-            UiKit.toast(ctx, "链接目标不存在");
+            UiKit.alert(ctx, "链接目标不存在");
         }
     }
 
@@ -3083,7 +3083,7 @@ public class FileManagerModule extends HyVqModule {
             // ⭐5 文件名合法性校验（参考 Fossify isAValidFilename）：非法字符直接拦截，
             // 不再静默净化后创建（避免 SAF provider 吞字符/路径穿越的隐性问题）
             if (!isValidFileName(full)) {
-                UiKit.toast(ctx, "文件名不合法（含 / \\ : * ? \" < > | 或以点结尾）");
+                UiKit.alert(ctx, "文件名不合法（含 / \\ : * ? \" < > | 或以点结尾）");
                 return;
             }
             dialog.dismiss();
@@ -4497,7 +4497,7 @@ public class FileManagerModule extends HyVqModule {
             int safCount = 0;
             for (MountEntry me : entries) if (me.deletable) safCount++;
             if (safCount == 0 && mountLoadError != null && !mountLoadError.isEmpty()) {
-                UiKit.toast(ctx, "授权列表加载失败：" + mountLoadError);
+                UiKit.alert(ctx, "授权列表加载失败：" + mountLoadError);
             }
         }
         for (final MountEntry e : entries) {
@@ -4725,7 +4725,7 @@ public class FileManagerModule extends HyVqModule {
     /** 打开系统文件选择器（SAF）授权目录：选择后由 MainActivity 持久化（persisted URI permission），即 MT 的"挂载" */
     private void openSafAuthorize() {
         if (hostActivity == null) {
-            UiKit.toast(ctx, "宿主 Activity 不可用，无法打开系统文件选择器");
+            UiKit.alert(ctx, "宿主 Activity 不可用，无法打开系统文件选择器");
             return;
         }
         try {
@@ -4736,7 +4736,7 @@ public class FileManagerModule extends HyVqModule {
                     | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
             hostActivity.startActivityForResult(intent, REQ_SAF_MOUNT);
         } catch (Throwable t) {
-            UiKit.toast(ctx, "无法打开系统文件选择器：" + t.getMessage());
+            UiKit.alert(ctx, "无法打开系统文件选择器：" + t.getMessage());
         }
     }
 
@@ -5293,7 +5293,7 @@ public class FileManagerModule extends HyVqModule {
             String name = input.getText().toString().trim();
             // ⭐5 文件名合法性校验（参考 Fossify isAValidFilename）：非法字符直接拦截
             if (!isValidFileName(name)) {
-                UiKit.toast(ctx, "名称不合法（含 / \\ : * ? \" < > | 或以点结尾）");
+                UiKit.alert(ctx, "名称不合法（含 / \\ : * ? \" < > | 或以点结尾）");
                 return;
             }
             dialog.dismiss();
@@ -5339,7 +5339,7 @@ public class FileManagerModule extends HyVqModule {
             //（此前只做了 isEmpty 净化，重命名为空会落到 FileOps.renameAsync 产生脏名）
             final String newName = input.getText().toString().trim();
             if (!isValidFileName(newName)) {
-                UiKit.toast(ctx, "名称不合法（含 / \\ : * ? \" < > | 或以点结尾）");
+                UiKit.alert(ctx, "名称不合法（含 / \\ : * ? \" < > | 或以点结尾）");
                 return;
             }
             dialog.dismiss();
@@ -5701,7 +5701,7 @@ public class FileManagerModule extends HyVqModule {
      */
     private void openTextEditorInternal(final File f, final String rootTarget) {
         if (!f.exists() || !f.isFile()) {
-            UiKit.toast(ctx, "文件不存在");
+            UiKit.alert(ctx, "文件不存在");
             return;
         }
         if (f.length() > 2 * 1024 * 1024) {
@@ -5730,7 +5730,7 @@ public class FileManagerModule extends HyVqModule {
         }
         String[] rc = readTextContent(f);
         if (rc == null) {
-            UiKit.toast(ctx, "读取失败");
+            UiKit.alert(ctx, "读取失败");
             return;
         }
         EditorTabState tab = new EditorTabState(f, rc[0], rc[1], rootTarget);
@@ -6027,7 +6027,7 @@ public class FileManagerModule extends HyVqModule {
                     if (onDone != null) onDone.run();
                 });
             } catch (Throwable t) {
-                handler.post(() -> UiKit.toast(ctx, "保存失败：" + t.getMessage()));
+                handler.post(() -> UiKit.alert(ctx, "保存失败：" + t.getMessage()));
             }
         });
     }
@@ -6307,13 +6307,13 @@ public class FileManagerModule extends HyVqModule {
         dlg.setOnShowListener(d -> {
             dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                 if (!findNext(findEt.getText().toString(), regexSw.isChecked(), wrapSw.isChecked(), true)) {
-                    UiKit.toast(ctx, "未找到匹配");
+                    UiKit.alert(ctx, "未找到匹配");
                 }
             });
             dlg.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).setOnClickListener(v -> {
                 if (!replaceCurrent(findEt.getText().toString(), repEt.getText().toString(),
                         regexSw.isChecked(), wrapSw.isChecked())) {
-                    UiKit.toast(ctx, "未找到匹配");
+                    UiKit.alert(ctx, "未找到匹配");
                 }
             });
             dlg.getButton(android.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> {
@@ -6375,7 +6375,7 @@ public class FileManagerModule extends HyVqModule {
             while (m.find()) last = new int[]{m.start(), m.end()};
             return last;
         } catch (Throwable t) {
-            UiKit.toast(ctx, "正则错误：" + t.getMessage());
+            UiKit.alert(ctx, "正则错误：" + t.getMessage());
             return null;
         }
     }
@@ -6400,7 +6400,7 @@ public class FileManagerModule extends HyVqModule {
                         .matcher(text.substring(hit[0], hit[1]))
                         .replaceAll(java.util.regex.Matcher.quoteReplacement(replacement));
             } catch (Throwable t) {
-                UiKit.toast(ctx, "正则错误：" + t.getMessage());
+                UiKit.alert(ctx, "正则错误：" + t.getMessage());
                 return false;
             }
         }
@@ -6427,7 +6427,7 @@ public class FileManagerModule extends HyVqModule {
                 m.appendTail(sb);
                 out = sb.toString();
             } catch (Throwable t) {
-                UiKit.toast(ctx, "正则错误：" + t.getMessage());
+                UiKit.alert(ctx, "正则错误：" + t.getMessage());
                 return 0;
             }
         } else {
@@ -6770,7 +6770,7 @@ public class FileManagerModule extends HyVqModule {
         btns.addView(textButton("保存", v -> {
             String path = et.getText().toString().trim();
             if (path.isEmpty()) {
-                UiKit.toast(ctx, "路径不能为空");
+                UiKit.alert(ctx, "路径不能为空");
                 return;
             }
             File target = new File(path);
@@ -6799,7 +6799,7 @@ public class FileManagerModule extends HyVqModule {
             }
             File parent = target.getParentFile();
             if (parent != null && !parent.exists() && !parent.mkdirs()) {
-                UiKit.toast(ctx, "无法创建目录：" + parent);
+                UiKit.alert(ctx, "无法创建目录：" + parent);
                 return;
             }
             String text = editorEdit != null ? editorEdit.getText().toString()
@@ -6826,7 +6826,7 @@ public class FileManagerModule extends HyVqModule {
             UiKit.toast(ctx, "已另存为：" + target.getName());
             reloadAll();
         } catch (Throwable t) {
-            UiKit.toast(ctx, "另存为失败：" + t.getMessage());
+            UiKit.alert(ctx, "另存为失败：" + t.getMessage());
         }
     }
 
@@ -6850,7 +6850,7 @@ public class FileManagerModule extends HyVqModule {
                 UiKit.toast(ctx, "已复制 " + text.length() + " 字符");
             }
         } catch (Throwable t) {
-            UiKit.toast(ctx, "复制失败：" + t.getMessage());
+            UiKit.alert(ctx, "复制失败：" + t.getMessage());
         }
     }
 
@@ -7257,7 +7257,7 @@ public class FileManagerModule extends HyVqModule {
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
             ctx.startActivity(i);
         } catch (Throwable t) {
-            UiKit.toast(ctx, "无法打开播放器：" + t.getMessage());
+            UiKit.alert(ctx, "无法打开播放器：" + t.getMessage());
         }
     }
 
@@ -7612,7 +7612,7 @@ public class FileManagerModule extends HyVqModule {
                                : "（跳过 " + res.skipped.size() + " 个非法路径条目）"));
                     reloadAll();
                 } else {
-                    UiKit.toast(ctx, "解压失败：" + res.error);
+                    UiKit.alert(ctx, "解压失败：" + res.error);
                     // 失败清理空目录
                     try {
                         String[] left = destDir.list();
@@ -7687,7 +7687,7 @@ public class FileManagerModule extends HyVqModule {
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
             ctx.startActivity(i);
         } catch (Throwable t) {
-            UiKit.toast(ctx, "无法打开字体预览：" + t.getMessage());
+            UiKit.alert(ctx, "无法打开字体预览：" + t.getMessage());
         }
     }
 
@@ -8043,7 +8043,7 @@ public class FileManagerModule extends HyVqModule {
                         ctx.startActivity(i);
                         UiKit.toast(ctx, "已启动应用，请在其中选择打开该文件");
                     } catch (Throwable t) {
-                        UiKit.toast(ctx, "启动失败：" + t.getMessage());
+                        UiKit.alert(ctx, "启动失败：" + t.getMessage());
                     }
                 });
             }
@@ -8099,7 +8099,7 @@ public class FileManagerModule extends HyVqModule {
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             ctx.startActivity(i);
         } catch (Throwable t) {
-            UiKit.toast(ctx, "无法打开系统设置：" + t.getMessage());
+            UiKit.alert(ctx, "无法打开系统设置：" + t.getMessage());
         }
     }
 
@@ -8488,7 +8488,7 @@ public class FileManagerModule extends HyVqModule {
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
             ctx.startActivity(i);
         } catch (Throwable t) {
-            UiKit.toast(ctx, "无法打开图片查看器：" + t.getMessage());
+            UiKit.alert(ctx, "无法打开图片查看器：" + t.getMessage());
         }
     }
 
@@ -8502,7 +8502,7 @@ public class FileManagerModule extends HyVqModule {
             }
             openTextEditor(f);
         } catch (Throwable t) {
-            UiKit.toast(ctx, "无法打开编辑器：" + t.getMessage());
+            UiKit.alert(ctx, "无法打开编辑器：" + t.getMessage());
         }
     }
 
@@ -8516,7 +8516,7 @@ public class FileManagerModule extends HyVqModule {
             }
             extractZip(FileEntry.file(f.getAbsolutePath(), f.length(), f.lastModified()));
         } catch (Throwable t) {
-            UiKit.toast(ctx, "解压失败：" + t.getMessage());
+            UiKit.alert(ctx, "解压失败：" + t.getMessage());
         }
     }
 
@@ -8545,7 +8545,7 @@ public class FileManagerModule extends HyVqModule {
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
             ctx.startActivity(i);
         } catch (Throwable t) {
-            UiKit.toast(ctx, "无法安装：" + t.getMessage());
+            UiKit.alert(ctx, "无法安装：" + t.getMessage());
         }
     }
 
@@ -8655,7 +8655,7 @@ public class FileManagerModule extends HyVqModule {
             }
             showOpenWithDialog(e.path, e.name, true);
         } catch (Throwable t) {
-            UiKit.toast(ctx, "无法打开：" + t.getMessage());
+            UiKit.alert(ctx, "无法打开：" + t.getMessage());
         }
     }
 
@@ -8774,14 +8774,14 @@ public class FileManagerModule extends HyVqModule {
                 try {
                     task.run();
                 } catch (Throwable t) {
-                    UiKit.toast(ctx, "任务失败：" + t.getMessage());
+                    UiKit.alert(ctx, "任务失败：" + t.getMessage());
                 } finally {
                     queuedTasks.decrementAndGet();
                 }
             });
             queuedTasks.incrementAndGet();
         } catch (Throwable submitFail) {
-            UiKit.toast(ctx, "无法提交任务：" + submitFail.getMessage());
+            UiKit.alert(ctx, "无法提交任务：" + submitFail.getMessage());
         }
     }
 
@@ -8951,7 +8951,7 @@ public class FileManagerModule extends HyVqModule {
         if (e == null || e.path == null) return;
         final File src = new File(e.path);
         if (!src.exists()) {
-            UiKit.toast(ctx, "文件不存在");
+            UiKit.alert(ctx, "文件不存在");
             return;
         }
         showCompressDialog(e, src);
@@ -9147,7 +9147,7 @@ public class FileManagerModule extends HyVqModule {
             String name = etName.getText().toString().trim();
             String ext = COMPRESS_FORMATS[fmtIdx[0]][0];
             if (name.isEmpty()) {
-                UiKit.toast(ctx, "文件名不能为空");
+                UiKit.alert(ctx, "文件名不能为空");
                 return;
             }
             // 若用户自己写了扩展名就不重复添加。
@@ -9265,7 +9265,7 @@ public class FileManagerModule extends HyVqModule {
                                     + ": " + root.getMessage();
                         }
                         final String fterr = terr;
-                        handler.post(() -> UiKit.toast(ctx, "压缩失败：" + fterr));
+                        handler.post(() -> UiKit.alert(ctx, "压缩失败：" + fterr));
                         return;
                     }
                     handler.post(() -> {
@@ -9274,7 +9274,7 @@ public class FileManagerModule extends HyVqModule {
                             if (delSource) deleteSourceQuietly(src);
                             reloadAll();
                         } else {
-                            UiKit.toast(ctx, "压缩失败");
+                            UiKit.alert(ctx, "压缩失败");
                         }
                     });
                     return;
@@ -9332,7 +9332,7 @@ public class FileManagerModule extends HyVqModule {
                     }
                     reloadAll();
                 } else {
-                    UiKit.toast(ctx, "压缩失败：" + fErr);
+                    UiKit.alert(ctx, "压缩失败：" + fErr);
                 }
             });
         });
@@ -9573,7 +9573,7 @@ public class FileManagerModule extends HyVqModule {
         final File archive = new File(e.path);
         final File parent = archive.getParentFile();
         if (parent == null || !parent.canWrite()) {
-            UiKit.toast(ctx, "目录不可写，无法解压");
+            UiKit.alert(ctx, "目录不可写，无法解压");
             return;
         }
         // 去掉压缩扩展名作为输出目录名（含复合扩展名）
@@ -9602,7 +9602,7 @@ public class FileManagerModule extends HyVqModule {
                                : "（跳过 " + res.skipped.size() + " 个非法路径条目）"));
                     reloadAll();
                 } else {
-                    UiKit.toast(ctx, "解压失败：" + res.error);
+                    UiKit.alert(ctx, "解压失败：" + res.error);
                     try {
                         String[] left = outDir.list();
                         if (left != null && left.length == 0) {
@@ -9836,7 +9836,7 @@ public class FileManagerModule extends HyVqModule {
      */
     private void extractZipEntryToOtherPane(final FileEntry e) {
         if (panes.size() < 2) {
-            UiKit.toast(ctx, "当前为单窗格，无法解压到对侧");
+            UiKit.alert(ctx, "当前为单窗格，无法解压到对侧");
             return;
         }
         final Pane other = (panes.get(0) == active) ? panes.get(1) : panes.get(0);
@@ -9949,7 +9949,7 @@ public class FileManagerModule extends HyVqModule {
             final String fErr = err, fPath = nestedPath;
             handler.post(() -> {
                 if (fErr != null) {
-                    UiKit.toast(ctx, "展开失败：" + fErr);
+                    UiKit.alert(ctx, "展开失败：" + fErr);
                 } else {
                     active.path = PREFIX_ZIP + fPath + "/";
                     reload(active);
@@ -9987,7 +9987,7 @@ public class FileManagerModule extends HyVqModule {
             final String pwd = et.getText().toString();
             d.dismiss();
             if (pwd.isEmpty()) {
-                UiKit.toast(ctx, "密码不能为空");
+                UiKit.alert(ctx, "密码不能为空");
                 return;
             }
             UiKit.toast(ctx, "解出中…");
@@ -10003,7 +10003,7 @@ public class FileManagerModule extends HyVqModule {
                 final String fErr = err;
                 handler.post(() -> {
                     if (fErr != null) {
-                        UiKit.toast(ctx, "解出失败：" + fErr);
+                        UiKit.alert(ctx, "解出失败：" + fErr);
                     } else if (fOut == null) {
                         UiKit.toast(ctx, "该条目不是文件");
                     } else if (isTextFile(fOut.getName())) {
@@ -10071,7 +10071,7 @@ public class FileManagerModule extends HyVqModule {
             final String fErr = err;
             handler.post(() -> {
                 if (fErr != null) {
-                    UiKit.toast(ctx, "解出失败：" + fErr);
+                    UiKit.alert(ctx, "解出失败：" + fErr);
                 } else if (fOut == null) {
                     UiKit.toast(ctx, "该条目不是文件");
                 } else if (isTextFile(fOut.getName())) {
@@ -10430,13 +10430,13 @@ public class FileManagerModule extends HyVqModule {
     private void addBookmarkPath(String path) {
         if (path == null || path.startsWith(PREFIX_TRASH)
                 || path.startsWith("content://")) {
-            UiKit.toast(ctx, "该条目不能收藏");
+            UiKit.alert(ctx, "该条目不能收藏");
             return;
         }
         File f = new File(path);
         String target = f.isDirectory() ? f.getAbsolutePath() : f.getParent();
         if (target == null) {
-            UiKit.toast(ctx, "无法收藏");
+            UiKit.alert(ctx, "无法收藏");
             return;
         }
         android.content.SharedPreferences sp = fmPrefs();

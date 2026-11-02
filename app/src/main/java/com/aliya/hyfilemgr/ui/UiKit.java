@@ -165,6 +165,71 @@ public final class UiKit {
         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show();
     }
 
+
+    /**
+     * 失败 / 错误提示：可关闭的弹框，而不是几秒就消失的 Toast。
+     *
+     * <p>为什么失败不用 Toast：错误信息往往较长（含异常 message），
+     * Toast 2 秒消失用户来不及读完；多个错误连续出现时还会互相覆盖。
+     * 成功 / 进行中类反馈仍用 {@link #toast}，那类信息一句话就够。</p>
+     *
+     * <p>标题固定为「操作失败」，正文为具体原因；只有一个「知道了」按钮。</p>
+     */
+    public static void alert(Context context, String message) {
+        if (context == null || message == null || message.isEmpty()) return;
+        try {
+            android.widget.LinearLayout box = new android.widget.LinearLayout(context);
+            box.setOrientation(android.widget.LinearLayout.VERTICAL);
+
+            android.widget.TextView title = new android.widget.TextView(context);
+            title.setText("操作失败");
+            title.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
+            title.setTypeface(null, android.graphics.Typeface.BOLD);
+            title.setTextColor(color(context,
+                    com.google.android.material.R.attr.colorError));
+            title.setPadding(dp(context, 4), 0, dp(context, 4), dp(context, 6));
+            box.addView(title);
+
+            android.widget.TextView body = new android.widget.TextView(context);
+            body.setText(message);
+            body.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
+            body.setTextColor(color(context,
+                    com.google.android.material.R.attr.colorOnSurface));
+            body.setLineSpacing(dp(context, 2), 1f);
+            body.setPadding(dp(context, 4), 0, dp(context, 4), dp(context, 4));
+            // 长错误信息可滚动，避免把按钮挤出屏幕
+            android.widget.ScrollView sv = new android.widget.ScrollView(context);
+            sv.setVerticalScrollBarEnabled(true);
+            sv.addView(body);
+            android.widget.LinearLayout.LayoutParams svLp =
+                    new android.widget.LinearLayout.LayoutParams(
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+            box.addView(sv, svLp);
+
+            android.widget.LinearLayout btns = new android.widget.LinearLayout(context);
+            btns.setGravity(android.view.Gravity.END);
+            android.widget.TextView ok = new android.widget.TextView(context);
+            ok.setText("知道了");
+            ok.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
+            ok.setTypeface(null, android.graphics.Typeface.BOLD);
+            ok.setTextColor(color(context,
+                    com.google.android.material.R.attr.colorPrimary));
+            ok.setPadding(dp(context, 14), dp(context, 8), dp(context, 14), dp(context, 8));
+            ok.setClickable(true);
+            ok.setBackgroundResource(
+                    com.aliya.hyfilemgr.R.drawable.bg_ripple_round);
+            box.addView(ok);
+            box.addView(btns);
+
+            android.app.Dialog d = glassDialog(context, box);
+            ok.setOnClickListener(v -> dismissWithAnim(d));
+            d.show();
+        } catch (Throwable t) {
+            // 弹框本身失败时退回 toast，不要连错误都报不出去
+            toast(context, message);
+        }
+    }
+
     // ── 玻璃对话框 ──
 
     /**
