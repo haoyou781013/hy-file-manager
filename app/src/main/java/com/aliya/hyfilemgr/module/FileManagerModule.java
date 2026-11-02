@@ -10071,36 +10071,24 @@ public class FileManagerModule extends HyVqModule {
         new Thread(() -> {
             String err = null;
             String outName = null;
-            File tmpDir = null;
             try {
-                // 解到临时目录（保留包内层级），再把目标条目搬到目标目录
-                tmpDir = new File(ctx.getCacheDir(),
-                        "zip_to_other_" + System.currentTimeMillis());
-                if (!tmpDir.mkdirs() && !tmpDir.isDirectory()) {
-                    throw new java.io.IOException("无法创建临时目录");
+                // 定点提取单个条目：不再把整包解到缓存再挑。
+                // 旧做法 100MB 的包解 1KB 文件也要全解，还会先撞 Guard 上限。
+                String leaf = inner;
+                int cut = leaf.lastIndexOf('/');
+                if (cut >= 0) leaf = leaf.substring(cut + 1);
+                if (leaf.isEmpty()) leaf = "entry";
+                File dest = new File(destDir, uniqueName(destDir, leaf, null));
+                String e2 = com.aliya.hyfilemgr.archive.ArchiveExtractor
+                        .extractEntry(new File(archivePath), inner, dest);
+                if (e2 != null) {
+                    //noinspection ResultOfMethodCallIgnored
+                    dest.delete();
+                    throw new java.io.IOException(e2);
                 }
-                com.aliya.hyfilemgr.archive.ArchiveExtractor.Result r =
-                        com.aliya.hyfilemgr.archive.ArchiveExtractor
-                                .extract(new File(archivePath), tmpDir, null, null);
-                if (!r.ok) throw new java.io.IOException(r.error);
-
-                File picked = new File(tmpDir, inner);
-                if (!picked.exists()) {
-                    // 某些包会带顶层目录前缀，退化为按文件名搜索
-                    picked = findBySuffix(tmpDir, inner);
-                }
-                if (picked == null || !picked.exists()) {
-                    throw new java.io.IOException("包内未找到该条目");
-                }
-                File dest = new File(destDir, uniqueName(destDir,
-                        picked.getName(), null));
-                // FileOps.copy 内部已处理目录递归
-                com.aliya.hyfilemgr.filemgr.FileOps.copy(picked, dest);
                 outName = dest.getName();
             } catch (Throwable t) {
                 err = String.valueOf(t.getMessage());
-            } finally {
-                if (tmpDir != null) deleteTree(tmpDir);
             }
             final String fErr = err, fOut = outName;
             handler.post(() -> {

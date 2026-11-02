@@ -270,6 +270,139 @@ public final class ArchiveExtractor {
         return r;
     }
 
+
+    // ── 单条解出（预览里「解到对侧」用） ──
+
+    /**
+     * 只解出归档中的**一个条目**到指定文件，其余字节不碰。
+     *
+     * <p>旧实现是「整包解到缓存目录，再从中挑一条」——100MB 的包
+     * 只想解一个 1KB 文件也要全解，还会先撞上 Guard 的条目数/总量上限
+     * 而整体失败。这里按格式做定点提取。</p>
+     *
+     * @param src      归档文件
+     * @param inner    包内相对路径（用 / 分隔，不带前导 /）
+     * @param destFile 输出文件（父目录由调用方保证存在）
+     * @return null 表示成功；否则为错误说明
+     */
+    public static String extractEntry(File src, String inner, File destFile) {
+        if (src == null || !src.isFile()) return "压缩包不存在";
+        if (inner == null || inner.isEmpty()) return "包内路径为空";
+        String e = ext(src.getName());
+        try {
+            switch (e) {
+                case "zip": case "jar": case "apk": case "xapk":
+                    return extractEntryZip(src, inner, destFile);
+                case "7z":
+                    return extractEntry7z(src, inner, destFile);
+                case "rar":
+                    return extractEntryRar(src, inner, destFile);
+                case "tar": case "tgz": case "tar.gz": case "tar.bz2":
+                case "tar.xz": case "tar.zst":
+                    return extractEntryTar(src, inner, destFile);
+                default:
+                    return "该格式不支持单条解出";
+            }
+        } catch (Throwable t) {
+            return String.valueOf(t.getMessage());
+        }
+    }
+
+    private static String extractEntryZip(File src, String inner, File out) throws Exception {
+        try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(src)) {
+            java.util.zip.ZipEntry ze = zf.getEntry(inner);
+            if (ze == null || ze.isDirectory()) return "包内未找到该条目";
+            try (java.io.InputStream in = zf.getInputStream(ze);
+                 java.io.OutputStream os = new java.io.FileOutputStream(out)) {
+                copy(in, os, new Guard(out.getParentFile()));
+            }
+        }
+        return null;
+    }
+
+    private static String extractEntry7z(File src, String inner, File out) throws Exception {
+        try (SevenZFile sz = new SevenZFile(src)) {
+            Guard guard = new Guard(out.getParentFile());
+            byte[] buf = new byte[8192];
+            SevenZArchiveEntry ae;
+            while ((ae = sz.getNextEntry()) != null) {
+                if (!inner.equals(ae.getName())) continue;
+                if (ae.isDirectory()) return "该条目是目录";
+                try (java.io.OutputStream os = new java.io.FileOutputStream(out)) {
+                    long written = 0;
+                    int len;
+                    while ((len = sz.read(buf)) > 0) {
+                        os.write(buf, 0, len);
+                        written += len;
+                        guard.compressedBytes += len;
+                        if (written > Guard.MAX_ENTRY_BYTES) {
+                            return "单文件超过 "
+                                    + (Guard.MAX_ENTRY_BYTES / (1024 * 1024)) + "MB";
+                        }
+                        guard.addBytes(len);
+                    }
+                }
+                return null;
+            }
+        }
+        return "包内未找到该条目";
+    }
+
+    private static String extractEntryRar(File src, String inner, File out) throws Exception {
+        try (com.github.junrar.Archive a = new com.github.junrar.Archive(src)) {
+            for (com.github.junrar.rarfile.FileHeader h : a.getFileHeaders()) {
+                if (!inner.equals(h.getFileName())) continue;
+                if (h.isDirectory()) return "该条目是目录";
+                // junrar 的 extractFile 会把内容写到指定的 OutputStream
+                try (java.io.OutputStream os = new java.io.FileOutputStream(out)) {
+                    a.extractFile(h, os);
+                }
+                return null;
+            }
+        }
+        return "包内未找到该条目";
+    }
+
+    private static String extractEntryTar(File src, String inner, File out) throws Exception {
+        try (java.io.InputStream fin = new java.io.BufferedInputStream(
+                     new java.io.FileInputStream(src));
+             org.apache.commons.compress.archivers.ArchiveInputStream<?> ain =
+                     openTarStream(fin, src.getName())) {
+            if (ain == null) return "无法识别该 tar 变体";
+            Guard guard = new Guard(out.getParentFile());
+            org.apache.commons.compress.archivers.ArchiveEntry ae;
+            while ((ae = ain.getNextEntry()) != null) {
+                if (!inner.equals(ae.getName())) continue;
+                if (ae.isDirectory()) return "该条目是目录";
+                try (java.io.OutputStream os = new java.io.FileOutputStream(out)) {
+                    copy(ain, os, guard);
+                }
+                return null;
+            }
+        }
+        return "包内未找到该条目";
+    }
+
+    /** 按文件名判断 tar 变体并套上对应解压流 */
+    private static org.apache.commons.compress.archivers.ArchiveInputStream<?>
+            openTarStream(java.io.InputStream in, String fileName) throws Exception {
+        String lower = fileName.toLowerCase(java.util.Locale.ROOT);
+        java.io.InputStream dec = in;
+        if (lower.contains(".tar.gz") || lower.endsWith(".tgz")) {
+            dec = new org.apache.commons.compress.compressors.gzip
+                    .GzipCompressorInputStream(in);
+        } else if (lower.contains(".tar.bz2")) {
+            dec = new org.apache.commons.compress.compressors.bzip2
+                    .BZip2CompressorInputStream(in);
+        } else if (lower.contains(".tar.xz")) {
+            dec = new org.apache.commons.compress.compressors.xz
+                    .XZCompressorInputStream(in);
+        } else if (lower.contains(".tar.zst")) {
+            dec = new com.github.luben.zstd.ZstdInputStream(in);
+        }
+        return new org.apache.commons.compress.archivers.tar.TarArchiveInputStream(dec);
+    }
+
     // ── RAR ──
 
     private static Result extractRar(File src, File destDir, String password,
