@@ -4525,9 +4525,12 @@ public class FileManagerModule extends HyVqModule {
         // ══════ 第一组：本地（可折叠）══════
         final LinearLayout localBody = new LinearLayout(ctx);
         localBody.setOrientation(LinearLayout.VERTICAL);
-        localBody.setVisibility(navLocalExpanded ? View.VISIBLE : View.GONE);
         // 顺序必须「先标题、后内容」，否则标题会出现在内容下方
-        content.addView(buildCollapsibleHeader("本地", localBody, () -> navLocalExpanded));
+        // 可见性由 buildCollapsibleHeader 依 navLocalExpanded 初始化
+        content.addView(buildCollapsibleHeader("本地", localBody, navLocalExpanded, on -> {
+            navLocalExpanded = on;
+            savePrefBool(PREF_NAV_LOCAL_OPEN, on);
+        }));
         content.addView(localBody);
 
         // ── 合并列表：根目录 + 内部存储 + SAF 授权目录（FCL 式"类挂载"，统一排序） ──
@@ -4587,7 +4590,12 @@ public class FileManagerModule extends HyVqModule {
                 }));
 
 
-        content.addView(buildCollapsibleHeader("工具", toolsBody, () -> navToolsExpanded));
+        // toolsBody 此前从未设初始可见性 → navToolsExpanded=false 时首次仍展开，
+        // 表现为「要点两次才能收起/展开」
+        content.addView(buildCollapsibleHeader("工具", toolsBody, navToolsExpanded, on -> {
+            navToolsExpanded = on;
+            savePrefBool(PREF_NAV_TOOLS_OPEN, on);
+        }));
         content.addView(toolsBody);
     }
 
@@ -4683,8 +4691,30 @@ public class FileManagerModule extends HyVqModule {
      * @param body     被折叠的内容容器
      * @param expanded 当前是否展开的 getter（调用方字段）
      */
+    /**
+     * 可折叠分组标题（侧边栏「本地」「工具」用）。
+     *
+     * <p><b>为什么要传 setter 而不是标题字符串判断</b>：旧实现写回状态时用
+     * {@code "本地".equals(title)} 判字段，标题一改文案就静默失效。
+     * 现在由调用方传入 {@code setExpanded} 明确写哪个字段。</p>
+     *
+     * <p><b>为什么要传 initial</b>：旧实现只有 {@code localBody} 设了初始可见性，
+     * {@code toolsBody} 从未设置（默认 VISIBLE）——于是
+     * navToolsExpanded=false 时首次进入仍展开，点一次变成「收起」，
+     * 看起来像「要点两次才能展开」。现在两边都由同一份状态初始化。</p>
+     *
+     * @param title       分组标题（仅显示用，不再参与状态判定）
+     * @param body        内容容器
+     * @param expanded    当前是否展开（首次构建时的初始值，也用于初始化箭头）
+     * @param setExpanded 状态写回（同时负责持久化）
+     */
     private View buildCollapsibleHeader(String title, final LinearLayout body,
-                                        final java.util.function.BooleanSupplier expanded) {
+                                        boolean expanded,
+                                        final java.util.function.Consumer<Boolean> setExpanded) {
+        // 初始可见性与箭头方向都来自同一份状态——这是「点两次」的根因修复
+        body.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        body.setAlpha(1f);
+
         LinearLayout head = new LinearLayout(ctx);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
@@ -4700,7 +4730,7 @@ public class FileManagerModule extends HyVqModule {
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         LinearLayout.LayoutParams aLp = new LinearLayout.LayoutParams(as, as);
         arrow.setLayoutParams(aLp);
-        arrow.setRotation(expanded.getAsBoolean() ? 90f : 0f);
+        arrow.setRotation(expanded ? 90f : 0f);
         head.addView(arrow);
 
         TextView tv = new TextView(ctx);
@@ -4733,14 +4763,8 @@ public class FileManagerModule extends HyVqModule {
                             body.setAlpha(1f);
                         }).start();
             }
-            // 写回状态（标题是「本地」还是「工具」由 title 判定）
-            if ("本地".equals(title)) {
-                navLocalExpanded = nowVisible;
-                savePrefBool(PREF_NAV_LOCAL_OPEN, nowVisible);
-            } else {
-                navToolsExpanded = nowVisible;
-                savePrefBool(PREF_NAV_TOOLS_OPEN, nowVisible);
-            }
+            // 写回状态：由调用方提供的 setter 决定落到哪个字段
+            setExpanded.accept(nowVisible);
         });
         return head;
     }
