@@ -9475,11 +9475,23 @@ public class FileManagerModule extends HyVqModule {
                     try {
                         tarOk = compressWithCommons(src, out, ext, single, password);
                     } catch (Throwable tt) {
+                        android.util.Log.e("HyCompress", "压缩失败 ext=" + ext
+                                + " src=" + src + " dir=" + src.isDirectory(), tt);
                         //noinspection ResultOfMethodCallIgnored
                         out.delete();
-                        final String terr = tt.getClass().getSimpleName()
-                                + ": " + tt.getMessage();
-                        handler.post(() -> UiKit.toast(ctx, "压缩失败：" + terr));
+                        // 把根因也拼进提示：NoClassDefFoundError 的 message
+                        // 只有类名，看不出是谁缺，补上 cause 链第一层
+                        Throwable root = tt;
+                        while (root.getCause() != null && root.getCause() != root) {
+                            root = root.getCause();
+                        }
+                        String terr = tt.getClass().getSimpleName() + ": " + tt.getMessage();
+                        if (root != tt) {
+                            terr += " ← " + root.getClass().getSimpleName()
+                                    + ": " + root.getMessage();
+                        }
+                        final String fterr = terr;
+                        handler.post(() -> UiKit.toast(ctx, "压缩失败：" + fterr));
                         return;
                     }
                     handler.post(() -> {

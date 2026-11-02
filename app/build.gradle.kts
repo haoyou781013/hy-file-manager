@@ -78,6 +78,10 @@ dependencies {
     implementation("net.lingala.zip4j:zip4j:2.11.6")
     // TAR / TAR.GZ / GZ 真实支持（zip4j 只覆盖 ZIPC/7Z）
     implementation("org.apache.commons:commons-compress:1.26.0")
+    // commons-compress 在 POM 里把 codec/io/lang3 标为 optional，不会自动传递。
+    // TarArchiveOutputStream 的构造函数实际用到 org.apache.commons.codec.Charsets，
+    // 缺了它会在运行时抛 NoClassDefFoundError（实测：所有 tar 家族压缩全部失败）。
+    implementation("commons-codec:commons-codec:1.17.1")
     // commons-compress 1.20 把 xz / zstd 设为 optional，不会传递引入。
     // 缺这两个会在 tar.xz / tar.zst 分支抛 NoClassDefFoundError。
     implementation("org.tukaani:xz:1.10")
