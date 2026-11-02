@@ -71,6 +71,62 @@
         <item name="colorAccent">@color/blue_600</item>
     </style>
 
+
+    <!-- ══════════════════════════════════════════════════════════
+         主题 2：终末地风味（endfield-ui-skill）
+         ══════════════════════════════════════════════════════════
+         与「工业风格」是两套不同体系：工业风格是深色底 + 琥珀强调 + 圆角；
+         终末地是纸感底 + 酸性黄 + 切角，字体用 Saira 宽体。
+
+         关键约束（来自 skill 的固定规则）：
+           · 强调色只有一种，只做填充不铺底
+           · 主色给墨色而非黄色 —— Material 默认部件（光标/焦点线/进度条/
+             复选框）用 primary 画线，黄线在浅色纸上不可见
+           · 红色只给删除
+           · 全部直角，切角留给可点击元素（由代码按需实现）
+         ══════════════════════════════════════════════════════════ -->
+    <style name="Theme.HYFileManager.Endfield" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- 终末地：UI 字体用 Saira（宽体几何），中文自动落到系统 CJK -->
+        <item name="android:fontFamily">@font/saira_family</item>
+        <item name="colorPrimary">@color/ef_ink_light</item>
+        <item name="colorOnPrimary">@color/ef_paper_light</item>
+        <item name="colorSecondary">@color/ef_signal</item>
+        <item name="colorOnSecondary">@color/ef_on_signal</item>
+        <item name="colorSurface">@color/ef_panel_light</item>
+        <item name="colorOnSurface">@color/ef_ink_light</item>
+        <item name="colorOutline">@color/ef_rule_light</item>
+        <item name="colorError">@color/ef_danger_light</item>
+        <item name="android:colorBackground">@color/ef_paper_light</item>
+    </style>
+
+    <style name="Theme.HYFileManager.Endfield.Light" parent="Theme.Material3.Light.NoActionBar">
+        <!-- 终末地：UI 字体用 Saira（宽体几何），中文自动落到系统 CJK -->
+        <item name="android:fontFamily">@font/saira_family</item>
+        <item name="colorPrimary">@color/ef_ink_light</item>
+        <item name="colorOnPrimary">@color/ef_paper_light</item>
+        <item name="colorSecondary">@color/ef_signal</item>
+        <item name="colorOnSecondary">@color/ef_on_signal</item>
+        <item name="colorSurface">@color/ef_panel_light</item>
+        <item name="colorOnSurface">@color/ef_ink_light</item>
+        <item name="colorOutline">@color/ef_rule_light</item>
+        <item name="colorError">@color/ef_danger_light</item>
+        <item name="android:colorBackground">@color/ef_paper_light</item>
+    </style>
+
+    <style name="Theme.HYFileManager.Endfield.Dark" parent="Theme.Material3.Dark.NoActionBar">
+        <!-- 终末地：UI 字体用 Saira（宽体几何），中文自动落到系统 CJK -->
+        <item name="android:fontFamily">@font/saira_family</item>
+        <item name="colorPrimary">@color/ef_ink_dark</item>
+        <item name="colorOnPrimary">@color/ef_paper_dark</item>
+        <item name="colorSecondary">@color/ef_signal</item>
+        <item name="colorOnSecondary">@color/ef_on_signal</item>
+        <item name="colorSurface">@color/ef_panel_dark</item>
+        <item name="colorOnSurface">@color/ef_ink_dark</item>
+        <item name="colorOutline">@color/ef_rule_dark</item>
+        <item name="colorError">@color/ef_danger_dark</item>
+        <item name="android:colorBackground">@color/ef_paper_dark</item>
+    </style>
+
     <!-- PopupWindow 入场/退场动画 -->
     <style name="AnimPopup" parent="@android:style/Animation">
         <item name="android:windowEnterAnimation">@anim/popup_in</item>

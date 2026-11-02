@@ -224,7 +224,7 @@ public class FileManagerModule extends HyVqModule {
     /** 回收站自动清理天数（0 = 不自动清理） */
     private static final String PREF_TRASH_KEEP_DAYS = "trash_keep_days";
 
-    /** 界面主题：0=默认，1=工业风格 */
+    /** 界面主题：0=默认，1=工业风格，2=终末地 */
     private static int uiTheme = 0;
     /** 明暗模式：0=跟随系统，1=亮色，2=暗色 */
     private static int uiMode = 0;
@@ -461,7 +461,7 @@ public class FileManagerModule extends HyVqModule {
         gridMode = sp.getBoolean(PREF_GRID_MODE, false);
         thumbsEnabled = sp.getBoolean(PREF_THUMBS, true);
         listDensity = Math.max(1, Math.min(3, sp.getInt(PREF_DENSITY, 2)));
-        uiTheme = Math.max(0, Math.min(1, sp.getInt(PREF_UI_THEME, 0)));
+        uiTheme = Math.max(0, Math.min(2, sp.getInt(PREF_UI_THEME, 0)));
         uiMode = Math.max(0, Math.min(2, sp.getInt(PREF_UI_MODE, 0)));
         navLocalExpanded = sp.getBoolean(PREF_NAV_LOCAL_OPEN, true);
         navToolsExpanded = sp.getBoolean(PREF_NAV_TOOLS_OPEN, true);
@@ -3976,7 +3976,9 @@ public class FileManagerModule extends HyVqModule {
         box.addView(UiKit.sectionHeader(ctx, "明暗模式"));
 
         TextView hint = new TextView(ctx);
-        hint.setText("工业风格内置深色，不受此项影响。\n切换后界面会自动重建。");
+        hint.setText("工业风格内置深色，不受此项影响。\n"
+                + "终末地有浅色（纸）与深色（墨）两套，跟随此项。\n"
+                + "切换后界面会自动重建。");
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         hint.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
@@ -4022,7 +4024,9 @@ public class FileManagerModule extends HyVqModule {
         box.addView(UiKit.sectionHeader(ctx, "界面主题"));
 
         TextView hint = new TextView(ctx);
-        hint.setText("工业风格：深色底 + 琥珀色强调，适合暗光环境。\n切换后界面会自动重建。");
+        hint.setText("工业风格：深色底 + 琥珀色强调，适合暗光环境。\n"
+                + "终末地：纸感底 + 酸性黄 + 切角 + Saira 宽体，工业科幻感。\n"
+                + "切换后界面会自动重建。");
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         hint.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
@@ -4030,8 +4034,11 @@ public class FileManagerModule extends HyVqModule {
         box.addView(hint);
 
         final android.app.Dialog d = UiKit.glassDialog(ctx, box);
-        String[] names = {"默认", "工业风格"};
-        String[] descs = {"Material3 跟随系统深浅色", "深色 + 琥珀强调，控制面板风格"};
+        String[] names = {"默认", "工业风格", "终末地"};
+        String[] descs = {
+                "Material3 跟随系统深浅色",
+                "深色 + 琥珀强调，控制面板风格",
+                "纸感 + 酸性黄 + 切角 + Saira 宽体"};
         for (int i = 0; i < names.length; i++) {
             final int idx = i;
             addInfoRow(box, names[i], descs[i], uiTheme == i, v -> {
@@ -4081,7 +4088,7 @@ public class FileManagerModule extends HyVqModule {
                     showThemePicker();
                 });
 
-        // ── 明暗模式（工业风格内置深色，隐藏此项）──
+        // ── 明暗模式（工业风格内置深色，隐藏此项；终末地有浅/深两套，显示）──
         if (uiTheme != 1) {
             final String[] MODE_NAMES = {"跟随系统", "亮色", "暗色"};
             addInfoRow(box, "明暗模式",
