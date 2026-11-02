@@ -9188,11 +9188,19 @@ public class FileManagerModule extends HyVqModule {
             // 扩展名 / 显示名 / 支持密码 / 支持等级 / 可否创建
             {"zip", "ZIP", "1", "1", "1"},
             // 7z：密码支持（commons-compress 1.26 的 SevenZOutputFile 可写 AES256）
-            //     但**不支持压缩等级**——LZMA2 没有 level 参数，SevenZArchiveEntry 也无此字段
+            //     等级不支持——LZMA2Options 有 preset，但 SevenZOutputFile 不暴露入口
             {"7z",  "7Z",  "1", "0", "1"},
             {"tar", "TAR", "0", "0", "1"},
-            {"tar.gz", "TAR.GZ", "0", "0", "1"},
+            {"tar.gz",  "TAR.GZ",  "0", "0", "1"},
+            {"tar.bz2", "TAR.BZ2", "0", "0", "1"},
+            {"tar.xz",  "TAR.XZ",  "0", "0", "1"},
+            {"tar.zst", "TAR.ZST", "0", "0", "1"},
             {"gz",  "GZ",  "0", "0", "1"},
+            {"bz2", "BZ2", "0", "0", "1"},
+            {"xz",  "XZ",  "0", "0", "1"},
+            {"zst", "ZST", "0", "0", "1"},
+            // RAR 不在此列：UnRAR 许可证禁止用其代码开发 RAR 压缩器，
+            // 官方 rar 为共享软件且无 aarch64 Android 分发。只支持解压。
     };
 
     /** 创建压缩文件对话框 */
@@ -9436,10 +9444,10 @@ public class FileManagerModule extends HyVqModule {
             boolean ok = false;
             String err = null;
             try {
-                // TAR / TAR.GZ / GZ / 7Z 走 commons-compress
-                // （zip4j 2.11.5 只支持写 ZIP，不写 7z）
-                if ("tar".equals(ext) || "tar.gz".equals(ext) || "gz".equals(ext)
-                        || "7z".equals(ext)) {
+                // TAR 家族 / 单流压缩 / 7Z 走 commons-compress
+                // （zip4j 只能写 ZIP；RAR 因许可证限制不支持创建）
+                if ("tar".equals(ext) || ext.startsWith("tar.")
+                        || isSingleStreamExt(ext) || "7z".equals(ext)) {
                     final boolean tarOk;
                     try {
                         tarOk = compressWithCommons(src, out, ext, single, password);
@@ -9529,31 +9537,43 @@ public class FileManagerModule extends HyVqModule {
      *
      * @param single 目录场景下是否把目录自身作为顶层条目
      */
+    /**
+     * 用 commons-compress 创建压缩包。
+     *
+     * <p>支持两种形态：</p>
+     * <ul>
+     *   <li><b>单流压缩</b>（gz/bz2/xz/zst，且源是单个文件）——无归档结构，
+     *       解压后就是一个文件</li>
+     *   <li><b>tar 家族</b>（tar / tar.gz / tar.bz2 / tar.xz / tar.zst）——
+     *       先打 tar 再用对应压缩器包一层</li>
+     * </ul>
+     *
+     * <p>7z 走 {@link #compress7z}（那条路要处理密码与条目头）。</p>
+     */
     private boolean compressWithCommons(File src, File out, String ext, boolean single,
                                         String password) throws java.io.IOException {
         if ("7z".equals(ext)) return compress7z(src, out, single, password);
-        if ("gz".equals(ext) && !src.isDirectory()) {
-            // 单文件 gzip（无归档结构）
+
+        // ── 单文件流压缩：gz / bz2 / xz / zst（源是目录时不走这里）──
+        if (!src.isDirectory() && isSingleStreamExt(ext)) {
             try (java.io.InputStream in = new java.io.BufferedInputStream(
                         new java.io.FileInputStream(src));
                  java.io.OutputStream os = new java.io.BufferedOutputStream(
                         new java.io.FileOutputStream(out));
-                 org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream gz =
-                        new org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream(os)) {
+                 java.io.OutputStream comp = wrapCompressor(os, ext)) {
                 byte[] buf = new byte[8192];
                 int n;
-                while ((n = in.read(buf)) > 0) gz.write(buf, 0, n);
+                while ((n = in.read(buf)) > 0) comp.write(buf, 0, n);
             }
             return true;
         }
 
+        // ── tar 家族 ──
         java.io.OutputStream base = new java.io.BufferedOutputStream(
                 new java.io.FileOutputStream(out));
         try {
-            boolean isGz = "tar.gz".equals(ext) || "gz".equals(ext);
-            java.io.OutputStream chain = isGz
-                    ? new org.apache.commons.compress.compressors.gzip.GzipCompressorOutputStream(base)
-                    : base;
+            String inner = tarInnerExt(ext);      // "tar.gz" → "gz"，"tar" → null
+            java.io.OutputStream chain = inner == null ? base : wrapCompressor(base, inner);
             org.apache.commons.compress.archivers.tar.TarArchiveOutputStream tar =
                     new org.apache.commons.compress.archivers.tar.TarArchiveOutputStream(chain);
             try {
@@ -9565,11 +9585,52 @@ public class FileManagerModule extends HyVqModule {
                 }
                 tar.finish();
             } finally {
-                tar.close();
+                tar.close();   // 会连带关闭 chain
             }
             return true;
         } finally {
             try { base.close(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /** 单文件流压缩格式（解压后是一个文件，不是归档） */
+    private static boolean isSingleStreamExt(String ext) {
+        return "gz".equals(ext) || "bz2".equals(ext) || "xz".equals(ext) || "zst".equals(ext);
+    }
+
+    /** "tar.gz" → "gz"；"tar" → null（不套压缩器） */
+    private static String tarInnerExt(String ext) {
+        if ("tar".equals(ext)) return null;
+        int dot = ext.indexOf('.');
+        return dot < 0 ? null : ext.substring(dot + 1);
+    }
+
+    /**
+     * 按扩展名创建压缩流。xz / zst 的等级走预设值。
+     *
+     * <p>注意 xz 与 zstd 的依赖来源：xz 是 org.tukaani:xz（纯 Java），
+     * zstd-jni 是 com.github.luben:zstd-jni（JNI 封装）。两者都已在
+     * build.gradle.kts 里，且许可可闭源（public domain / BSD-2）。</p>
+     */
+    private java.io.OutputStream wrapCompressor(java.io.OutputStream os, String kind)
+            throws java.io.IOException {
+        switch (kind == null ? "" : kind) {
+            case "gz":
+                return new org.apache.commons.compress.compressors.gzip
+                        .GzipCompressorOutputStream(os);
+            case "bz2":
+                return new org.apache.commons.compress.compressors.bzip2
+                        .BZip2CompressorOutputStream(os);
+            case "xz":
+                // commons-compress 的 XZCompressorOutputStream(OutputStream, int preset)
+                // preset 6 = 库默认（大小与速度平衡）；0-9，9 最慢最小
+                return new org.apache.commons.compress.compressors.xz
+                        .XZCompressorOutputStream(os, 6);
+            case "zst":
+                // zstd-jni 需要 aarch64 原生库；版本被钉在 1.5.5-11（新版要 compileSdk 37）
+                return new com.github.luben.zstd.ZstdOutputStream(os);
+            default:
+                throw new java.io.IOException("不支持的压缩格式：" + kind);
         }
     }
 
