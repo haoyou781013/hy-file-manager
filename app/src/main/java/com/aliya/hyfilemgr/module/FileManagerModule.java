@@ -9765,7 +9765,16 @@ public class FileManagerModule extends HyVqModule {
             if (c != '/' && c != '\\') continue;
             String head = rest.substring(0, i - 1);
             String low = head.toLowerCase(java.util.Locale.ROOT);
-            if (low.endsWith(".zip") || low.endsWith(".jar") || low.endsWith(".apk")) {
+            // 支持所有可浏览格式的切分：
+            // 此前只认 zip/jar/apk，7z/tar/rar 会切分失败 →
+            // zipPath 变成整个 "zip:///sdcard/x/test.7z/" → isFile()=false →
+            // loadZip 提前 return "压缩包不存在"，表现为「打开后空白、连 .. 都没有」
+            if (low.endsWith(".zip") || low.endsWith(".jar") || low.endsWith(".apk")
+                    || low.endsWith(".xapk") || low.endsWith(".7z")
+                    || low.endsWith(".rar") || low.endsWith(".tar")
+                    || low.endsWith(".tar.gz") || low.endsWith(".tar.bz2")
+                    || low.endsWith(".tar.xz") || low.endsWith(".tar.zst")
+                    || low.endsWith(".tgz")) {
                 best = i - 1;
                 break;
             }
@@ -9958,7 +9967,9 @@ public class FileManagerModule extends HyVqModule {
         String inner = parts[1];
         File zip = new File(zipPath);
         if (!zip.isFile()) {
-            p.lastResult = AccessResult.empty("压缩包不存在");
+            android.util.Log.w("HyArchive", "loadZip: 不是文件 path=" + p.path
+                    + " → zipPath=" + zipPath + " inner=" + inner);
+            p.lastResult = AccessResult.empty("压缩包不存在：" + zipPath);
             return;
         }
 
@@ -9969,6 +9980,7 @@ public class FileManagerModule extends HyVqModule {
                 items = listArchiveItems(zip);
                 archiveItemsCache.put(zipPath, items);
             } catch (Throwable t) {
+                android.util.Log.e("HyArchive", "listArchiveItems 失败 " + zipPath, t);
                 p.lastResult = AccessResult.empty("无法读取压缩包：" + t.getMessage());
                 return;
             }
