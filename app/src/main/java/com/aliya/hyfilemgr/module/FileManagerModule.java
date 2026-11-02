@@ -224,7 +224,7 @@ public class FileManagerModule extends HyVqModule {
     /** 回收站自动清理天数（0 = 不自动清理） */
     private static final String PREF_TRASH_KEEP_DAYS = "trash_keep_days";
 
-    /** 界面主题：0=默认，1=工业风格，2=终末地 */
+    /** 界面主题：0=默认，1=工业风格 */
     private static int uiTheme = 0;
     /** 明暗模式：0=跟随系统，1=亮色，2=暗色 */
     private static int uiMode = 0;
@@ -372,10 +372,7 @@ public class FileManagerModule extends HyVqModule {
     private FrameLayout topBarCenterSlot;
     private View topBarCrumbView;
     private View topBarFileActions;
-    private LinearLayout topBarTermActions;
     /** 终端模式下顶栏的标题 View 与 pwd TextView */
-    private View topBarTermTitleView;
-    private TextView terminalTopPwd;
     /** ⭐ v2.8.0 ROOT 顶栏按钮（状态着色：已授权=主色） */
     /** 上一次已知的 root 状态，用于状态变化时只刷新一次 UI */
     /** 曾经授权成功过的标记：决定启动时是"静默探测"还是"什么都不做"（避免每次冷启动弹授权窗） */
@@ -461,7 +458,7 @@ public class FileManagerModule extends HyVqModule {
         gridMode = sp.getBoolean(PREF_GRID_MODE, false);
         thumbsEnabled = sp.getBoolean(PREF_THUMBS, true);
         listDensity = Math.max(1, Math.min(3, sp.getInt(PREF_DENSITY, 2)));
-        uiTheme = Math.max(0, Math.min(2, sp.getInt(PREF_UI_THEME, 0)));
+        uiTheme = Math.max(0, Math.min(1, sp.getInt(PREF_UI_THEME, 0)));
         uiMode = Math.max(0, Math.min(2, sp.getInt(PREF_UI_MODE, 0)));
         navLocalExpanded = sp.getBoolean(PREF_NAV_LOCAL_OPEN, true);
         navToolsExpanded = sp.getBoolean(PREF_NAV_TOOLS_OPEN, true);
@@ -688,12 +685,8 @@ public class FileManagerModule extends HyVqModule {
             if (contentMode == ContentMode.FILES) {
                 showNavSidebar();
             } else {
-                // 终端/设置模式：返回文件列表
-                if (contentMode == ContentMode.TERMINAL) {
-                    closeTerminal();
-                } else {
-                    closeSettingsEmbed();
-                }
+                // 设置模式：返回文件列表
+                closeSettingsEmbed();
             }
         });
         bar.addView(topBarLeftIcon);
@@ -747,12 +740,7 @@ public class FileManagerModule extends HyVqModule {
         bar.addView(fileActions);
         topBarFileActions = fileActions;
 
-        LinearLayout termActions = new LinearLayout(ctx);
-        termActions.setOrientation(LinearLayout.HORIZONTAL);
-        termActions.setGravity(Gravity.CENTER_VERTICAL);
-        termActions.setVisibility(View.GONE);
-        bar.addView(termActions);
-        topBarTermActions = termActions;
+
 
         return bar;
     }
@@ -3315,12 +3303,6 @@ public class FileManagerModule extends HyVqModule {
         box.addView(buildSettingsBackRow("返回文件列表"));
         box.addView(UiKit.sectionHeader(ctx, "设置"));
 
-        // ── 终端 ──
-        addSettingsRow(box, "终端",
-                "打开当前目录的命令行（系统 shell）", R.drawable.ic_terminal, v -> {
-                    hideSettingsDialog();
-                    openTerminal();
-                });
 
         // ── 权限管理 ──
         addSettingsRow(box, "权限管理",
@@ -3405,7 +3387,6 @@ public class FileManagerModule extends HyVqModule {
     /** 顶栏切到设置模式：「设置 | 页名」+ 返回 */
     private void enterSettingsTopBar() {
         if (topBarCenterSlot == null || topBarSettingsTitleView != null) return;
-        removeTerminalTopTitle();
         if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.GONE);
 
         LinearLayout title = new LinearLayout(ctx);
@@ -3442,7 +3423,6 @@ public class FileManagerModule extends HyVqModule {
         topBarSettingsTitleView = title;
 
         if (topBarFileActions != null) topBarFileActions.setVisibility(View.GONE);
-        if (topBarTermActions != null) topBarTermActions.setVisibility(View.GONE);
     }
 
     /** 关闭设置页，恢复文件视图与顶栏 */
@@ -3651,7 +3631,7 @@ public class FileManagerModule extends HyVqModule {
     private volatile String lastRealPath = null;
 
     /** 当前内容视图：三者互斥 */
-    private enum ContentMode { FILES, SETTINGS, TERMINAL }
+    private enum ContentMode { FILES, SETTINGS }
 
     private ContentMode contentMode = ContentMode.FILES;
 
@@ -3670,17 +3650,12 @@ public class FileManagerModule extends HyVqModule {
 
         boolean fileVisible = target == ContentMode.FILES;
         boolean settingsVisible = target == ContentMode.SETTINGS;
-        boolean termVisible = target == ContentMode.TERMINAL;
 
         if (fileContentView != null) {
             fileContentView.setVisibility(fileVisible ? View.VISIBLE : View.GONE);
         }
         if (settingsEmbedView != null) {
             settingsEmbedView.setVisibility(settingsVisible ? View.VISIBLE : View.GONE);
-        }
-        if (terminalPanel != null) {
-            View tv = terminalPanel.getView();
-            if (tv != null) tv.setVisibility(termVisible ? View.VISIBLE : View.GONE);
         }
 
         // 底部两栏与 FAB 只在文件模式显示
@@ -3704,37 +3679,22 @@ public class FileManagerModule extends HyVqModule {
             }
         }
 
-        // 左上角图标：文件模式=汉堡，终端/设置=返回
+        // 左上角图标：文件模式=汉堡，设置=返回
         if (topBarLeftIcon != null) {
             topBarLeftIcon.setImageResource(fileVisible
                     ? R.drawable.ic_menu : R.drawable.ic_back);
         }
 
-        // 顶栏：三选一
+        // 顶栏：文件 / 设置 二选一
         if (fileVisible) {
-            removeTerminalTopTitle();
             removeSettingsTopTitle();
             if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.VISIBLE);
             if (topBarFileActions != null) topBarFileActions.setVisibility(View.VISIBLE);
-            if (topBarTermActions != null) topBarTermActions.setVisibility(View.GONE);
-        } else if (target == ContentMode.TERMINAL) {
-            removeSettingsTopTitle();
-            enterTerminalTopBar();
         } else {
-            removeTerminalTopTitle();
             enterSettingsTopBar();
         }
 
         if (prev != target && fileVisible && multiMode) updateOpBar();
-    }
-
-    /** 从顶栏移除终端标题（幂等） */
-    private void removeTerminalTopTitle() {
-        if (topBarTermTitleView != null && topBarCenterSlot != null) {
-            topBarCenterSlot.removeView(topBarTermTitleView);
-        }
-        topBarTermTitleView = null;
-        terminalTopPwd = null;
     }
 
     /** 从顶栏移除设置标题（幂等） */
@@ -3746,187 +3706,7 @@ public class FileManagerModule extends HyVqModule {
         settingsTopTitle = null;
     }
 
-    /** 顶栏切到终端模式：「终端 | pwd」+ 清屏/复制/中断 */
-    private void enterTerminalTopBar() {
-        if (topBarCenterSlot == null) return;
-        // 幂等守卫：避免顶栏插槽累积第二个标题
-        if (topBarTermTitleView != null) return;
-        removeSettingsTopTitle();
-        // 中部：隐藏面包屑，显示终端标题
-        if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.GONE);
-        LinearLayout termTitle = new LinearLayout(ctx);
-        termTitle.setOrientation(LinearLayout.HORIZONTAL);
-        termTitle.setGravity(Gravity.CENTER_VERTICAL);
-
-        TextView tag = new TextView(ctx);
-        tag.setText("终端");
-        tag.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        tag.setTypeface(null, android.graphics.Typeface.BOLD);
-        tag.setTextColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorPrimary));
-        termTitle.addView(tag);
-
-        TextView sep = new TextView(ctx);
-        sep.setText("  |  ");
-        sep.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        sep.setTextColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurfaceVariant));
-        termTitle.addView(sep);
-
-        terminalTopPwd = new TextView(ctx);
-        String dir = (terminalPanel != null) ? terminalPanel.getWorkDir() : "/sdcard";
-        terminalTopPwd.setText(dir);
-        terminalTopPwd.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        terminalTopPwd.setTypeface(android.graphics.Typeface.MONOSPACE);
-        terminalTopPwd.setTextColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurface));
-        terminalTopPwd.setSingleLine(true);
-        terminalTopPwd.setEllipsize(android.text.TextUtils.TruncateAt.START);
-        termTitle.addView(terminalTopPwd, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        topBarCenterSlot.addView(termTitle, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT));
-        topBarTermTitleView = termTitle;
-
-        // 右侧：换成终端操作
-        if (topBarFileActions != null) topBarFileActions.setVisibility(View.GONE);
-        if (topBarTermActions != null && topBarTermActions.getChildCount() == 0) {
-            topBarTermActions.addView(textButton("复制", v -> {
-                if (terminalPanel != null) terminalPanel.copyAllPublic();
-            }));
-            topBarTermActions.addView(textButton("清屏", v -> {
-                if (terminalPanel != null) terminalPanel.clearOutputPublic();
-            }));
-            topBarTermActions.addView(textButton("中断", v -> {
-                if (terminalPanel != null) terminalPanel.sendInterruptPublic();
-            }));
-            topBarTermActions.addView(textButton("关闭", v -> closeTerminal()));
-            topBarTermActions.setVisibility(View.VISIBLE);
-        }
-    }
-
-    /** 顶栏切回文件模式：面包屑 + 搜索/排序/更多 */
-    private void exitTerminalTopBar() {
-        if (topBarCenterSlot == null) return;
-        if (topBarTermTitleView != null) {
-            topBarCenterSlot.removeView(topBarTermTitleView);
-            topBarTermTitleView = null;
-        }
-        if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.VISIBLE);
-        if (topBarTermActions != null) topBarTermActions.setVisibility(View.GONE);
-        if (topBarFileActions != null) topBarFileActions.setVisibility(View.VISIBLE);
-        terminalTopPwd = null;
-    }
-
-    /** 终端 pwd 变化时同步顶栏 */
-    private void updateTerminalTopPwd(String dir) {
-        if (terminalTopPwd != null && dir != null) terminalTopPwd.setText(dir);
-    }
-
-    /**
-     * 终端默认工作目录：软件私有 files/home（类似 Termux 的 $HOME）。
-     *
-     * <p>放在 files/ 而不是 cache/：cache 会被系统随时清理，
-     * 用户在终端里建的文件不能丢。</p>
-     */
-    private String termHomeDir() {
-        try {
-            File home = new File(ctx.getFilesDir(), "home");
-            if (!home.exists() && !home.mkdirs() && !home.isDirectory()) {
-                return ctx.getFilesDir().getAbsolutePath();
-            }
-            return home.getAbsolutePath();
-        } catch (Throwable t) {
-            return "/sdcard";
-        }
-    }
-
     /** 终端面板（内置，同一 Activity 内叠加显示） */
-    private com.aliya.hyfilemgr.terminal.TerminalPanel terminalPanel;
-
-    /**
-     * 切换终端视图（与文件列表互斥显示，不切 Activity）。
-     *
-     * <p>与文件列表同处 contentWrap，通过 visibility 切换：
-     * 终端不是浮层，而是像文件列表一样占满内容区的独立视图。
-     * 顶栏由 TerminalPanel 自己提供（「终端 | 当前pwd」）。</p>
-     */
-    private void openTerminal() {
-        try {
-            if (contentWrapRef == null) {
-                UiKit.toast(ctx, "界面未就绪");
-                return;
-            }
-            // 已在终端 → 切回文件列表
-            if (terminalPanel != null) {
-                closeTerminal();
-                return;
-            }
-            // 终端工作目录 = 文件列表当前路径。
-            // active 可能为 null 或指向虚拟路径（zip:// trash:// cat://）：
-            // 这些不是真实目录，退回上一次真实浏览路径。
-            String dir = null;
-            if (active != null && active.path != null) {
-                String p2 = active.path;
-                boolean virtualPath = p2.startsWith("content://")
-                        || p2.startsWith(PREFIX_TRASH)
-                        || p2.startsWith(PREFIX_ZIP)
-                        || p2.startsWith("cat://");
-                if (!virtualPath && new File(p2).isDirectory()) dir = p2;
-            }
-            if (dir == null) {
-                // 回退：软件私有目录（类似 Termux 的 HOME）
-                dir = termHomeDir();
-            }
-
-            terminalPanel = new com.aliya.hyfilemgr.terminal.TerminalPanel(
-                    ctx, dir, this::closeTerminal);
-            // pwd 变化实时同步到共享顶栏（此前只读一次，cd 后顶栏永远停在旧值）
-            terminalPanel.setOnWorkDirChange(this::updateTerminalTopPwd);
-            View pv = terminalPanel.getView();
-            contentWrapRef.addView(pv, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT));
-
-            // 统一互斥切换（同时处理文件/设置/终端三者与顶栏）
-            setContentMode(ContentMode.TERMINAL);
-
-            // 不做位移/淡入动画：终端与文件列表是同级视图切换，
-            // 加「自下而上淡入」正是弹窗观感的来源。直接可见。
-            pv.setAlpha(1f);
-            pv.setTranslationY(0f);
-            terminalPanel.start();
-
-            // 立刻拉起键盘
-            pv.postDelayed(() -> {
-                if (terminalPanel != null) terminalPanel.requestInputFocus();
-            }, 150);
-        } catch (Throwable t) {
-            UiKit.toast(ctx, "无法打开终端：" + t.getMessage());
-        }
-    }
-
-    /** 关闭终端，恢复文件列表视图 */
-    private void closeTerminal() {
-        if (terminalPanel == null || contentWrapRef == null) return;
-        final com.aliya.hyfilemgr.terminal.TerminalPanel tp = terminalPanel;
-        final View pv = tp.getView();
-        terminalPanel = null;
-        tp.hideKeyboard();
-        // 直接切换，无退场动画（与文件列表同级）
-        tp.close();
-        if (contentWrapRef != null) contentWrapRef.removeView(pv);
-        if (fileContentView != null) fileContentView.setVisibility(View.VISIBLE);
-        if (bottomNav != null) {
-            bottomNav.setAlpha(1f);
-            bottomNav.setTranslationY(0f);
-            bottomNav.setVisibility(View.VISIBLE);
-        }
-        if (fabNew != null) fabNew.setVisibility(View.VISIBLE);
-        setContentMode(ContentMode.FILES);
-    }
     /** 回收站保留天数选择 */
     private void showTrashKeepDaysPicker() {
         final int[] opts = {0, 1, 3, 7, 15, 30, 60, 90, 180};
@@ -3977,7 +3757,6 @@ public class FileManagerModule extends HyVqModule {
 
         TextView hint = new TextView(ctx);
         hint.setText("工业风格内置深色，不受此项影响。\n"
-                + "终末地有浅色（纸）与深色（墨）两套，跟随此项。\n"
                 + "切换后界面会自动重建。");
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         hint.setTextColor(UiKit.color(ctx,
@@ -4025,7 +3804,6 @@ public class FileManagerModule extends HyVqModule {
 
         TextView hint = new TextView(ctx);
         hint.setText("工业风格：深色底 + 琥珀色强调，适合暗光环境。\n"
-                + "终末地：纸感底 + 酸性黄 + 切角 + Saira 宽体，工业科幻感。\n"
                 + "切换后界面会自动重建。");
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         hint.setTextColor(UiKit.color(ctx,
@@ -4034,11 +3812,8 @@ public class FileManagerModule extends HyVqModule {
         box.addView(hint);
 
         final android.app.Dialog d = UiKit.glassDialog(ctx, box);
-        String[] names = {"默认", "工业风格", "终末地"};
-        String[] descs = {
-                "Material3 跟随系统深浅色",
-                "深色 + 琥珀强调，控制面板风格",
-                "纸感 + 酸性黄 + 切角 + Saira 宽体"};
+        String[] names = {"默认", "工业风格"};
+        String[] descs = {"Material3 跟随系统深浅色", "深色 + 琥珀强调，控制面板风格"};
         for (int i = 0; i < names.length; i++) {
             final int idx = i;
             addInfoRow(box, names[i], descs[i], uiTheme == i, v -> {
@@ -4088,7 +3863,7 @@ public class FileManagerModule extends HyVqModule {
                     showThemePicker();
                 });
 
-        // ── 明暗模式（工业风格内置深色，隐藏此项；终末地有浅/深两套，显示）──
+        // ── 明暗模式（工业风格内置深色，隐藏此项）──
         if (uiTheme != 1) {
             final String[] MODE_NAMES = {"跟随系统", "亮色", "暗色"};
             addInfoRow(box, "明暗模式",
@@ -4770,12 +4545,6 @@ public class FileManagerModule extends HyVqModule {
                     });
                 }));
 
-        toolsBody.addView(buildToolCard("终端",
-                "系统 shell · 当前目录",
-                R.drawable.ic_terminal, v -> {
-                    closeNavSidebar();
-                    openTerminal();
-                }));
 
         content.addView(buildCollapsibleHeader("工具", toolsBody, () -> navToolsExpanded));
         content.addView(toolsBody);

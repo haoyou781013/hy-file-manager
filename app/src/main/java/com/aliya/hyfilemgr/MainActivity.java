@@ -74,18 +74,13 @@ public class MainActivity extends AppCompatActivity {
             sp.edit().putBoolean(PREF_MD3_OFF, true).apply();
         }
 
-        int theme = sp.getInt(PREF_THEME, 0);
+        int theme = Math.max(0, Math.min(1, sp.getInt(PREF_THEME, 0)));
         int mode = sp.getInt("ui_mode", 0);
 
         if (md3Off) {
             if (theme == 1) {
                 // 工业风格本来就是深色，兼容模式用 Dark AppCompat 近似
                 setTheme(R.style.Theme_HYFileManager_Compat_Dark);
-            } else if (theme == 2) {
-                // 终末地：Compat 下没有对应的纸色主题，按明暗模式降级
-                setTheme(mode == 2
-                        ? R.style.Theme_HYFileManager_Compat_Dark
-                        : R.style.Theme_HYFileManager_Compat_Light);
             } else if (mode == 1) {
                 setTheme(R.style.Theme_HYFileManager_Compat_Light);
             } else if (mode == 2) {
@@ -98,11 +93,6 @@ public class MainActivity extends AppCompatActivity {
 
         if (theme == 1) {
             setTheme(R.style.Theme_HYFileManager_Industrial);
-        } else if (theme == 2) {
-            // 终末地：纸(浅) / 墨(深) 两套，按明暗模式选
-            setTheme(mode == 2
-                    ? R.style.Theme_HYFileManager_Endfield_Dark
-                    : R.style.Theme_HYFileManager_Endfield_Light);
         } else if (mode == 1) {
             setTheme(R.style.Theme_HYFileManager_Light);
         } else if (mode == 2) {
