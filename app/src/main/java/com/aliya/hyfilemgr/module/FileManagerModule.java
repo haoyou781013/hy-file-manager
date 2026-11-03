@@ -2573,7 +2573,11 @@ public class FileManagerModule extends HyVqModule {
         // 按需追加，行数由数量自动决定（每行 4 个）
         final List<Object[]> actions = new ArrayList<>();
 
-        actions.add(new Object[]{"打开方式", R.drawable.ic_file, !parent, (Runnable) () -> {
+        // 文件夹没有「打开方式」这个概念：目录不是可被外部应用打开的文件。
+        // 此前只判 !parent，文件夹长按也会显示这个按钮，
+        // 点下去走 case 里的 e.isDir() 分支变成「进入文件夹」——与按钮语义不符。
+        actions.add(new Object[]{"打开方式", R.drawable.ic_file,
+                !parent && !e.isDir(), (Runnable) () -> {
             dialog.dismiss();
             showOpenWithDialog(e.path, e.name,
                     e.path != null && e.path.startsWith("content://"));

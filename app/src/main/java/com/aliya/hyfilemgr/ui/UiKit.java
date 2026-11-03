@@ -285,19 +285,14 @@ public final class UiKit {
         int screenH = context.getResources().getDisplayMetrics().heightPixels;
         int maxPanelH = (int) (screenH * 0.8f);
 
-        FrameLayout.LayoutParams panelLp =
-                new FrameLayout.LayoutParams(panelW, ViewGroup.LayoutParams.WRAP_CONTENT,
-                        Gravity.CENTER);
-        panel.setLayoutParams(panelLp);
-        panel.setMinimumHeight(0);
-        // 用「最大高度」约束：View 本身不支持 maxHeight，
-        // 改为把 panel 包一层 ScrollView，由 ScrollView 撑满上限并在内部滚动。
+        // 面板自身的圆角背景移到 ScrollView 之外的容器，
+        // 否则滚动时背景会跟着内容走、露出未圆角的空白
         android.widget.ScrollView panelScroll = new android.widget.ScrollView(context);
         panelScroll.setVerticalScrollBarEnabled(true);
         panelScroll.setOverScrollMode(android.view.View.OVER_SCROLL_IF_CONTENT_SCROLLS);
+        panelScroll.setFillViewport(false);
         panelScroll.setClipToPadding(false);
-        // 面板自身的圆角背景移到 ScrollView 之外的容器，
-        // 否则滚动时背景会跟着内容走、露出未圆角的空白
+
         FrameLayout panelHolder = new FrameLayout(context);
         panelHolder.setBackground(panel.getBackground());
         panel.setBackground(null);
@@ -306,7 +301,23 @@ public final class UiKit {
         panelHolder.addView(panelScroll, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        panelLp.height = maxPanelH;
+        // ⚠️ 高度：WRAP_CONTENT 为常态，**只有内容超过上限时才封顶并滚动**。
+        //
+        // FrameLayout.LayoutParams 没有 maxHeight 语义，只能写死或 WRAP。
+        // 上一版直接 height = maxPanelH，把所有弹窗都撑成屏幕 80%，
+        // 短内容弹窗（确认框、输入框）上下留出大片空白 —— 就是这次的问题。
+        //
+        // 正确做法：先用 UNSPECIFIED 量一次内容自然高度，再取 min(自然高度, 上限)。
+        // 量不出来（宽或高为 0）时退回 WRAP_CONTENT，由系统按内容排。
+        int measuredW = View.MeasureSpec.makeMeasureSpec(panelW, View.MeasureSpec.EXACTLY);
+        int measuredH = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+        panelHolder.measure(measuredW, measuredH);
+        int naturalH = panelHolder.getMeasuredHeight();
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                panelW, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        if (naturalH > maxPanelH) {
+            panelLp.height = maxPanelH;   // 超了才封顶，此时 ScrollView 生效
+        }
         shell.addView(panelHolder, panelLp);
 
         dialog.setContentView(shell);
