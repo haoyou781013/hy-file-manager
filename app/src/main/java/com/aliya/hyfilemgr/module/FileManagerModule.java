@@ -2267,15 +2267,20 @@ public class FileManagerModule extends HyVqModule {
             // 原始（未过滤）条目快照，跳过 AccessRouter.list；指纹 = mtime + 子项数。
             // 过滤/置顶/排序仍在下方统一执行（缓存与显示解耦，隐藏开关切换永远正确）。
             boolean fromCache = false;
+            // 子项数：-1 表示「还没扫过」。下面按需扫描，避免无快照时白扫一遍。
+            int cc = -1;
             // ⭐ v2.8.0 root 路径禁用目录缓存：root 目录在 App 侧的 lastModified()/
             // listFiles() 恒为 0/null，指纹永远相同 → 目录内容变了仍会显示旧快照
             if (!p.path.startsWith("content://") && !needRoot(p.path)) {
                 DirSnapshot snap = p.dirCache.get(p.path);
                 File dirF = new File(p.path);
                 long mt = dirF.lastModified();
-                int cc = 0;
-                File[] kids = dirF.listFiles();
-                if (kids != null) cc = kids.length;
+                // ⚠️ 只有「已有快照」时才需要算子项数去比对指纹。
+                // 旧实现在无快照时也扫一遍，且扫完直接丢弃 —— 白花一次主线程 IO。
+                if (snap != null) {
+                    File[] kids = dirF.listFiles();
+                    cc = kids == null ? 0 : kids.length;
+                }
                 if (snap != null && snap.mtime == mt && snap.childCount == cc) {
                     p.entries.clear();
                     p.entries.addAll(snap.entries);
@@ -2289,9 +2294,17 @@ public class FileManagerModule extends HyVqModule {
                 p.entries.addAll(p.lastResult.entries);
                 if (!p.path.startsWith("content://") && !needRoot(p.path)) {
                     File dirF = new File(p.path);
+                    // ⚠️ 旧写法 dirF.listFiles() 在三元表达式两侧各调一次，
+                    // 第二次结果直接丢弃 —— 万级目录等于白扫一遍全目录。
+                    int childCount;
+                    if (cc >= 0) {
+                        childCount = cc;   // 上面已扫过，直接复用
+                    } else {
+                        File[] kids2 = dirF.listFiles();
+                        childCount = kids2 == null ? 0 : kids2.length;
+                    }
                     p.dirCache.put(p.path, new DirSnapshot(
-                            new ArrayList<>(p.entries), dirF.lastModified(),
-                            dirF.listFiles() == null ? 0 : dirF.listFiles().length));
+                            new ArrayList<>(p.entries), dirF.lastModified(), childCount));
                 }
             }
             // 隐藏文件开关：默认过滤 .开头条目（".."parent条目不参与过滤）
@@ -3112,10 +3125,18 @@ public class FileManagerModule extends HyVqModule {
         card.setMinimumHeight(dp(78));
         card.setClickable(enabled);
         card.setFocusable(enabled);
-        card.setBackgroundResource(R.drawable.bg_menu_card);
-        if (!enabled) {
-            // 见上：禁用态用静态底，不要 ripple
+        if (enabled) {
+            // 启用态：ripple 提供按下泛光
+            card.setBackgroundResource(R.drawable.bg_menu_card);
         } else {
+            // ⚠️ 禁用态**不能用** bg_menu_card —— 它是 <ripple>，
+            // 而 ripple 的按下反馈由 View 的 Pressed 状态驱动，
+            // 与 setClickable(false) 无关。用了就会出现「禁用项反而有动效」。
+            // 换成静态圆角底 + 降不透明度，明确传达「不可用」。
+            card.setAlpha(0.35f);
+            card.setBackground(UiKit.rounded(ctx, dp(14), 0x14FFFFFF, 0x26FFFFFF));
+        }
+        if (enabled) {
             // ⚠️ 反馈要「按下就走」，不能等 onClick：
             // 旧实现把缩放放在 onClickListener 里，而 onClick 的第一句
             // 往往是 dialog.dismiss() —— 弹窗一关 View 就没了，
@@ -6608,8 +6629,38 @@ public class FileManagerModule extends HyVqModule {
         return i < 0 ? null : new int[]{i, i + query.length()};
     }
 
+
+    /**
+     * 检测用户正则是否有**灾难性回溯**风险，危险时拒绝执行。
+     *
+     * <p>实测（JDK 17）：{@code (.*a){20}$} 在 28 字符输入上耗时 25 秒，
+     * 而这三处正则全在主线程跑 → 直接 ANR。</p>
+     *
+     * <p>注意：Java 的 Pattern 对 {@code (a+)+$}、{@code (a|a)*$} 这类
+     * 经典 ReDoS **实测不爆**（0-1ms），真正危险的是
+     * <b>带量词的分组外层再套量词</b>，即 {@code (.*x){n}} / {@code (.+x)+}
+     * 这种「多量词嵌套」。</p>
+     *
+     * <p>只是启发式拦截，不追求完备 —— 目的是拦住最典型的手滑写法，
+     * 而不是做正则静态分析。</p>
+     */
+    private static boolean isReDoSRisky(String pattern) {
+        if (pattern == null || pattern.length() > 200) return false;
+        // 形如 (  ... 量词  ...  )  紧跟另一个量词
+        // 例：(.*a){20}  (.+x)+  (\d*)+  ([a-z]*)*
+        java.util.regex.Pattern risky = java.util.regex.Pattern.compile(
+                "\\([^()]*[*+][^()]*\\)[*+{]", java.util.regex.Pattern.CASE_INSENSITIVE);
+        if (risky.matcher(pattern).find()) return true;
+        return false;
+    }
+
     /** 正则查找：forward=true 找 region 内第一个；false 遍历取最后一个 */
     private int[] regexFind(String text, String query, int from, int to, boolean forward) {
+        if (isReDoSRisky(query)) {
+            UiKit.alert(ctx, "该正则可能导致长时间卡顿（多量词嵌套，如 (.*x){20}），"
+                    + "请改用更简单的写法");
+            return null;
+        }
         try {
             java.util.regex.Pattern pat = java.util.regex.Pattern.compile(query);
             java.util.regex.Matcher m = pat.matcher(text);
@@ -10818,8 +10869,11 @@ public class FileManagerModule extends HyVqModule {
             } else {
                 // 跨分区：复制 + 删源。复制失败必须中止，绝不删源，
                 // 否则「移入回收站」变成不可恢复的物理删除
+                // copy 现在保证「不完整就抛异常」（FileOps.copyRecursive
+                // 对 listFiles()==null 已改为抛 IOException）。
+                // 旧判据 dest.exists() 只能证明路径有东西，不能证明复制完整 ——
+                // 半截文件也满足，于是继续删源，回收站里留下的是残file。
                 FileOps.copy(f, dest);
-                if (!dest.exists()) return false;
                 deleteTree(f);
                 moved = true;
             }

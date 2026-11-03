@@ -115,9 +115,17 @@ public final class FileOps {
         runAsync(() -> {
             try {
                 File dest = new File(destDir, src.getName());
+                // 目标已存在时不能直接 renameTo：部分文件系统会静默覆盖，
+                // 用户以为"移动"实则丢了原文件。交给上层重命名去。
+                if (dest.exists()) {
+                    return new Object[]{false, "目标已存在同名项：" + src.getName()};
+                }
                 if (src.renameTo(dest)) {
                     return new Object[]{true, "已移动：" + src.getName()};
                 }
+                // 跨分区：copyRecursive 现在保证「不完整就抛异常」
+                // （listFiles()==null 已改为抛 IOException），
+                // 因此能走到下一行就说明复制完整，删源是安全的。
                 copyRecursive(src, dest);
                 deleteRecursive(src);
                 return new Object[]{true, "已移动（跨分区）：" + src.getName()};
@@ -212,10 +220,18 @@ public final class FileOps {
         if (src.isDirectory()) {
             if (!dest.exists() && !dest.mkdirs()) throw new IOException("无法创建目录 " + dest);
             File[] children = src.listFiles();
-            if (children != null) {
-                for (File c : children) {
-                    copyRecursive(c, new File(dest, c.getName()));
-                }
+            if (children == null) {
+                // ⚠️ 必须抛异常，不能静默跳过。
+                //
+                // listFiles() 返回 null 只有两种可能：不是目录（上面已判过），
+                // 或**没有读取权限**（典型如 /Android/data/<别的应用>）。
+                // 旧实现 if (children != null) 直接跳过 → 本次 copy「正常返回」，
+                // 而调用方（剪切/移动/移入回收站）在 copy 之后无条件删源，
+                // 结果是被跳过的子目录内容**永久丢失**，且对外报成功。
+                throw new IOException("无法读取目录内容（可能无权限）：" + src);
+            }
+            for (File c : children) {
+                copyRecursive(c, new File(dest, c.getName()));
             }
         } else {
             File parent = dest.getParentFile();
