@@ -398,11 +398,13 @@ public class FileManagerModule extends HyVqModule {
         if (context instanceof Activity) hostActivity = (Activity) context;
         activeInstance = this;
         restoreState();
+        installBackCallback();
     }
 
     @Override
     public void onDetach() {
         detached = true;
+        uninstallBackCallback();
         dismissAllPopups();
         persistState();
         if (activeInstance == this) activeInstance = null;
@@ -2052,6 +2054,125 @@ public class FileManagerModule extends HyVqModule {
         }
         active.path = parent;
         reload(active);
+    }
+
+
+    // ══════════ 返回键接管 ══════════
+
+    /**
+     * 系统返回键回调。
+     *
+     * <p>此前项目里<b>完全没有</b>任何返回处理（无 onBackPressed、
+     * 无 OnBackPressedCallback、无 OnBackInvokedCallback），
+     * 按返回直接退出 Activity，双栏导航/侧边栏/多选全部被丢弃。</p>
+     *
+     * <p>官方文档明确：{@code OnBackPressedCallback} 始终会被调用，
+     * 与 {@code android:enableOnBackInvokedCallback} 的取值无关，
+     * 因此这是最稳的接入方式——不需要现在就做完整的 Predictive Back 迁移，
+     * 将来要接系统预测动画时再补 OnBackInvokedCallback 即可。</p>
+     *
+     * <p>处理顺序（从「最临时」到「最持久」）：</p>
+     * <ol>
+     *   <li>多选模式 → 退出多选</li>
+     *   <li>侧边栏展开 → 收起</li>
+     *   <li>设置弹窗 → 关闭</li>
+     *   <li>设置页（内嵌） → 回文件列表</li>
+     *   <li>当前窗格在虚拟路径（压缩包内/回收站） → 逐级返回</li>
+     *   <li>有历史栈 → 后退一步</li>
+     *   <li>都不是 → 交给系统（退出 App）</li>
+     * </ol>
+     */
+    private androidx.activity.OnBackPressedCallback backCallback;
+
+    /** 挂到宿主 Activity；重复调用幂等 */
+    private void installBackCallback() {
+        if (!(hostActivity instanceof androidx.activity.ComponentActivity)) return;
+        if (backCallback != null) return;   // 已挂过
+        backCallback = new androidx.activity.OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (handleBackPressed()) return;
+                // 本模块不处理 → 交还系统（Activity 退出）
+                setEnabled(false);
+                if (hostActivity != null) hostActivity.onBackPressed();
+                setEnabled(true);
+            }
+        };
+        ((androidx.activity.ComponentActivity) hostActivity)
+                .getOnBackPressedDispatcher().addCallback(backCallback);
+    }
+
+    /** 卸掉回调（detach 时） */
+    private void uninstallBackCallback() {
+        if (backCallback != null) {
+            backCallback.remove();
+            backCallback = null;
+        }
+    }
+
+    /**
+     * 消费一次返回。
+     *
+     * @return true 表示本模块已处理，不应退出 Activity
+     */
+    public boolean handleBackPressed() {
+        // 1. 多选
+        if (multiMode) {
+            exitMultiMode();
+            return true;
+        }
+        // 2. 侧边栏
+        if (navOverlay != null && navOverlay.getVisibility() == View.VISIBLE) {
+            closeNavSidebar();
+            return true;
+        }
+        // 3. 设置弹窗（showSettingsDialog 系列的 Dialog）
+        //    没有单独字段，靠 Activity 的 Window 判断太脆；
+        //    这里靠 settingsEmbedView 与 contentMode 区分「内嵌设置页」
+        // 4. 内嵌设置页 → 回文件列表
+        if (contentMode == ContentMode.SETTINGS) {
+            setContentMode(ContentMode.FILES);
+            return true;
+        }
+        // 5. 虚拟路径（压缩包内 / 回收站）→ 逐级返回
+        if (active != null && active.path != null) {
+            String cur = active.path;
+            if (cur.startsWith(PREFIX_ZIP)) {
+                String[] parts = splitZipPath(cur);
+                String inner = parts[1];
+                if (inner != null && !inner.isEmpty()) {
+                    // 包内子目录 → 上一级
+                    String trimmed = inner;
+                    while (trimmed.endsWith("/")) {
+                        trimmed = trimmed.substring(0, trimmed.length() - 1);
+                    }
+                    int cut = trimmed.lastIndexOf('/');
+                    String up = cut < 0 ? "" : trimmed.substring(0, cut + 1);
+                    active.path = PREFIX_ZIP + parts[0] + "/" + up;
+                    reload(active);
+                    return true;
+                }
+                // 包根 → 退出预览，回到压缩包所在目录
+                File zf = new File(parts[0]);
+                String dir = zf.getParent();
+                active.path = dir == null
+                        ? Environment.getExternalStorageDirectory().getAbsolutePath()
+                        : dir;
+                reload(active);
+                return true;
+            }
+            // 回收站只显示顶层条目、不存在子目录浏览，
+            // 所以进到这里说明已在回收站根（PREFIX_TRASH），
+            // 直接交给下一步（历史栈）回退到进入前的目录
+
+        }
+        // 6. 历史栈
+        if (active != null && !active.backStack.isEmpty()) {
+            navBack(active);
+            return true;
+        }
+        // 7. 交给系统
+        return false;
     }
 
     /** 全部窗格重新加载（首次进入视图） */
