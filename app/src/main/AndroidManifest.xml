@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 长任务保活：压缩/解压/复制大目录时防止后台被杀留下半截文件 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
         <!--
       Android 11+ 包可见性（Package Visibility）：
@@ -101,5 +104,12 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"
             android:theme="@android:style/Theme.Black.NoTitleBar" />
-</application>
+
+        <!-- 长任务保活服务：dataSync 类型（文件读写场景的正确类型，
+             不用 specialUse——Google Play 对该类型有额外审查） -->
+        <service
+            android:name=".service.TaskKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+    </application>
 </manifest>

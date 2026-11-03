@@ -401,6 +401,8 @@ public class FileManagerModule extends HyVqModule {
         if (context instanceof Activity) hostActivity = (Activity) context;
         activeInstance = this;
         restoreState();
+        // 进程被系统回收后静态计数会停留在旧值，这里归零避免泄漏
+        com.aliya.hyfilemgr.service.TaskKeepAliveService.resetCount();
         installBackCallback();
     }
 
@@ -8988,17 +8990,54 @@ public class FileManagerModule extends HyVqModule {
         // 计数永远停在 +1，全局「队列非空」判断失效。
         try {
             TASK_QUEUE.execute(() -> {
+                // 任务真正开始执行时才 acquire：若排队很久才轮到，
+                // 提前拉前台服务会让通知栏长时间挂一个「正在处理」。
+                // 首次主动申请通知权限，否则前台服务通知不显示
+                handler.post(FileManagerModule.this::ensureNotificationPermission);
+                com.aliya.hyfilemgr.service.TaskKeepAliveService.acquire(ctx, "正在处理文件");
                 try {
                     task.run();
                 } catch (Throwable t) {
                     UiKit.alert(ctx, "任务失败：" + t.getMessage());
                 } finally {
                     queuedTasks.decrementAndGet();
+                    com.aliya.hyfilemgr.service.TaskKeepAliveService.release(ctx);
                 }
             });
             queuedTasks.incrementAndGet();
         } catch (Throwable submitFail) {
             UiKit.alert(ctx, "无法提交任务：" + submitFail.getMessage());
+        }
+    }
+
+
+    /** 是否已经问过通知权限（避免每次长任务都弹） */
+    private boolean notifAsked = false;
+
+    /**
+     * 首次执行长任务时补问通知权限。
+     *
+     * <p>此前只在「设置 → 权限管理」里申请，用户不主动进去就永远是
+     * granted=false。前台服务虽然照样能跑（FOREGROUND_SERVICE 不依赖
+     * 通知权限），但通知栏不显示任何提示，用户切后台后完全看不到
+     * 「正在压缩」的状态，体验断档。</p>
+     *
+     * <p>Android 13+ 才有该权限；13 以下直接跳过。
+     * 只问一次，用户拒绝后不再骚扰（设置页里还能手动开）。</p>
+     */
+    private void ensureNotificationPermission() {
+        if (notifAsked) return;
+        if (android.os.Build.VERSION.SDK_INT < 33) return;
+        if (!(hostActivity instanceof android.app.Activity)) return;
+        notifAsked = true;
+        try {
+            if (ctx.checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                return;
+            }
+            ((android.app.Activity) hostActivity).requestPermissions(
+                    new String[]{"android.permission.POST_NOTIFICATIONS"}, 0x2003);
+        } catch (Throwable ignored) {
         }
     }
 
