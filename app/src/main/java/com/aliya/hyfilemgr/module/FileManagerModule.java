@@ -360,6 +360,9 @@ public class FileManagerModule extends HyVqModule {
     /** SAF 系统文件选择器授权请求码 */
     private static final int REQ_SAF_MOUNT = 1005;
     private int sortMode = SORT_NAME;
+    /** 双窗格共用的 ViewHolder 回收池（两栏 item 布局一致，可安全共享） */
+    private androidx.recyclerview.widget.RecyclerView.RecycledViewPool sharedViewPool;
+
     private final Pane paneL = new Pane("/storage/emulated/0");
     private final Pane paneR = new Pane("/storage/emulated/0");
     private final List<Pane> panes = new ArrayList<>(); // 未来三列扩展：动态增删
@@ -1127,6 +1130,33 @@ public class FileManagerModule extends HyVqModule {
             rv.setLayoutManager(new LinearLayoutManager(ctx));
         }
         rv.setPadding(0, dp(2), 0, 0);
+
+        // ── 性能优化（官方 RecyclerView 指南建议项，此前一项都没做）──
+
+        // 1) 固定尺寸：item 高度不随内容变化（行高由 listDensity 决定、
+        //    网格行高也固定），声明后 RecyclerView 省掉每次数据集变化的
+        //    整表重新测量，滚动与刷新都更稳。
+        rv.setHasFixedSize(true);
+
+        // 2) item 视图缓存：默认 2 个。文件列表每屏十几个可见项，
+        //    缓存 10 个可让「滚动回来」免去重新 bind，弱机型收益明显。
+        rv.setItemViewCacheSize(10);
+
+        // 3) 双窗格共享 RecycledViewPool：两栏 item 布局完全一致
+        //    （FileListAdapter 只有一种 VH、onCreateViewHolder 不分支），
+        //    共享后一栏滚出去的 ViewHolder 可直接被另一栏复用，
+        //    省掉一半的 inflate 与 findViewById。
+        //    注意：网格/列表切换不重建 RecyclerView（只 reloadAll + LayoutManager 不变），
+        //    所以池子不会跨布局类型混用。
+        if (sharedViewPool != null) {
+            rv.setRecycledViewPool(sharedViewPool);
+        } else {
+            sharedViewPool = new androidx.recyclerview.widget.RecyclerView.RecycledViewPool();
+            // 每栏一屏可见 ~12 项，默认每类型 5 个偏少，提到 20
+            sharedViewPool.setMaxRecycledViews(0, 20);
+            rv.setRecycledViewPool(sharedViewPool);
+        }
+
         p.list = rv;
         p.adapter = new FileListAdapter(ctx, p.entries, p.selected, makeListener(p));
         p.adapter.setThumbsEnabled(thumbsEnabled);
