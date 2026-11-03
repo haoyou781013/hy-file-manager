@@ -3114,16 +3114,40 @@ public class FileManagerModule extends HyVqModule {
         card.setFocusable(enabled);
         card.setBackgroundResource(R.drawable.bg_menu_card);
         if (!enabled) {
-            card.setAlpha(0.35f);
+            // 见上：禁用态用静态底，不要 ripple
         } else {
-            card.setOnClickListener(v -> {
-                v.animate().scaleX(0.94f).scaleY(0.94f).setDuration(80)
-                        .withEndAction(() -> v.animate().scaleX(1f).scaleY(1f)
+            // ⚠️ 反馈要「按下就走」，不能等 onClick：
+            // 旧实现把缩放放在 onClickListener 里，而 onClick 的第一句
+            // 往往是 dialog.dismiss() —— 弹窗一关 View 就没了，
+            // 80ms 的缩小 + 140ms 回弹用户根本看不到。
+            // 改为 onTouch 的 ACTION_DOWN 立即缩小，ACTION_UP 回弹后
+            // 再延迟极短时间执行动作，让回弹有个起手。
+            card.setOnTouchListener((v, ev) -> {
+                switch (ev.getActionMasked()) {
+                    case android.view.MotionEvent.ACTION_DOWN:
+                        v.animate().cancel();
+                        v.animate().scaleX(0.94f).scaleY(0.94f)
+                                .setDuration(80).start();
+                        break;
+                    case android.view.MotionEvent.ACTION_UP:
+                    case android.view.MotionEvent.ACTION_CANCEL:
+                        v.animate().cancel();
+                        v.animate().scaleX(1f).scaleY(1f)
                                 .setDuration(140)
-                                .setInterpolator(new android.view.animation.OvershootInterpolator(2f))
-                                .start())
-                        .start();
-                onClick.onClick(v);
+                                .setInterpolator(
+                                        new android.view.animation.OvershootInterpolator(2f))
+                                .start();
+                        break;
+                    default:
+                        break;
+                }
+                return false;   // 不消费，交给 OnClickListener 正常走点击判定
+            });
+            card.setOnClickListener(v -> {
+                // 回弹已由 ACTION_UP 启动；这里只负责触发动作。
+                // 用 postDelayed 让回弹先有形（60ms 约 4 帧），
+                // 再 dismiss，避免「点了但什么都没看到」。
+                v.postDelayed(() -> onClick.onClick(v), 60);
             });
         }
         wrap.addView(card, new LinearLayout.LayoutParams(
