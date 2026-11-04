@@ -8,6 +8,12 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 软件更新检查：向 Gitee / GitHub 拉取 versions.json。
+         这是本项目唯一的网络请求；文件操作本身全部本地完成。
+         缺少此权限会导致 update 检查抛 SecurityException（已实测）。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 局域网 FTP/HTTP 文件服务需要监听端口；仅本地网络，不涉及外网 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 长任务保活：压缩/解压/复制大目录时防止后台被杀留下半截文件 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
