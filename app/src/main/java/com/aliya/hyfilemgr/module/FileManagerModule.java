@@ -199,6 +199,8 @@ public class FileManagerModule extends HyVqModule {
     private TextView editorDrawerPath = null;
     /** 标签路径列表持久化 key（打开保留） */
     private static final String EDITOR_PREF_TABS = "editor_tabs";
+    /** 编辑器草稿的元数据（内容本身存在 files/editor_drafts/ 下） */
+    private static final String EDITOR_PREF_DRAFTS = "editor_drafts_meta";
     /** 编辑器设置持久化 key：字号 / 等宽 / Tab宽度 / 主题（0跟随系统 1浅色 2深色） */
     private static final String EDITOR_PREF_FONT_SIZE = "editor_font_size";
     private static final String EDITOR_PREF_MONO = "editor_mono";
@@ -6816,12 +6818,128 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 打开保留：保存当前标签路径列表（root 文件存真实路径，前缀 root:// 标记） */
+
+    // ── 编辑器草稿：把「未保存的修改」落盘，防止杀进程丢失 ──
+
+    /** 草稿目录：getFilesDir()/editor_drafts，每个标签一个文件 */
+    private File draftDir() {
+        File d = new File(ctx.getFilesDir(), "editor_drafts");
+        if (!d.exists() && !d.mkdirs()) return null;
+        return d;
+    }
+
+    /**
+     * 把有未保存修改的标签写成草稿。
+     *
+     * <p><b>为什么不写 SharedPreferences</b>：单个 editor_tabs 的 JSON
+     * 已经在存路径列表，再塞完整文本会让一个 2MB 文件撑爆 prefs
+     * （Android 对 SharedPreferences 没有硬限制，但全量重写 xml 的代价
+     * 随大小线性上升，几百 KB 就开始明显卡）。草稿走文件系统。</p>
+     *
+     * <p>文件名用「序号」而不是路径 hash：恢复时靠 meta 里的 order 对上，
+     * 避免路径 hash 碰撞（这个项目已经在缩略图缓存上踩过 32 位碰撞的坑）。</p>
+     */
+    private void saveEditorDrafts() {
+        File dir = draftDir();
+        if (dir == null) return;
+        try {
+            // 先清掉旧草稿，避免上次的残留被误认为本次的
+            File[] old = dir.listFiles();
+            if (old != null) {
+                for (File f : old) {
+                    //noinspection ResultOfMethodCallIgnored
+                    f.delete();
+                }
+            }
+            org.json.JSONArray meta = new org.json.JSONArray();
+            int idx = 0;
+            for (EditorTabState t : editorTabs) {
+                if (!t.dirty || t.content == null) continue;
+                File f = new File(dir, "draft_" + idx + ".txt");
+                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(f)) {
+                    fos.write(t.content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                org.json.JSONObject o = new org.json.JSONObject();
+                o.put("i", idx);
+                // 原文件绝对路径（root 标签记其 rootTarget）
+                o.put("path", t.rootTarget != null ? t.rootTarget : t.file.getAbsolutePath());
+                o.put("root", t.rootTarget != null);
+                o.put("enc", t.encoding == null ? "UTF-8" : t.encoding);
+                o.put("le", t.lineEnding == null ? "LF" : t.lineEnding);
+                meta.put(o);
+                idx++;
+            }
+            fmPrefs().edit().putString(EDITOR_PREF_DRAFTS, meta.toString()).commit();
+        } catch (Throwable t) {
+            android.util.Log.w("HyEditor", "saveEditorDrafts failed", t);
+        }
+    }
+
+    /**
+     * 恢复草稿：把草稿内容套回对应标签。
+     *
+     * <p>只在 {@code restoreEditorTabs} 之后调用，按 path 匹配已恢复的标签；
+     * 匹配不上（文件被删/改名）就跳过 —— 不新建标签，避免造出幽灵条目。</p>
+     */
+    private void restoreEditorDrafts() {
+        String json = fmPrefs().getString(EDITOR_PREF_DRAFTS, "");
+        if (json.isEmpty()) return;
+        File dir = draftDir();
+        if (dir == null) return;
+        int restored = 0;
+        try {
+            org.json.JSONArray meta = new org.json.JSONArray(json);
+            for (int i = 0; i < meta.length(); i++) {
+                org.json.JSONObject o = meta.getJSONObject(i);
+                String path = o.optString("path", "");
+                if (path.isEmpty()) continue;
+                File draft = new File(dir, "draft_" + o.optInt("i", -1) + ".txt");
+                if (!draft.isFile() || draft.length() == 0) continue;
+                String text;
+                try (java.io.FileInputStream fis = new java.io.FileInputStream(draft)) {
+                    java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = fis.read(buf)) > 0) bos.write(buf, 0, n);
+                    text = new String(bos.toByteArray(),
+                            java.nio.charset.StandardCharsets.UTF_8);
+                }
+                // 找到对应的已恢复标签并套上草稿
+                for (EditorTabState t : editorTabs) {
+                    String tp = t.rootTarget != null ? t.rootTarget
+                            : t.file.getAbsolutePath();
+                    if (!tp.equals(path)) continue;
+                    t.content = text;
+                    t.dirty = true;           // 仍是未保存状态，让用户自己决定
+                    t.encoding = o.optString("enc", t.encoding);
+                    t.lineEnding = o.optString("le", t.lineEnding);
+                    // 撤销栈起点对准磁盘版内容，保证「撤销」能回到保存态
+                    t.undoStack.clear();
+                    t.redoStack.clear();
+                    t.undoStack.add(t.savedContent == null ? "" : t.savedContent);
+                    restored++;
+                    break;
+                }
+            }
+        } catch (Throwable t) {
+            android.util.Log.w("HyEditor", "restoreEditorDrafts failed", t);
+        }
+        if (restored > 0) {
+            final int n = restored;
+            handler.post(() -> UiKit.toast(ctx,
+                    "已恢复 " + n + " 个未保存的编辑草稿"));
+        }
+    }
+
     private void saveEditorTabs() {
         org.json.JSONArray arr = new org.json.JSONArray();
         for (EditorTabState t : editorTabs) {
             arr.put(t.rootTarget != null ? "root://" + t.rootTarget : t.file.getAbsolutePath());
         }
         fmPrefs().edit().putString(EDITOR_PREF_TABS, arr.toString()).commit();
+        // 同时把「未保存的修改」落成草稿文件。旧的 editor_tabs 只存路径，
+        // 恢复时从磁盘重读 —— 只要用户没点保存，内容就没了。
+        saveEditorDrafts();
     }
 
     /** 打开保留：恢复上次保留的标签（跳过不存在/过大/读取失败文件） */
@@ -6832,13 +6950,22 @@ public class FileManagerModule extends HyVqModule {
             org.json.JSONArray arr = new org.json.JSONArray(json);
             for (int i = 0; i < arr.length(); i++) {
                 String p = arr.getString(i);
-                File f = new File(p);
+                // root:// 前缀要先剥掉再建 File，否则永远 isFile()=false
+                boolean isRoot = p.startsWith("root://");
+                String real = isRoot ? p.substring("root://".length()) : p;
+                File f = new File(real);
                 if (!f.isFile() || f.length() > 2 * 1024 * 1024) continue;
                 String[] rc = readTextContent(f);
                 if (rc == null) continue;
+                // root 标签的 file 指向缓存副本，rootTarget 记真实路径；
+                // 这里没有副本上下文，统一按普通标签恢复，
+                // 由上层（打开 root 文件的路径）在下次保存时重建 rootTarget
                 editorTabs.add(new EditorTabState(f, rc[0], rc[1]));
             }
-        } catch (Throwable ignored) {
+            // 草稿套回：把未保存的修改恢复上去
+            restoreEditorDrafts();
+        } catch (Throwable t) {
+            android.util.Log.w("HyEditor", "restoreEditorTabs failed", t);
         }
     }
 

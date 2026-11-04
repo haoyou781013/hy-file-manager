@@ -78,8 +78,26 @@
    opBar 隐藏 / bottomNav 显示 / fabNew 显示 落到「已完成退出」的状态。
    reload 改用它。手动点「关闭」退出多选时仍走动画版，不受影响。
 
+9. **未保存的编辑内容零持久化**（`FileManagerModule` 编辑器）
+   旧 saveEditorTabs 只存路径列表，restoreEditorTabs 从磁盘重读，
+   只要用户没点保存，内容就没了（杀进程/选「放弃修改」后重开必丢）。
+   另外 root:// 前缀没剥离，恢复时 new File("root://...") 永远 isFile()=false，
+   root 标签 100% 恢复失败。
+
+   新增草稿机制：
+   - saveEditorDrafts() 把每个 dirty 标签的 content 写成
+     getFilesDir()/editor_drafts/draft_N.txt，
+     元数据（序号/原路径/是否root/编码/行尾）存 SharedPreferences。
+   - 不放 SharedPreferences：2MB 文本会让 prefs 全量重写变慢。
+   - 文件名用序号而非路径 hash —— 这个项目已在缩略图缓存上踩过
+     32 位 hash 碰撞的坑，不再重犯。
+   - restoreEditorDrafts() 按 path 匹配已恢复标签，匹配不上就跳过
+     （不新建标签，避免造幽灵条目）；恢复后标 dirty=true 并重置撤销栈
+     起点为磁盘版内容，保证「撤销」能回到保存态。
+   - 恢复成功时 toast 告知「已恢复 N 个未保存的编辑草稿」。
+   - root:// 前缀已剥离。
+
 #### 待办
-- 未保存的编辑内容零持久化
 - 文件大小闸三处不一致
 - FTP/HTTP 服务器不在生命周期关闭
 
