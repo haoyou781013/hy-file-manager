@@ -2941,6 +2941,15 @@ public class FileManagerModule extends HyVqModule {
         updateClipBar();
     }
 
+
+    /** 异常转可读文案：getMessage() 常为 null，直接拼接会显示「失败：null」 */
+    private static String msgOf(Throwable t) {
+        if (t == null) return "未知错误";
+        String m = t.getMessage();
+        if (m != null && !m.trim().isEmpty()) return m;
+        return t.getClass().getSimpleName();
+    }
+
     private void pasteClipboard() {
         if (clipboard.isEmpty()) {
             updateClipBar();
@@ -5655,7 +5664,10 @@ public class FileManagerModule extends HyVqModule {
         }
         sb.append("类型：").append(typeStr).append('\n');
         if (e.isDir()) {
-            sb.append("项目数：").append(countChildren(e)).append('\n');
+            // ⚠️ 不能在主线程算：SafStrategy.childCount 会 query 整个目录的游标，
+            // 真实路径的 listFiles() 也要枚举全目录。十万项目录直接卡住。
+            // 先占位，子项数放到后台算好后回填。
+            sb.append("项目数：计算中…\n");
             sb.append("大小：").append(SafStrategy.isSafUri(e.path) ? "-" : "计算中…");
         } else {
             sb.append("大小：").append(FileOps.formatSize(e.length)).append('\n');
@@ -5668,6 +5680,21 @@ public class FileManagerModule extends HyVqModule {
         tv.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
         tv.setLineSpacing(0, 1.25f);
         tv.setPadding(dp(4), dp(4), dp(4), dp(4));
+
+        // 目录子项数交给后台算，算完回填（上面写的是「计算中…」占位）
+        if (e.isDir()) {
+            final TextView tvRef = tv;
+            final String baseText = sb.toString();
+            new Thread(() -> {
+                int cnt = countChildren(e);
+                handler.post(() -> {
+                    if (detached) return;
+                    // 只替换占位那一行，其余内容（类型/修改时间）保持原样
+                    tvRef.setText(baseText.replace("项目数：计算中…",
+                            "项目数：" + cnt));
+                });
+            }, "HyPropCount").start();
+        }
 
         // ⭐ v2.8.0 root 属性：权限 / 属主 / SELinux 上下文（App 侧拿不到，需 root stat）
         final TextView rootTv = new TextView(ctx);
@@ -5779,17 +5806,31 @@ public class FileManagerModule extends HyVqModule {
             exitMultiMode();
             runTask(() -> {
                 int ok = 0;
+                // ⚠️ 收集每一项的失败原因。
+                // 旧实现全 catch(ignored)，最后只报「已移入回收站 7/10 项」——
+                // 用户知道 3 个失败了，但不知道是哪个、为什么（权限？占用？只读？），
+                // 完全无法补救。这是文件管理器最核心的操作，必须说清楚。
+                final List<String> failed = new ArrayList<>();
                 for (FileEntry e : items) {
+                    String nm = e.name == null ? e.path : e.name;
                     if (SafStrategy.isSafUri(e.path)) {
                         // SAF 授权条目：DocumentsContract.deleteDocument（无法移入回收站）
                         try {
-                            if (SafStrategy.deleteDocument(ctx, e.path)) ok++;
-                        } catch (Throwable ignored) {
+                            if (SafStrategy.deleteDocument(ctx, e.path)) {
+                                ok++;
+                            } else {
+                                failed.add(nm + "：授权目录删除被拒绝");
+                            }
+                        } catch (Throwable t) {
+                            failed.add(nm + "：" + msgOf(t));
                         }
                         continue;
                     }
                     File f = new File(e.path);
-                    if (!f.exists()) continue;
+                    if (!f.exists()) {
+                        failed.add(nm + "：文件已不存在");
+                        continue;
+                    }
                     try {
                         if (inTrash) {
                             // 回收站：物理删除，连同 .trashmeta 一起清掉
@@ -5806,15 +5847,30 @@ public class FileManagerModule extends HyVqModule {
                             }
                         }
                         ok++;
-                    } catch (Throwable ignored) {
+                    } catch (Throwable t) {
+                        failed.add(nm + "：" + msgOf(t));
                     }
                 }
                 final int fOk = ok;
                 final boolean fTrash = !inTrash;
+                final List<String> fFailed = failed;
                 handler.post(() -> {
-                    UiKit.toast(ctx, fTrash
-                            ? "已移入回收站 " + fOk + "/" + items.size() + " 项（可在侧边栏回收站恢复）"
-                            : "已彻底删除 " + fOk + "/" + items.size() + " 项");
+                    if (fFailed.isEmpty()) {
+                        UiKit.toast(ctx, fTrash
+                                ? "已移入回收站 " + fOk + " 项（可在侧边栏回收站恢复）"
+                                : "已彻底删除 " + fOk + " 项");
+                    } else {
+                        StringBuilder failMsg = new StringBuilder();
+                        failMsg.append("成功 ").append(fOk).append(" 项，失败 ")
+                               .append(fFailed.size()).append(" 项：\n");
+                        for (int i = 0; i < Math.min(10, fFailed.size()); i++) {
+                            failMsg.append("· ").append(fFailed.get(i)).append('\n');
+                        }
+                        if (fFailed.size() > 10) {
+                            failMsg.append("…等 ").append(fFailed.size()).append(" 项");
+                        }
+                        UiKit.alert(ctx, failMsg.toString().trim());
+                    }
                     reloadAll();
                 });
             });

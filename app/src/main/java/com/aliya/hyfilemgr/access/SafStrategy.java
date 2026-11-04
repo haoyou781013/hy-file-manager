@@ -290,8 +290,27 @@ public final class SafStrategy {
     }
 
     /** 统计 document 直接子条目数（属性对话框用） */
+    /**
+     * 统计子项数量。
+     *
+     * <p>旧实现复用 listChildren()，把整个目录的子项都读进 ArrayList
+     * 只为拿个 size() —— 十万级 SAF 目录会 OOM，而且属性面板在主线程调用。</p>
+     *
+     * <p>改为游标逐行计数，不保持任何子项内容。</p>
+     */
     public static int childCount(Context ctx, String docUriStr) {
-        return listChildren(ctx, docUriStr).size();
+        Uri childrenUri = childrenUri(Uri.parse(docUriStr));
+        android.database.Cursor c = null;
+        try {
+            c = ctx.getContentResolver().query(childrenUri,
+                    new String[]{android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID},
+                    null, null, null);
+            return c == null ? 0 : c.getCount();
+        } catch (Throwable t) {
+            return 0;
+        } finally {
+            if (c != null) try { c.close(); } catch (Throwable ignored) { }
+        }
     }
 
     // ── SAF 复制内部实现 ──
