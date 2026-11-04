@@ -3568,8 +3568,15 @@ public class FileManagerModule extends HyVqModule {
      * 两个地址指向同一份 versions.json 内容。</p>
      */
     private static final String[] UPDATE_MANIFEST_URLS = {
+            // ① Gitee 优先：国内直连，最稳
+            "https://gitee.com/haoyou781/hy-file-manager/raw/master/versions.json",
+            // ② GitHub 镜像（CDN 加速，走境外但无需翻墙）
+            "https://cdn.jsdelivr.net/gh/haoyou781013/hy-file-manager@main/versions.json",
+            // ③ GitHub 镜像（另一家代理）
+            "https://gh-proxy.com/https://raw.githubusercontent.com"
+                    + "/haoyou781013/hy-file-manager/main/versions.json",
+            // ④ GitHub 原始地址（兜底，需要能直连）
             "https://raw.githubusercontent.com/haoyou781013/hy-file-manager/main/versions.json",
-            "https://gitee.com/haoyou781/hy-file-manager/raw/main/versions.json",
     };
 
     private static final String REPO_GITHUB = "https://github.com/haoyou781013/hy-file-manager";
@@ -3627,7 +3634,8 @@ public class FileManagerModule extends HyVqModule {
                     checking[0] = false;
                     if (info == null) {
                         tvState.setText("检查失败：无法连接更新服务器\n"
-                                + "可稍后重试，或直接访问项目主页手动下载");
+                                + "国内网络可优先访问 Gitee 仓库手动下载：\n"
+                                + REPO_GITEE);
                         return;
                     }
                     if (info.code <= curCode) {
