@@ -33,6 +33,47 @@ import java.io.File;
  */
 public class FontPreviewActivity extends Activity {
 
+    /** 供 onDestroy 清理的 SAF 临时字体副本 */
+    private File tmpFontFile;
+
+    /** 字体文件大小上限：超过 40MB 视为异常，不交给系统解析器 */
+    private static final long MAX_FONT_BYTES = 40L * 1024 * 1024;
+
+    /**
+     * 字体魔数校验。
+     *
+     * <p>Typeface.createFromFile 会直接进 native 的 Skia/FreeType 解析器，
+     * 历史上出过解析器漏洞。不该把任意文件（甚至非字体文件改名成 .ttf）
+     * 都丢进去。这里按 OpenType/TrueType 规范检查前 4 字节：</p>
+     * <ul>
+     *   <li>{@code 00 01 00 00} — TrueType</li>
+     *   <li>{@code 'OTTO'}      — CFF/OpenType</li>
+     *   <li>{@code 'true'}      — TrueType (Apple)</li>
+     *   <li>{@code 'typ1'}      — Type 1</li>
+     *   <li>{@code 'ttcf'}      — TrueType Collection</li>
+     *   <li>{@code 'wOFF'}      — WOFF</li>
+     *   <li>{@code 'wOF2'}       — WOFF2</li>
+     * </ul>
+     */
+    private static boolean looksLikeFont(File f) {
+        if (f == null || !f.isFile()) return false;
+        long len = f.length();
+        if (len < 12 || len > MAX_FONT_BYTES) return false;
+        try (java.io.InputStream in = new java.io.FileInputStream(f)) {
+            byte[] h = new byte[4];
+            if (in.read(h) != 4) return false;
+            int b0 = h[0] & 0xFF, b1 = h[1] & 0xFF, b2 = h[2] & 0xFF, b3 = h[3] & 0xFF;
+            // 00 01 00 00
+            if (b0 == 0x00 && b1 == 0x01 && b2 == 0x00 && b3 == 0x00) return true;
+            String tag = new String(h, java.nio.charset.StandardCharsets.ISO_8859_1);
+            return "OTTO".equals(tag) || "true".equals(tag) || "typ1".equals(tag)
+                    || "ttcf".equals(tag) || "wOFF".equals(tag) || "wOF2".equals(tag);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+
     public static final String EXTRA_PATH = "font_path";
     public static final String EXTRA_URI = "font_uri";
     public static final String EXTRA_TITLE = "font_title";
@@ -87,6 +128,10 @@ public class FontPreviewActivity extends Activity {
                     loadError = "没有读取权限";
                     return;
                 }
+                if (!looksLikeFont(f)) {
+                    loadError = "不是有效的字体文件（魔数不匹配或过大）";
+                    return;
+                }
                 typeface = Typeface.createFromFile(f);
                 if (typeface == null) loadError = "Typeface.createFromFile 返回 null";
                 return;
@@ -106,6 +151,13 @@ public class FontPreviewActivity extends Activity {
                     int n;
                     while ((n = is.read(buf)) > 0) os.write(buf, 0, n);
                     os.flush();
+                }
+                // 记下来供 onDestroy 清理。旧实现每次预览 SAF 字体都在
+                // cacheDir 留一份副本（字体动辄几 MB），永不删除，缓存无限增长
+                tmpFontFile = tmp;
+                if (!looksLikeFont(tmp)) {
+                    loadError = "不是有效的字体文件（魔数不匹配或过大）";
+                    return;
                 }
                 typeface = Typeface.createFromFile(tmp);
                 if (typeface == null) loadError = "字体解析失败（可能不是有效的字体文件）";
@@ -257,5 +309,20 @@ public class FontPreviewActivity extends Activity {
 
     private int dp(int v) {
         return Math.round(getResources().getDisplayMetrics().density * v);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // 清理 SAF 字体的临时副本。Typeface 已经把数据读进 native，
+        // 删掉文件不影响已加载的 typeface。
+        if (tmpFontFile != null) {
+            try {
+                //noinspection ResultOfMethodCallIgnored
+                tmpFontFile.delete();
+            } catch (Throwable ignored) {
+            }
+            tmpFontFile = null;
+        }
     }
 }

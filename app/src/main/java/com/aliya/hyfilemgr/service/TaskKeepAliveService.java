@@ -36,15 +36,24 @@ public class TaskKeepAliveService extends Service {
     private static final String CHANNEL_ID = "hy_task_keepalive";
     private static final int NOTIFICATION_ID = 0x4B41;   // 'KA'
 
-    /** 当前有多少个任务在跑；归零即停服务 */
-    private static int runningTasks = 0;
+    /**
+     * 当前有多少个任务在跑；归零即停服务。
+     *
+     * <p>必须原子：acquire/release 从 TASK_QUEUE 线程调用，
+     * resetCount 却从 onAttach 的主线程调用 —— 二者并发时
+     * 普通 int 的 ++/-- 会丢更新，计数可能变成负数，
+     * 于是 release 里 {@code runningTasks > 0} 判断永远为假，
+     * 服务永不停止，通知栏常驻「正在处理文件」且用户划不掉（setOngoing）。</p>
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger runningTasks =
+            new java.util.concurrent.atomic.AtomicInteger(0);
 
     // ── 静态入口：由 FileManagerModule 的 runTask 调用 ──
 
     /** 有任务开始时调用（幂等，可重复调） */
     public static void acquire(Context context, String title) {
         if (context == null) return;
-        runningTasks++;
+        runningTasks.incrementAndGet();
         try {
             Intent i = new Intent(context, TaskKeepAliveService.class);
             i.putExtra("title", title == null ? "正在处理文件" : title);
@@ -56,14 +65,14 @@ public class TaskKeepAliveService extends Service {
         } catch (Throwable ignored) {
             // 后台启动前台服务被系统拒绝（Android 12+ 有后台启动限制）时
             // 不能崩，任务照跑，只是失去保活
-            runningTasks--;
+            runningTasks.decrementAndGet();
         }
     }
 
     /** 任务结束时调用（幂等） */
     public static void release(Context context) {
-        if (runningTasks > 0) runningTasks--;
-        if (runningTasks > 0 || context == null) return;
+        int left = runningTasks.updateAndGet(v -> v > 0 ? v - 1 : 0);
+        if (left > 0 || context == null) return;
         try {
             context.stopService(new Intent(context, TaskKeepAliveService.class));
         } catch (Throwable ignored) {
@@ -72,7 +81,7 @@ public class TaskKeepAliveService extends Service {
 
     /** 进程被回收后 runningTasks 归零，避免下一次 acquire 计数错乱 */
     public static void resetCount() {
-        runningTasks = 0;
+        runningTasks.set(0);
     }
 
     // ── Service 生命周期 ──

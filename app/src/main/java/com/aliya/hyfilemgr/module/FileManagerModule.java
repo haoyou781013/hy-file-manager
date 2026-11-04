@@ -10618,9 +10618,27 @@ public class FileManagerModule extends HyVqModule {
         return new org.apache.commons.compress.archivers.tar.TarArchiveInputStream(dec);
     }
 
-    /** 压缩包内条目列表缓存：包路径 → 条目（避免每次进子目录重扫 tar） */
+    /**
+     * 压缩包内条目列表缓存：包路径 → 条目（避免每次进子目录重扫 tar）。
+     *
+     * <p><b>必须有上限</b>：用户浏览过的每个包都会留一份完整条目列表，
+     * 十万条目的 7z 单份就占几 MB。旧实现用无界 HashMap，
+     * 浏览几十个包后内存只涨不降。</p>
+     *
+     * <p>用 LinkedHashMap 的 accessOrder 做 LRU，超过 ARCHIVE_CACHE_MAX
+     * 个包就淘汰最久未用的。代价是被淘汰的包再进来要重扫一次
+     * （tar 家族尤其明显），但优于内存持续增长。</p>
+     */
+    private static final int ARCHIVE_CACHE_MAX = 8;
     private final java.util.Map<String, java.util.List<ArchiveItem>> archiveItemsCache =
-            new java.util.HashMap<>();
+            new java.util.LinkedHashMap<String, java.util.List<ArchiveItem>>(
+                    16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(
+                        java.util.Map.Entry<String, java.util.List<ArchiveItem>> eldest) {
+                    return size() > ARCHIVE_CACHE_MAX;
+                }
+            };
 
     private void loadZip(Pane p) {
         p.entries.clear();

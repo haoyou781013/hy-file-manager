@@ -333,11 +333,39 @@ public final class ThumbLoader {
 
     // ── 磁盘缓存 ──
 
+    /**
+     * 磁盘缓存文件名。
+     *
+     * <p><b>不能用 String.hashCode()</b>：它只有 32 位，按生日悖论
+     * 约 7.7 万个 key 就有 50% 概率碰撞。碰撞后果是<b>显示别人的缩略图</b>
+     * 或 writeDisk 覆盖另一个文件的缓存 —— 用户在大目录里会随机看到错图。</p>
+     *
+     * <p>改用 SHA-256 取前 128 位（32 个 hex 字符）。碰撞概率降到
+     * 2^-128 量级，工程上视为不可能。</p>
+     */
     private static File diskFile(Context ctx, String key) {
         File dir = new File(ctx.getCacheDir(), "thumbs");
         if (!dir.exists() && !dir.mkdirs()) return null;
-        String fn = Integer.toHexString(key.hashCode()) + ".jpg";
+        String fn = sha256Hex(key).substring(0, 32) + ".jpg";
         return new File(dir, fn);
+    }
+
+    /** SHA-256 十六进制（小写）。失败时回退到 hashCode，保证不崩。 */
+    private static String sha256Hex(String s) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] d = md.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(d.length * 2);
+            for (byte b : d) {
+                int v = b & 0xFF;
+                if (v < 16) sb.append('0');
+                sb.append(Integer.toHexString(v));
+            }
+            return sb.toString();
+        } catch (Throwable t) {
+            // 理论上不会发生（Android 必有 SHA-256）；退路仍是 hashCode
+            return Integer.toHexString(s.hashCode());
+        }
     }
 
     private static Bitmap readDisk(Context ctx, String key) {
