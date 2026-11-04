@@ -1,0 +1,42 @@
+{
+  "updatedAt": "2026-11-04",
+  "repo": "haoyou781013/hy-file-manager",
+  "versions": [
+    {
+      "ver": "1.0.0",
+      "versionCode": 5,
+      "prerelease": false,
+      "publishedAt": "2026-11-04",
+      "body": "## 1.0.0\n\n首个正式版。相比 0.2.0-beta.3，做了两轮八代理全量审查（共 16 路）与大量修复。\n\n### 新增\n- **软件更新**：设置页新增入口，读取 versions.json 取 versionCode 最大项，\n  与发布顺序、版本条数解耦；GitHub 优先、Gitee 回落双源\n- **关于页**：版本信息、开源仓库地址、开发说明（注明使用了 AI 辅助工具）\n- 压缩包预览扩展到 7z / rar / tar 家族（此前只有 zip/jar/apk 能内部浏览）\n- 统一归档枚举层 ArchiveItem：zip 走 ZipFile、7z 走 SevenZFile、\n  rar 走 junrar、tar 家族走 ArchiveInputStream\n- 「解到对侧」改定点提取单个条目（ArchiveExtractor.extractEntry），\n  不再整包解压到缓存再挑\n- 长任务前台服务 TaskKeepAliveService（dataSync 类型），切后台不再被杀\n- 系统返回键接管（OnBackPressedCallback，7 步处理顺序）\n- RecyclerView 三项优化：setHasFixedSize / setItemViewCacheSize(10) /\n  双窗格共享 RecycledPool\n- 错误提示改可关闭弹框：47 处失败类 Toast → alert\n\n### 修复（数据安全 / 崩溃）\n- **copyRecursive 遇到无权限子目录静默跳过** → 剪切时源被删、目标少一块，\n  永久数据丢失且报成功。改为抛 IOException，三个调用方全部变安全\n- **粘贴前 SAF 列举失败 → 静默覆盖目标同名文件**。改为中止并提示\n- **多选删除失败只报「7/10 项」**，不知道哪个/为什么。改为逐项列出原因\n- **剪切时 SAF 源删除失败被静默**（源留在两处）。改为如实上报\n- **正则 ReDoS**：实测 (.*a){20}$ 在 28 字符上耗时 25 秒且在主线程。\n  新增 isReDoSRisky 启发式拦截\n- **归档预览四处缺陷**：splitZipPath 只认 zip 后缀 / 7z 时间戳抛异常 /\n  tar 条目名带 ./ 前缀全丢 / 子目录 inner+\"​/\" 拼成双斜杠\n- **加密包解密链路完全断裂**：extract7z 无凭据参数、两个解压入口硬编码\n  null。用户加密压的 7z 本 App 打不开\n- **压缩炸弹防护三处失效**：7z 绕过 guard、单流无 guard、压缩比检测死代码\n- **回收站**：路径多插一层 storage/emulated/0、目录结构被拍平、\n  恢复路径靠反推（同名加后缀后必错）。改用 .trashmeta 记录原路径\n- **对话框按钮不可达**：panel 高度 WRAP_CONTENT 无上限，横屏/大字体下\n  底部按钮被裁且不可滚动。改为 min(内容高度, 屏幕 80%)\n- **PopupWindow 泄漏**：4 个都是局部变量，切主题后幽灵弹窗残留\n- **折叠面板要点两次**：toolsBody 从未设初始可见性\n- **菜单禁用项反而有动效**：bg_menu_card 是 ripple，按下反馈由 Pressed\n  状态驱动、与 setClickable 无关\n- **属性面板主线程枚举目录**：大目录长按→属性卡死。改后台算+回填\n- **SafStrategy.childCount 全量读进内存**，十万项目录 OOM。改游标计数\n- **reload 一次扫三遍 listFiles**，万级目录慢 3 倍\n- **archiveItemsCache 无上限**\n- **本地依赖缺失**：commons-codec（TarArchiveOutputStream 用 Charsets）\n  未声明导致所有 tar 家族压缩运行期 NoClassDefFoundError\n\n### 移除\n- 终端功能（terminal/ 三个文件 + ContentMode.TERMINAL + 顶栏动作区 + 入口）\n- 终末地主题（themes/colors/font/assets + 选择项）\n\n### 构建\n- minSdk 23 / targetSdk 34 / compileSdk 36\n- AGP 8.1.4 + Gradle 8.1.1 + JDK 17 + 自建 aarch64 aapt2 2.20\n\n### 未实测\n- rar 内部浏览（无样本）\n- zstd 压缩解压（zstd-jni 原生库在 proot 加载不了，需真机）\n- 前台服务「压缩大目录+切后台」完整链路"
+    },
+    {
+      "ver": "0.2.0-beta.3",
+      "versionCode": 4,
+      "prerelease": true,
+      "publishedAt": "2026-10-31",
+      "body": "## 0.2.0-beta.3\n\n第三轮八代理全量审查后的完整修复（26 项）。\n\n### P0（7 项，必崩/数据丢失/安全预期落空）\n- 终端首次 cd 必崩：pwdView 悬空无赋值点，onEnter 里 setText → NPE\n- 行号栏完全不可见：gutter 画到控件外（坐标用错）；同时 O(n²)→O(n)\n- GBK 兜底是死代码：commons-compress 对 UTF-8 用 REPLACE 不抛异常，catch 永不进入；乱码仍返回 ok=true\n- 7z 密码静默失效：UI 标支持密码，实际产出明文 7z（SevenZOutputFile 不支持写加密）\n- 设置页两套状态机并存：侧边栏进设置弹窗、子页返回变内嵌\n- 三视图无互斥：终端与设置可同时可见\n- 回收站按子文件原 mtime 清理：删一个旧目录进去，内部文件下次启动被静默清空\n\n### 性能（8 项）\n- reload 每次切目录同步 commit（13 键 fsync，UI 线程），而注释明说路径不再保存\n- openLink 一次打开两次 commit\n- persistState 的 commit 返回值被丢弃，写失败完全静默\n- reloadAll 后台线程触碰 RecyclerView → CalledFromWrongThreadException\n- lastRealPath 被右窗格覆盖（reloadAll 按 L→R 连调），终端 cwd 指向错误目录\n- ThumbLoader in-flight 用 FutureTask+get() 阻塞，实测吞吐下降 50%\n- 播放器 onStop 的 pause 从未执行（被 isPlaying() 守卫挡掉）\n- 弹幕开关在播放线程 commit\n\n### 顽疾（9 项，含三轮未修）\n- TerminalSession 整类重写：读线程不可中断、关闭后仍回调 onExit、无 destroyForcibly、UTF-8 跨块截断\n- 新增解压炸弹防护 Guard：条目数 20 万 / 单文件 1GB / 总量 min(4GB, 可用空间×80%)\n- safeChild 命中 Zip Slip 时不再静默丢弃，记入 Result.skipped\n- registerReceiver 三参是 API 33 新增，minSdk=21 直接调用抛 NoSuchMethodError\n- TASK_QUEUE 计数漂移（先 ++ 再 execute）+ int→AtomicInteger\n- 中断按钮残留半截命令行\n\n### 功能补全\n- 解压到对侧改用 ArchiveExtractor，非 zip 格式（7z/rar/tar）现在真正可用\n- 真删 compressToZipLegacy / handleFtp\n\n### 文档一致性\n- DESIGN.md 去除 7z/rar 自相矛盾与网络表述冲突\n- agents.md 行数同步\n- 清理 2 个零引用 color、2 个未使用 import、statusBarHeight 死方法"
+    },
+    {
+      "ver": "0.2.0-beta.2",
+      "versionCode": 3,
+      "prerelease": true,
+      "publishedAt": "2026-10-30",
+      "body": "## 0.2.0-beta.2\n\n第二轮八代理全量审查后的修复。\n\n### 修复上一批引入的 8 条回归\n- 非 zip 格式（7z/rar/tar.gz）点开被困空目录 → 新增 isZipReadable 分流\n- 解到对侧三重失配 → 新增 extractToOtherPane\n- GBK 文件名 zip 解出乱码 → 补 ISO-8859-1→GBK 兜底\n- 播放器切后台从头重播 → onStop 改 pause\n- 崩溃页重启必失败（setExact 无权限） → 改 set() + 三段独立 try\n- 清空 handler 丢失 UI 回调 → 只清 dpiHandler\n- hostActivity 置空拦不住延时回调 → 改 WeakReference\n- 中文输入法仍会崩（NPE 移到 beginBatchEdit） → getEditable 返回真实 SpannableStringBuilder\n\n### 高危问题\n- SAF 授权链路整体断裂（无 onActivityResult、takePersistableUriPermission 零调用）\n- 跨分区删除绕过回收站变成物理删除\n- 回收站按原文件 mtime 判过期导致刚移入即被清理\n- 7z 实际产出 ZIP 字节流 → 改用 SevenZOutputFile 真实写\n- gz 纯扩展名时覆盖源文件\n- 格式下拉不随对话框关闭\n- GBK 兜底判据失效（只看 c<0x20，真实乱码是 U+FFFD）\n\n### 清理\n- 删除 ui/Anim.java（91 行全类零引用）\n- 计划删除 compressToZipLegacy / handleFtp\n  **已推翻 → 见 0.2.0-beta.3：beta.2 时未删，beta.3 才真正删除**\n- 删除 7 个零引用 color\n\n### 文档\n- README 依赖表、版本、构建命令、隐私声明全部对齐实际\n- DESIGN.md 模块图与 7z/rar 状态更新\n- agents.md 行数同步"
+    },
+    {
+      "ver": "0.2.0-beta.1",
+      "versionCode": 2,
+      "prerelease": true,
+      "publishedAt": "2026-10-30",
+      "body": "## 0.2.0-beta.1\n\n八代理全量审查后的第一批修复。\n\n### 修复\n- 主解压入口统一走 ArchiveExtractor（此前菜单「解压」仍用 java.util.zip，7z/rar/tar 必崩）\n- 补 org.tukaani:xz + zstd-jni 依赖（tar.xz / tar.zst 此前 NoClassDefFoundError）\n- 终端补 setComposingText 等重写（中文输入法组词 NPE）\n- 终端输出加长度上限（logcat 大输出 OOM）\n- 播放器读取弹幕 extra（此前弹幕永远 0 条）\n- 截图失败分支补 recycle（每次泄漏一张全屏位图）\n- onDetach 清空 hostActivity（旋转后 View 树泄漏）\n- 崩溃页重启改 PendingIntent + Alarm（此前必然失败）\n- 预览 WebView 关闭时 destroy（反复预览叠加实例）\n- copyRecursive 加自嵌套检测（/a 复制到 /a/b 无限递归）\n- SAF copyInto 净化文件名（真实目录穿越点）\n- 编辑器 Tab 宽度改用设置值（此前恒为 4）\n\n### 清理\n- 删除根包 FileListAdapter（153 行，零引用）\n- 删除 terminal/TerminalActivity + manifest 声明（248 行，死代码）\n- 删除 5 个零引用 drawable\n\n### 未修\n- 编辑器行号栏滚动不同步、Markdown 正则回溯、播放器内存细节等留待下一批\n\n### 第二批补充\n- ImageViewer 采样条件 && → ||（超宽图不再全尺寸解码）\n- deleteRecursive 统计真实成功数（此前失败也计成功）\n- MediaPlayerActivity 新增 onStop 停播放器（切集不再争解码器）\n- MarkdownUtils 链接/图片改线性扫描（40000 个 [ 从 3.4s 降到 94ms）\n- MarkdownUtils 代码块前关闭未闭合 table（消除非法嵌套）\n- 编辑器斜体/粗体渲染回归修复（基础语法全部正确）\n"
+    },
+    {
+      "ver": "0.1.0-dev",
+      "versionCode": 1,
+      "prerelease": true,
+      "publishedAt": "2026-10-25",
+      "body": "## 0.1.0-dev\n\n项目初始化。\n\n### 范围\n- 本地文件管理\n- 双栏浏览\n- 压缩包内部浏览（zip:// 虚拟路径）\n- 多选批量操作\n\n### 状态\n- 仅骨架，未实测\n- 不联网，不发布到 Play"
+    }
+  ],
+  "count": 4
+}
