@@ -281,6 +281,19 @@ public class FileManagerModule extends HyVqModule {
     private static final int ANIM_STAGGER_STEP = 12;
     /** stagger 总延迟上限：官方 >400ms 被感知为慢，收敛到 150ms */
     private static final int ANIM_STAGGER_MAX_DELAY = 150;
+    /**
+     * 切换目录时的整体交叉淡化时长。
+     *
+     * <p>与 stagger（逐项错峰入场）是<b>两件事</b>：
+     * stagger 用于「首次进入/空目录变出内容」这类新表面；
+     * 而翻目录只是同一块列表换了数据，官方不建议逐项错峰，
+     * 但也绝不等于「硬切」。用整体淡出→淡入把硬切变得有过渡。</p>
+     *
+     * <p>取 short4 = 200ms 的一半各占（出 90 / 入 140），
+     * 总感知约 200ms，符合 Material「transition ≤300ms」的约束。</p>
+     */
+    private static final int ANIM_DIR_FADE_OUT = 90;
+    private static final int ANIM_DIR_FADE_IN = 140;
 
     /**
      * 系统动画缩放倍率（设置 → 无障碍/开发者选项 的「动画时长缩放」）。
@@ -302,6 +315,8 @@ public class FileManagerModule extends HyVqModule {
      * <p>置 true：冷启动后首次加载。置 false：导航到新目录、或已播过一次。</p>
      */
     private boolean staggerPending = true;
+    /** 下一次 reload 结束后是否播整体交叉淡化（翻目录/前进后退时置位） */
+    private boolean dirFadePending = false;
 
     private static final class Pane {
         String path;
@@ -1877,7 +1892,9 @@ public class FileManagerModule extends HyVqModule {
         p.backStack.push(p.path);
         p.fwdStack.clear();          // 新分支，清空前进栈
         p.path = newPath;
-        staggerPending = false;      // 翻目录不是「新建 surface」，不播入场动画
+        // 翻目录不用 stagger（那是给「新表面」的），改用整体交叉淡化
+        staggerPending = false;
+        dirFadePending = true;
         reload(p);
         refreshNavButtons();
     }
@@ -1891,6 +1908,7 @@ public class FileManagerModule extends HyVqModule {
         p.fwdStack.push(p.path);
         p.path = p.backStack.pop();
         staggerPending = false;
+        dirFadePending = true;
         reload(p);
         refreshNavButtons();
     }
@@ -1904,6 +1922,7 @@ public class FileManagerModule extends HyVqModule {
         p.backStack.push(p.path);
         p.path = p.fwdStack.pop();
         staggerPending = false;
+        dirFadePending = true;
         reload(p);
         refreshNavButtons();
     }
@@ -2333,6 +2352,13 @@ public class FileManagerModule extends HyVqModule {
         sortMode = Math.max(SORT_NAME, Math.min(SORT_TIME, sortMode));
         sortEntries(p);
         p.adapter.setData(p.entries);
+
+        // 翻目录/前进后退后的整体交叉淡化。
+        // 数据已经 bind 完再做动画，避免淡入时看到空列表。
+        if (dirFadePending) {
+            dirFadePending = false;
+            playDirTransition(p.list);
+        }
         // 数据就绪后恢复该目录上次的布局状态（滚动位置/偏移；目录内容变化时
         // RecyclerView 内部会钳制越界位置，安全）
         if (restoreState != null && p.list != null && p.list.getLayoutManager() != null) {
@@ -2394,6 +2420,29 @@ public class FileManagerModule extends HyVqModule {
                         .setStartDelay(delay).start();
             }
         });
+    }
+
+    /**
+     * 切换目录时的整体交叉淡化。
+     *
+     * <p>此前 {@code navigateTo/navBack/navForward} 都设 staggerPending=false，
+     * 于是翻目录完全没有过渡 —— 内容瞬间替换，观感「过于突然」。
+     * 但按官方规范，翻目录不该用逐项 stagger（那是给「新表面」的），
+     * 所以这里用<b>整体</b>淡出→淡入，既保留方向感又不违反 stagger 的适用条件。</p>
+     *
+     * <p>实现要点：淡出期间先把新数据 bind 好（reload 已经做完），
+     * 再淡入，避免中间闪一帧空白。<b>不改变列表高度</b>，
+     * 因此不会引起布局跳动。</p>
+     */
+    private void playDirTransition(final RecyclerView rv) {
+        if (rv == null) return;
+        if (animScale <= 0f) return;          // 用户关闭动画 / 无障碍减动效
+        rv.animate().cancel();
+        // 先快速淡出到 0.35（不是全透明，保留轮廓，避免"黑一下"的错觉）
+        rv.animate().alpha(0.35f).setDuration(ANIM_DIR_FADE_OUT)
+                .withEndAction(() ->
+                        rv.animate().alpha(1f).setDuration(ANIM_DIR_FADE_IN).start())
+                .start();
     }
 
     /** 排序：文件夹优先，再按名称/大小/时间（名称走自然排序，file2 < file10） */

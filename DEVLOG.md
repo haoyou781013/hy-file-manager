@@ -59,6 +59,16 @@
   不保存 paneL/paneR 的 path。原 A3-ARCH 报的「注释声称有路径记忆
   但实际没有」因此不构成缺陷，改为把注释与实际行为对齐。
 
+7. **切换目录过于突然，没有过渡**（`FileManagerModule`）
+   navigateTo / navBack / navForward 三处都设 `staggerPending = false`，
+   于是翻目录完全无动画 —— 内容瞬间替换。
+   但按 Material 规范，翻目录不该用**逐项 stagger**（那是给「新表面」的），
+   所以不能简单把 staggerPending 改回 true。
+   新增 playDirTransition()：整体 alpha 0.35→1 的交叉淡化，
+   出 90ms + 入 140ms，总感知约 200ms（符合 transition ≤300ms）。
+   用 dirFadePending 标志在 reload 的数据 bind 完成后触发，
+   避免淡入时看到空列表。animScale<=0 时跳过（尊重无障碍减动效）。
+
 #### 待办
 - 未保存的编辑内容零持久化
 - 文件大小闸三处不一致
