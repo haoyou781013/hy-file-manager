@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="blue_600">#1E88E5</color>
+    <color name="white">#FFFFFF</color>
+
+    <!-- 从 HY_VQ 剥离：玻璃质感 -->
+
+    <!-- 按压水波纹：主色 #1E88E5 的 20% 透明度（替代系统默认琥珀色） -->
+    <color name="ripple_blue">#331E88E5</color>
+</resources>
