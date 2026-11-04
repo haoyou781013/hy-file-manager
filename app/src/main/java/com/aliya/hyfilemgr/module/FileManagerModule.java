@@ -2274,7 +2274,9 @@ public class FileManagerModule extends HyVqModule {
         restoreScrollOnLoad = false;   // 用后即清，避免影响后续普通目录切换
         p.lastLoadedPath = p.path;
         p.selected.clear();
-        if (p == active) exitMultiMode();
+        // 用 instant：翻目录时底部栏直接切到位，不播 160ms 退场动画。
+        // 旧写法播动画，而下面紧接着就 bind 新数据，两个窗口重叠。
+        if (p == active && multiMode) exitMultiMode(true);
 
         // 虚拟视图路由：回收站（不经过 AccessRouter 四源路由，路径不落盘）
         if (p.path.startsWith(PREFIX_TRASH)) {
@@ -2856,7 +2858,53 @@ public class FileManagerModule extends HyVqModule {
     }
 
     private void exitMultiMode() {
+        exitMultiMode(false);
+    }
+
+    /**
+     * 退出多选。
+     *
+     * @param instant true = 跳过退场动画，当场完成切换。
+     *
+     * <p><b>为什么要 instant</b>：{@code reload()} 里翻目录时会退出多选，
+     * 旧实现播放 160ms 的 opBar 退场动画 + fab 淡入，而 reload 紧接着就
+     * 把新目录数据 bind 上去了 —— 结果是「功能栏还没退完，新内容已经画出」，
+     * 两个动画窗口重叠，观感是底部栏莫名闪一下。
+     *
+     * <p>翻目录属于「同一 surface 换数据」，底部栏的进出不该和内容过渡
+     * 抢时间窗口。直接切换完，剩下的过渡交给 {@link #playDirTransition}。</p>
+     */
+    private void exitMultiMode(boolean instant) {
         multiMode = false;
+        if (instant) {
+            // 一次性把布局落到「已完成退出」的状态，不播任何动画
+            if (opBar != null) {
+                opBar.animate().cancel();
+                opBar.setVisibility(View.GONE);
+                opBar.setTranslationY(0f);
+                opBar.setAlpha(1f);
+            }
+            if (bottomNav != null) {
+                bottomNav.animate().cancel();
+                bottomNav.setAlpha(1f);
+                bottomNav.setTranslationY(0f);
+                if (contentMode == ContentMode.FILES) {
+                    bottomNav.setVisibility(View.VISIBLE);
+                }
+            }
+            if (fabNew != null) {
+                fabNew.animate().cancel();
+                fabNew.setAlpha(1f);
+                if (contentMode == ContentMode.FILES) {
+                    fabNew.setVisibility(View.VISIBLE);
+                }
+            }
+            // 选择态清理由 reload 自己负责（它已经 p.selected.clear()）
+            for (Pane px : panes) {
+                if (px != null && px.adapter != null) px.adapter.setMultiMode(false);
+            }
+            return;
+        }
         final boolean animating = opBar != null && opBar.getVisibility() == View.VISIBLE;
         if (animating) {
             // ⚠️ 关键：bottomNav 不能在动画前恢复。

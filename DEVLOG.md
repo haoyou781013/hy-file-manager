@@ -69,6 +69,15 @@
    用 dirFadePending 标志在 reload 的数据 bind 完成后触发，
    避免淡入时看到空列表。animScale<=0 时跳过（尊重无障碍减动效）。
 
+8. **进入目录时底部功能栏播放"退出多选"动画**（`FileManagerModule`）
+   reload 里 `if (p == active) exitMultiMode()` 会播 160ms 的 opBar 退场动画
+   + bottomNav 淡入 + fabNew 淡入。但 reload 紧接着就把新目录数据 bind 上去了 ——
+   功能栏还没退完，新内容已经画出，两个动画窗口重叠，观感是底部栏莫名闪一下。
+
+   新增 exitMultiMode(true) 变体：跳过所有动画，一次性把
+   opBar 隐藏 / bottomNav 显示 / fabNew 显示 落到「已完成退出」的状态。
+   reload 改用它。手动点「关闭」退出多选时仍走动画版，不受影响。
+
 #### 待办
 - 未保存的编辑内容零持久化
 - 文件大小闸三处不一致
