@@ -92,8 +92,31 @@ public final class PlayerCore {
             }
         }
         DefaultDataSource.Factory ds = new DefaultDataSource.Factory(ctx.getApplicationContext(), http);
+
+        // ── 音频焦点与耳机拔出 ──
+        //
+        // 此前完全没有这两项配置，三个日常场景全错：
+        //   ① 来电 / 其他 App 播音乐 → 本播放器不暂停，声音叠在一起
+        //   ② 拔耳机 → 继续外放，公共场合很尴尬
+        //   ③ 切后台 → 不释放 codec（见 MediaPlayerActivity 的 onStop）
+        //
+        // media3 的 ExoPlayer.Builder 已内建 AudioFocusManager：
+        //   setAudioAttributes(attrs, handleAudioFocus=true) 让它自动申请/放弃
+        //   音频焦点，并在 AUDIOFOCUS_LOSS / LOSS_TRANSIENT 时按策略暂停或降音量。
+        //   setHandleAudioBecomingNoisy(true) 注册 ACTION_AUDIO_BECOMING_NOISY，
+        //   耳机拔出时自动暂停。
+        // 两处都是 media3 1.11.1 的公开 API（已用 javap 确认），无需手写
+        // AudioFocusRequest，也不用申请任何权限。
+        androidx.media3.common.AudioAttributes attrs =
+                new androidx.media3.common.AudioAttributes.Builder()
+                        .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+                        .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MOVIE)
+                        .build();
+
         return new ExoPlayer.Builder(ctx)
                 .setMediaSourceFactory(new DefaultMediaSourceFactory(ds))
+                .setAudioAttributes(attrs, /* handleAudioFocus= */ true)
+                .setHandleAudioBecomingNoisy(true)
                 .build();
     }
 

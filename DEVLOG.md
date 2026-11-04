@@ -39,11 +39,28 @@
    - SAF 分支的临时文件记入 tmpFontFile，新增 onDestroy 清理。
      旧实现每次预览都在 cacheDir 留一份几 MB 的副本，永不删除。
 
+5. **旋转屏幕丢失全部导航状态**（`AndroidManifest.xml`）
+   MainActivity 是 4 个 Activity 里唯一没有 configChanges 的。
+   旋转 → recreate → Pane 的 path / backStack / fwdStack / dirCache / entries
+   全在实例字段上，一次性全丢。
+   加 `orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize`。
+
+6. **完全没有音频焦点处理**（`PlayerCore.create`）
+   三个日常场景全错：来电/其他 App 播放时不暂停（声音叠加）、
+   拔耳机继续外放、切后台不释放 codec。
+   media3 的 ExoPlayer.Builder 内建 AudioFocusManager，两行即可：
+     .setAudioAttributes(attrs, /* handleAudioFocus= */ true)
+     .setHandleAudioBecomingNoisy(true)
+   attrs = USAGE_MEDIA + AUDIO_CONTENT_TYPE_MOVIE。
+   无需手写 AudioFocusRequest，不用任何权限。
+
+#### 决定不做
+- **双窗格路径持久化**：用户明确要求「重启软件重置路径」，
+  不保存 paneL/paneR 的 path。原 A3-ARCH 报的「注释声称有路径记忆
+  但实际没有」因此不构成缺陷，改为把注释与实际行为对齐。
+
 #### 待办
 - 未保存的编辑内容零持久化
 - 文件大小闸三处不一致
-- 完全没有音频焦点处理
-- 旋转屏幕丢失全部导航状态
-- 双窗格路径不持久化
 - FTP/HTTP 服务器不在生命周期关闭
 
