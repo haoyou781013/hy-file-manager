@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ── 主题 0：默认（跟随系统深浅色）── -->
+    <style name="Theme.HYFileManager" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/blue_600</item>
+        <item name="colorOnPrimary">@color/white</item>
+    </style>
+
+    <!-- 强制亮色 -->
+    <style name="Theme.HYFileManager.Light" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/blue_600</item>
+        <item name="colorOnPrimary">@color/white</item>
+    </style>
+
+    <!-- 强制暗色 -->
+    <style name="Theme.HYFileManager.Dark" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/blue_600</item>
+        <item name="colorOnPrimary">@color/white</item>
+    </style>
+
+    <!-- ── 主题 1：工业风格 ──
+         深色底 + 高对比琥珀色强调 + 方正圆角（通过覆盖 Material3 色板实现）
+         配色取自工业控制面板：石墨黑背景、琥珀警示色、钢灰线条 -->
+    <style name="Theme.HYFileManager.Industrial" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">#FFB300</item>
+        <item name="colorOnPrimary">#1A1A1A</item>
+        <item name="colorPrimaryContainer">#3D2E00</item>
+        <item name="colorOnPrimaryContainer">#FFD54F</item>
+        <item name="colorSecondary">#FF8F00</item>
+        <item name="colorOnSecondary">#1A1A1A</item>
+        <item name="colorSurface">#121212</item>
+        <item name="colorOnSurface">#E0E0E0</item>
+        <item name="colorSurfaceVariant">#1E1E1E</item>
+        <item name="colorOnSurfaceVariant">#9E9E9E</item>
+        <item name="colorSurfaceContainer">#181818</item>
+        <item name="colorSurfaceContainerHigh">#222222</item>
+        <item name="colorSurfaceContainerHighest">#2A2A2A</item>
+        <item name="colorOutline">#4A4A4A</item>
+        <item name="colorOutlineVariant">#333333</item>
+        <item name="colorError">#FF5252</item>
+        <item name="colorOnError">#1A1A1A</item>
+    </style>
+
+    <!-- ══════════════════════════════════════════════════════════
+         MD3 兼容模式（默认关闭）
+         ══════════════════════════════════════════════════════════
+         部分旧 ROM / 定制系统的 AppCompat 与 Material3 主题存在
+         资源解析冲突（colorSurfaceContainer* 系列属性缺失、
+         Theme.Material3 父链断裂），开启 MD3 后可能直接白屏或崩溃。
+         这些机型需要退回 AppCompat 主题才能正常启动。
+
+         开关默认关闭 = 使用 MD3（美观）；
+         打不开的机型在设置里手动开启兼容模式（但打不开就进不去设置——
+         所以额外支持 AndroidManifest 的 meta-data 和 adb 命令双保险）。 -->
+    <style name="Theme.HYFileManager.Compat" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/blue_600</item>
+        <item name="colorPrimaryDark">@color/blue_600</item>
+        <item name="colorAccent">@color/blue_600</item>
+        <item name="android:statusBarColor">@color/blue_600</item>
+    </style>
+
+    <style name="Theme.HYFileManager.Compat.Light" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">@color/blue_600</item>
+        <item name="colorPrimaryDark">@color/blue_600</item>
+        <item name="colorAccent">@color/blue_600</item>
+    </style>
+
+    <style name="Theme.HYFileManager.Compat.Dark" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">@color/blue_600</item>
+        <item name="colorPrimaryDark">@color/blue_600</item>
+        <item name="colorAccent">@color/blue_600</item>
+    </style>
+
+    <!-- PopupWindow 入场/退场动画 -->
+    <style name="AnimPopup" parent="@android:style/Animation">
+        <item name="android:windowEnterAnimation">@anim/popup_in</item>
+        <item name="android:windowExitAnimation">@anim/popup_out</item>
+    </style>
+</resources>
