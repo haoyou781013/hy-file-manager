@@ -171,6 +171,10 @@ public final class ArchiveExtractor {
             net.lingala.zip4j.ZipFile zf =
                     new net.lingala.zip4j.ZipFile(src, password.toCharArray());
             Guard guard = new Guard(destDir);
+            // zip 能拿到条目声明的压缩/解压大小，先整包判一次压缩比。
+            // 这是唯一能判压缩比的格式（tar 不压缩、7z/rar 不暴露大小）。
+            String bomb = checkZipRatio4j(zf);
+            if (bomb != null) throw new IOException(bomb);
             java.util.List<net.lingala.zip4j.model.FileHeader> heads = zf.getFileHeaders();
             for (net.lingala.zip4j.model.FileHeader h : heads) {
                 guard.countEntry();
@@ -242,7 +246,7 @@ public final class ArchiveExtractor {
                     while ((len = sz.read(buf)) > 0) {
                         os.write(buf, 0, len);
                         written += len;
-                        guard.compressedBytes += len;
+                        // 不累加 compressedBytes：sz.read() 已是解压后字节
                         if (written > Guard.MAX_ENTRY_BYTES) {
                             throw new IOException("单个文件解压后超过 "
                                     + (Guard.MAX_ENTRY_BYTES / (1024 * 1024)) + "MB，已中止");
@@ -334,7 +338,7 @@ public final class ArchiveExtractor {
                     while ((len = sz.read(buf)) > 0) {
                         os.write(buf, 0, len);
                         written += len;
-                        guard.compressedBytes += len;
+                        // 不累加 compressedBytes：sz.read() 已是解压后字节
                         if (written > Guard.MAX_ENTRY_BYTES) {
                             return "单文件超过 "
                                     + (Guard.MAX_ENTRY_BYTES / (1024 * 1024)) + "MB";
@@ -412,9 +416,16 @@ public final class ArchiveExtractor {
             com.github.junrar.Archive arch = password == null || password.isEmpty()
                     ? new com.github.junrar.Archive(src)
                     : new com.github.junrar.Archive(src, password);
+            // ⚠️ RAR 分支此前完全绕过 Guard：
+            //   · 没调 guard.countEntry()，条目数上限失效
+            //   · arch.extractFile(fh, os) 直写，不经 copy(guard)，
+            //     单文件 1GB / 总量 4GB 两条也失效
+            // 即 RAR 炸弹完全没有防护。现在补齐。
+            Guard guard = new Guard(destDir);
             try {
                 com.github.junrar.rarfile.FileHeader fh;
                 while ((fh = arch.nextFileHeader()) != null) {
+                    guard.countEntry();
                     String name = fh.getFileName();
                     if (fh.isDirectory()) {
                         File d = safeChild(destDir, name);
@@ -428,7 +439,30 @@ public final class ArchiveExtractor {
                     if (p != null) //noinspection ResultOfMethodCallIgnored
                         p.mkdirs();
                     try (OutputStream os = new FileOutputStream(out)) {
-                        arch.extractFile(fh, os);
+                        // junrar 的 extractFile 只能直写出，不能套 copy(guard)。
+                        // 为不破坏 API，这里包一层计数流：每写 n 字节就过 guard，
+                        // 超限立刻抛异常中止，已写的半截文件由外层 catch 清理。
+                        java.io.OutputStream checked = new java.io.OutputStream() {
+                            @Override
+                            public void write(int b) throws IOException {
+                                os.write(b);
+                                guard.addBytes(1);
+                            }
+                            @Override
+                            public void write(byte[] b, int off, int len) throws IOException {
+                                os.write(b, off, len);
+                                guard.addBytes(len);
+                            }
+                            @Override
+                            public void flush() throws IOException {
+                                os.flush();
+                            }
+                            @Override
+                            public void close() throws IOException {
+                                os.close();
+                            }
+                        };
+                        arch.extractFile(fh, checked);
                     }
                     n++;
                     if (progress != null) progress.onEntry(name, n);
@@ -738,7 +772,14 @@ public final class ArchiveExtractor {
          * 导致 {@link #addBytes} 里的压缩比判断永不触发——是死代码。
          * 现由 {@link #copy(InputStream, OutputStream, Guard)} 在每轮回写时累加。</p>
          */
-        long compressedBytes;
+        /**
+         * <b>声明</b>的压缩后总字节数（来自 zip 中央目录）。
+         * 由调用方在开解压前一次性设好；0 表示拿不到（tar/7z/rar 都拿不到）。
+         *
+         * <p>旧字段 {@code compressedBytes} 从解压流累加，与 total 同源，
+         * 比值恒 ≈1，那条判断从未触发过 —— 已删除。</p>
+         */
+        long compressedDeclared;
         final long totalCap;
         /** Zip-Slip 命中的条目名（最多 50 条，按原顺序） */
         final java.util.List<String> skipped = new java.util.ArrayList<>();
@@ -757,9 +798,13 @@ public final class ArchiveExtractor {
 
         void addBytes(long n) throws IOException {
             total += n;
-            // 压缩比检测：只在已解出足够数据后判断（小文件比​例无意义）
-            if (total > (1L << 20) && compressedBytes > 0) {
-                double ratio = (double) total / compressedBytes;
+            // 压缩比不在这里判。compressedBytes 从解压流读到的字节没有意义
+            // （与 total 同源），旧实现在这里判是死代码。
+            // 真正的检查在 checkZipRatio4j()：只有 zip 能拿到每个条目的
+            // 压缩后大小（zip4j FileHeader.getCompressedSize），
+            // 其他格式拿不到，只能靠条目数 + 单文件 + 总量三条。
+            if (compressedDeclared > 0 && total > (1L << 20)) {
+                double ratio = (double) total / compressedDeclared;
                 if (ratio > 1.0 / MIN_INFLATE_RATIO) {
                     throw new IOException("压缩比异常（" + Math.round(ratio) +
                             ":1），疑似压缩炸弹，已中止");
@@ -787,6 +832,46 @@ public final class ArchiveExtractor {
         copy(in, out, null);
     }
 
+    /**
+     * zip 专用的压缩比检查。
+     *
+     * <p><b>为什么只有 zip 能判</b>：压缩比需要「压缩后大小」与「解压后大小」两个数。
+     * zip4j 的 {@code FileHeader} 里两者都有（getCompressedSize/getUncompressedSize）。
+     * tar 只是打包不压缩，条目没有 compressedSize；7z / rar 的 API 也不暴露。
+     * 那三种只能靠「条目数 + 单文件 + 总量」，这是格式决定的上限。</p>
+     *
+     * <p><b>旧实现为什么是死的</b>：它把 {@code in.read()} 的字节当作压缩后字节累加，
+     * 而 in 是解压流，与 written 同源，比值恒 ≈1，永远到不了阈值。</p>
+     *
+     * @return 判定为炸弹时返回原因，否则 null
+     */
+    private static String checkZipRatio4j(net.lingala.zip4j.ZipFile zf) throws IOException {
+        long totalC = 0;
+        long totalU = 0;
+        for (net.lingala.zip4j.model.FileHeader h : zf.getFileHeaders()) {
+            if (h.isDirectory()) continue;
+            long c = h.getCompressedSize();
+            long u = h.getUncompressedSize();
+            if (c <= 0 || u <= 0) continue;
+            totalC += c;
+            totalU += u;
+            // 单条目先判：一个 10KB 条目声明解压后 10GB，不等总量就该拦
+            double r = (double) u / c;
+            if (u > (1L << 20) && r > 1.0 / Guard.MIN_INFLATE_RATIO) {
+                return "条目「" + h.getFileName() + "」压缩比异常（"
+                        + Math.round(r) + ":1），疑似压缩炸弹";
+            }
+        }
+        // 总量再看一遍：防「每个条目都刚好低于阈值，但总数惊人」
+        if (totalC > 0 && totalU > (1L << 20)) {
+            double r = (double) totalU / totalC;
+            if (r > 1.0 / Guard.MIN_INFLATE_RATIO) {
+                return "整体压缩比异常（" + Math.round(r) + ":1），疑似压缩炸弹";
+            }
+        }
+        return null;
+    }
+
     private static void copy(InputStream in, OutputStream out, Guard guard) throws IOException {
         byte[] buf = new byte[8192];
         int n;
@@ -794,11 +879,11 @@ public final class ArchiveExtractor {
         while ((n = in.read(buf)) > 0) {
             out.write(buf, 0, n);
             written += n;
-            if (guard != null) {
-                // 累计「已读压缩字节」用于压缩比：InputStream 读出的就是压缩后的字节流，
-                // 与 written（解压后）之比即实际压缩率
-                guard.compressedBytes += n;
-            }
+            // ⚠️ 这里**不能**累加 guard.compressedBytes。
+            // copy() 的 in 是**解压后**的读取流（TarArchiveInputStream / ZipInputStream），
+            // 读出的 n 与 written 同源，比值恒 ≈1，压缩比判断永远不触发 —— 等于防线失效。
+            // 压缩比必须在能拿到「压缩后大小」的地方判：见 checkZipRatio4j()，
+            // 用 zip4j FileHeader.getCompressedSize()/getUncompressedSize()。
             if (written > Guard.MAX_ENTRY_BYTES) {
                 throw new IOException("单个文件解压后超过 "
                         + (Guard.MAX_ENTRY_BYTES / (1024 * 1024)) + "MB，已中止");

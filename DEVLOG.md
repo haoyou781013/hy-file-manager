@@ -118,6 +118,77 @@
     新增 MAX_EDIT_BYTES = 2MB 单一常量，三处全部改用它。
     tryOpenInEditor 的文案从「可能无法加载」改为明确拒绝 + 实际上限。
 
+
+### 全量审查第四批：数据安全（10 项）
+
+来源：8 路并行审查 HEAD a7165b1。以下是**会丢用户数据**的路径，
+逐条修复，不按「影响面小」筛。
+
+1. **回收站失败降级为物理删除**（最危险）
+   `if (!useTrash || !moveToTrash(f)) { deleteTree(f); }`
+   用户勾了「移入回收站」，copy 因权限/跨区失败 → 直接物理删除。
+   改为：失败报错并保留原文件，绝不降级。
+
+2. **回收站留半截文件且无 meta**
+   FileOps.copy 中途抛异常 → dest 半截残留，writeTrashMeta 未执行
+   → loadTrash 当正常条目展示，用户「恢复」得到残缺数据。
+   改为：copy 异常时先 deleteTree(dest) 再抛出。
+
+3. **deleteTree 跟随符号链接 → 删上层文件**
+   `f.isDirectory()` 对 symlink 会跟随。若存在 /sdcard/a -> /sdcard 环：
+   深度递归到 StackOverflow，溢出前已真的删掉上层文件。
+   改为 isSymlink() 显式判断（API26+ 用 Files.isSymbolicLink，
+   低版本用 canonicalPath 兜底），symlink 只删链接本身；
+   并把栈递归改成显式栈，深目录不再溢出。
+
+4. **Guard 压缩比防线是死的**
+   compressedBytes 累加的是 in.read()（解压流）字节，与 total 同源，
+   比值恒 ≈1，永不触发。删除该累加，新增 checkZipRatio4j()：
+   用 zip4j FileHeader.getCompressedSize/getUncompressedSize 判，
+   单条目 + 整包两道。这是唯一能判压缩比的格式
+   （tar 不压缩、7z/rar 不暴露大小）。
+
+5. **RAR 分支完全绕过 Guard**
+   没调 countEntry()，extractFile 直写不经 copy(guard)。
+   RAR 炸弹零防护。改为补 countEntry + 包一层计数 OutputStream
+   过 guard.addBytes，超限即抛。
+
+6. **「放弃修改」后草稿会复活**
+   finishEditor 无条件 saveEditorTabs → saveEditorDrafts，
+   用户放弃的内容被写回盘，下次又被恢复。
+   改为 finishEditor(boolean discardDrafts)：
+   放弃时 clearEditorDrafts() + 抹掉 dirty。
+
+7. **0 字节草稿被跳过**
+   draft.length()==0 当作"没有草稿"。但这正是「用户把内容全删了」
+   的合法状态 → 清空文件的修改永久丢失。
+   改为只判 !draft.isFile()。
+
+8. **草稿写入原子性**
+   旧：先删光旧草稿再写新，meta 最后 commit。
+   删完写完第 1 个时崩溃 → meta 与文件双双错位。
+   已改为：写 .new → 全部成功 → rename → 清理本批之外。
+   renameTo 失败保留 .new（旧实现无视返回值，随后被清理逻辑删掉，
+   等于刚写好的草稿被自己删）；写入失败弹 toast 告知用户。
+
+9. **为「按 Home 后被杀」补 onPause**
+   基类 HyVqModule.onPause 是空实现，MainActivity 调了没效果。
+   草稿只在 finishEditor 写 → 编辑中按 Home 被杀，一次都不会写。
+   新增 FileManagerModule.onPause()，IO 放后台线程。
+
+10. **dirFadePending / staggerPending 双窗格串扰**
+    两个标志是 Module 级单 boolean，却被两个窗格共用。
+    左栏翻目录置位 → 右栏先 reload 就消费掉，左栏自己没动画。
+    下沉到 Pane。
+
+### 未修（记录在案，需后续处理）
+- 撤销栈按条数限 200，2MB 文件约 800MB 堆
+- replaceCurrent / replaceAll 无 ReDoS 前置检查
+- onStop 只 pause 不释放 codec；KEEP_SCREEN_ON 不清
+- 触摸目标多处 < 48dp
+- ACCESS_NETWORK_STATE / REQUEST_INSTALL_PACKAGES 零使用
+- docs/ 的终端 / 终末地残留 6 处
+
 #### 待办
-（无）
+（见上方「未修」）
 

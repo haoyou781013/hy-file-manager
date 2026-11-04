@@ -330,12 +330,23 @@ public class FileManagerModule extends HyVqModule {
      *
      * <p>置 true：冷启动后首次加载。置 false：导航到新目录、或已播过一次。</p>
      */
-    private boolean staggerPending = true;
-    /** 下一次 reload 结束后是否播整体交叉淡化（翻目录/前进后退时置位） */
-    private boolean dirFadePending = false;
+    // staggerPending / dirFadePending 已下沉到 Pane —— 见 Pane 类上的注释。
+    // Module 级单 boolean 会被两个窗格互相消费。
 
     private static final class Pane {
         String path;
+        /**
+         * 下一次 reload 结束后是否播整体交叉淡化。
+         *
+         * <p><b>必须在 Pane 上，不能在 Module 上</b>。旧实现是 Module 的
+         * 单个 boolean，而 Module 同时管两个窗格 —— 左栏翻目录置位后，
+         * 如果右栏先触发 reload（reloadAll / 粘贴完成 / SAF 授权回调），
+         * 标志被右栏消费，左栏自己反而没动画；反之亦然。
+         * 双窗格快速交替操作时可复现「动画跑到错的那一栏」。</p>
+         */
+        boolean dirFadePending;
+        /** 同 dirFadePending，逐项 stagger 的消费标志，同样必须在 Pane 上 */
+        boolean staggerPending = true;
         /** 进入 SAF 授权目录（content://）前的路径：授权根的".."返回这里 */
         String navPrev;
         final List<FileEntry> entries = new ArrayList<>();
@@ -437,7 +448,57 @@ public class FileManagerModule extends HyVqModule {
         installBackCallback();
     }
 
+    /**
+     * Activity 进后台时把草稿落盘。
+     *
+     * <p><b>为什么必须有这一处</b>：草稿只在 finishEditor / 关标签时写，
+     * 而用户最常见的丢数据方式是「编辑中按 Home → 系统 OOM 杀掉进程」——
+     * 这条路一次 finishEditor 都不会走。基类 HyVqModule.onPause 是空实现，
+     * MainActivity:162 调了也没效果。覆写它才算真正兜住「杀进程不丢」。</p>
+     *
+     * <p>IO 跑在后台线程：onPause 里同步写几十 MB 草稿会阻塞主线程，
+     * 系统可能因此认为 ANR。</p>
+     */
     @Override
+    public void onPause() {
+        super.onPause();
+        if (editorTabs.isEmpty()) return;
+        final java.util.List<EditorTabState> snapshot = new ArrayList<>(editorTabs);
+        new Thread(() -> {
+            try {
+                File dir = draftDir();
+                if (dir == null) return;
+                org.json.JSONArray meta = new org.json.JSONArray();
+                int idx = 0;
+                for (EditorTabState t : snapshot) {
+                    if (!t.dirty || t.content == null) continue;
+                    File f = new File(dir, "draft_" + idx + ".new");
+                    try (java.io.FileOutputStream fos = new java.io.FileOutputStream(f)) {
+                        fos.write(t.content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                    org.json.JSONObject o = new org.json.JSONObject();
+                    o.put("i", idx);
+                    o.put("path", t.rootTarget != null ? t.rootTarget : t.file.getAbsolutePath());
+                    o.put("root", t.rootTarget != null);
+                    o.put("enc", t.encoding == null ? "UTF-8" : t.encoding);
+                    o.put("le", t.lineEnding == null ? "LF" : t.lineEnding);
+                    meta.put(o);
+                    idx++;
+                }
+                for (File f : dir.listFiles()) {
+                    if (f.getName().endsWith(".new")) {
+                        String nm = f.getName();
+                        //noinspection ResultOfMethodCallIgnored
+                        f.renameTo(new File(dir, nm.substring(0, nm.length() - 4)));
+                    }
+                }
+                fmPrefs().edit().putString(EDITOR_PREF_DRAFTS, meta.toString()).commit();
+            } catch (Throwable t) {
+                android.util.Log.w("HyEditor", "onPause draft save failed", t);
+            }
+        }, "HyDraftOnPause").start();
+    }
+
     public void onDetach() {
         detached = true;
         uninstallBackCallback();
@@ -1909,8 +1970,8 @@ public class FileManagerModule extends HyVqModule {
         p.fwdStack.clear();          // 新分支，清空前进栈
         p.path = newPath;
         // 翻目录不用 stagger（那是给「新表面」的），改用整体交叉淡化
-        staggerPending = false;
-        dirFadePending = true;
+        p.staggerPending = false;
+        p.dirFadePending = true;
         reload(p);
         refreshNavButtons();
     }
@@ -1923,8 +1984,8 @@ public class FileManagerModule extends HyVqModule {
         }
         p.fwdStack.push(p.path);
         p.path = p.backStack.pop();
-        staggerPending = false;
-        dirFadePending = true;
+        p.staggerPending = false;
+        p.dirFadePending = true;
         reload(p);
         refreshNavButtons();
     }
@@ -1937,8 +1998,8 @@ public class FileManagerModule extends HyVqModule {
         }
         p.backStack.push(p.path);
         p.path = p.fwdStack.pop();
-        staggerPending = false;
-        dirFadePending = true;
+        p.staggerPending = false;
+        p.dirFadePending = true;
         reload(p);
         refreshNavButtons();
     }
@@ -2373,8 +2434,8 @@ public class FileManagerModule extends HyVqModule {
 
         // 翻目录/前进后退后的整体交叉淡化。
         // 数据已经 bind 完再做动画，避免淡入时看到空列表。
-        if (dirFadePending) {
-            dirFadePending = false;
+        if (p.dirFadePending) {
+            p.dirFadePending = false;
             playDirTransition(p.list);
         }
         // 数据就绪后恢复该目录上次的布局状态（滚动位置/偏移；目录内容变化时
@@ -2394,8 +2455,8 @@ public class FileManagerModule extends HyVqModule {
         // 入场动画只在「新建 surface」时播：冷启动后的首次加载。
         // 翻目录/排序/删除后刷新都不播（官方 stagger 适用边界）。
         // 目录为空时不播（没有可入场的子项），保持 staggerPending 等下次。
-        if (staggerPending && !p.entries.isEmpty()) {
-            staggerPending = false;   // 全局只消费一次
+        if (p.staggerPending && !p.entries.isEmpty()) {
+            p.staggerPending = false;
             playStaggerAnimation(p.list);
         }
         if (p == active && pathText != null) {
@@ -6255,8 +6316,17 @@ public class FileManagerModule extends HyVqModule {
                             // 移入回收站（保留原路径层级，恢复=移回原位置）
                             // 采用本次确认页上的勾选（默认跟随设置，改动仅本次生效）
                             boolean useTrash = trashEnabled && thisTimeTrash[0];
-                            if (!useTrash || !moveToTrash(f)) {
-                                // 跨分区/权限失败回退物理删除（数据可能已部分移动）
+                            if (useTrash) {
+                                // ⚠️ 绝不能降级为物理删除。
+                                // 旧写法 `if (!useTrash || !moveToTrash(f)) { deleteTree(f); }`
+                                // 在用户勾了「移入回收站」、而 copy 因权限/跨区失败时，
+                                // 直接物理删除 —— 用户以为只是丢进回收站，实际永久没了。
+                                // 失败就如实报错并保留原文件，让用户自己决定下一步。
+                                if (!moveToTrash(f)) {
+                                    failed.add(nm + "：无法移入回收站（原文件已保留）");
+                                    continue;
+                                }
+                            } else {
                                 deleteTree(f);
                             }
                         }
@@ -6794,7 +6864,7 @@ public class FileManagerModule extends HyVqModule {
                         });
                     }
                 })
-                .setNegativeButton("放弃修改", (d, w) -> finishEditor())
+                .setNegativeButton("放弃修改", (d, w) -> finishEditor(true))
                 .setNeutralButton("取消", (d, w) -> {
                     // 返回键路径：cancel 流程结束后再 show，避免窗口状态冲突
                     handler.post(() -> {
@@ -6807,8 +6877,31 @@ public class FileManagerModule extends HyVqModule {
                 .show();
     }
 
-    /** 结束编辑器会话：持久化标签路径（打开保留）并清空内存 */
     private void finishEditor() {
+        finishEditor(false);
+    }
+
+    /**
+     * 结束编辑器会话：持久化标签路径（打开保留）并清空内存。
+     *
+     * @param discardDrafts true = 用户明确选了「放弃修改」。
+     *
+     * <p><b>为什么必须区分</b>：旧实现 finishEditor 无条件 saveEditorTabs()
+     * → saveEditorDrafts()，于是「放弃修改」把 dirty 标签又写回草稿盘，
+     * 下次打开编辑器 restoreEditorDrafts 又把它们恢复出来 ——
+     * 用户永远丢不掉一次放弃。这是草稿机制最容易踩的坑：
+     * 「防丢」的写入路径不能覆盖「用户主动丢弃」的语义。</p>
+     */
+    private void finishEditor(boolean discardDrafts) {
+        if (discardDrafts) {
+            // 用户主动放弃：清空草稿（含 meta），不留任何可恢复痕迹
+            clearEditorDrafts();
+            // 标签仍在列表里，但把 dirty 抹掉，让 saveEditorTabs 不写它们
+            for (EditorTabState t : editorTabs) {
+                t.dirty = false;
+                t.content = t.savedContent;
+            }
+        }
         saveEditorTabs();
         if (editorDialog != null) editorDialog.dismiss();
         editorDialog = null;
@@ -6838,6 +6931,25 @@ public class FileManagerModule extends HyVqModule {
     // ── 编辑器草稿：把「未保存的修改」落盘，防止杀进程丢失 ──
 
     /** 草稿目录：getFilesDir()/editor_drafts，每个标签一个文件 */
+    /** 清空所有草稿（文件 + meta）。用户选「放弃修改」时调用。 */
+    private void clearEditorDrafts() {
+        try {
+            File dir = draftDir();
+            if (dir != null) {
+                File[] fs = dir.listFiles();
+                if (fs != null) {
+                    for (File f : fs) {
+                        //noinspection ResultOfMethodCallIgnored
+                        f.delete();
+                    }
+                }
+            }
+            fmPrefs().edit().remove(EDITOR_PREF_DRAFTS).commit();
+        } catch (Throwable t) {
+            android.util.Log.w("HyEditor", "clearEditorDrafts failed", t);
+        }
+    }
+
     private File draftDir() {
         File d = new File(ctx.getFilesDir(), "editor_drafts");
         if (!d.exists() && !d.mkdirs()) return null;
@@ -6859,22 +6971,23 @@ public class FileManagerModule extends HyVqModule {
         File dir = draftDir();
         if (dir == null) return;
         try {
-            // 先清掉旧草稿，避免上次的残留被误认为本次的
-            File[] old = dir.listFiles();
-            if (old != null) {
-                for (File f : old) {
-                    //noinspection ResultOfMethodCallIgnored
-                    f.delete();
-                }
-            }
+            // ⚠️ 顺序很重要：**先写新草稿，全部写成功后再删旧的**。
+            //
+            // 旧实现先删光旧草稿再写新的 —— 若删完、写完第 1 个文件后进程被杀，
+            // 草稿就只剩 1 个，其余标签的内容全没了。等于「为了防丢反而制造丢失」。
+            //
+            // 现在每个草稿写到 draft_<i>.new，写完整批后才把 .new 改名为正式名，
+            // 最后才删不认识的残留文件。任一步崩溃，上一轮的草稿仍然完整。
             org.json.JSONArray meta = new org.json.JSONArray();
             int idx = 0;
+            java.util.List<File> written = new java.util.ArrayList<>();
             for (EditorTabState t : editorTabs) {
                 if (!t.dirty || t.content == null) continue;
-                File f = new File(dir, "draft_" + idx + ".txt");
+                File f = new File(dir, "draft_" + idx + ".new");
                 try (java.io.FileOutputStream fos = new java.io.FileOutputStream(f)) {
                     fos.write(t.content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 }
+                written.add(f);
                 org.json.JSONObject o = new org.json.JSONObject();
                 o.put("i", idx);
                 // 原文件绝对路径（root 标签记其 rootTarget）
@@ -6885,9 +6998,54 @@ public class FileManagerModule extends HyVqModule {
                 meta.put(o);
                 idx++;
             }
+            // 本批全部写完 → 改名为正式文件（同目录 rename，原子）
+            for (File f : written) {
+                String nm = f.getName();
+                File dst = new File(dir, nm.substring(0, nm.length() - 4));   // 去 ".new"
+                if (!f.renameTo(dst)) {
+                    // rename 失败（罕见：ENOSPC / 权限）。保留 .new 不删 ——
+                    // 旧实现无视返回值，后面的清理会把 .new 一并删掉，
+                    // 等于「刚写好的草稿被自己删了」。恢复端会读 .new 兜底。
+                    android.util.Log.w("HyEditor", "rename failed: " + nm);
+                }
+            }
+            // 删掉不属于本批的残留（上一轮多出来的 draft_N）
+            File[] left = dir.listFiles();
+            if (left != null) {
+                for (File f : left) {
+                    String nm = f.getName();
+                    if (nm.endsWith(".new")) {
+                        // 保留：可能是 rename 失败的兜底文件，恢复端会读它。
+                        // 只清理「本批没写过」的 .new（序号 >= idx）
+                        String stem = nm.substring(0, nm.length() - 4);
+                        boolean inBatch = false;
+                        for (int k = 0; k < idx; k++) {
+                            if (stem.equals("draft_" + k)) { inBatch = true; break; }
+                        }
+                        if (!inBatch) {
+                            //noinspection ResultOfMethodCallIgnored
+                            f.delete();
+                        }
+                        continue;
+                    }
+                    boolean keep = false;
+                    for (int k = 0; k < idx; k++) {
+                        if (nm.equals("draft_" + k + ".txt")) { keep = true; break; }
+                    }
+                    if (!keep) {
+                        //noinspection ResultOfMethodCallIgnored
+                        f.delete();
+                    }
+                }
+            }
             fmPrefs().edit().putString(EDITOR_PREF_DRAFTS, meta.toString()).commit();
+            // ⚠️ renameTo 失败必须保留 .new，不能让后面的清理把它删掉
         } catch (Throwable t) {
             android.util.Log.w("HyEditor", "saveEditorDrafts failed", t);
+            // 静默失败在这里代价很大：用户以为「关掉再打开还在」，
+            // 实际内存里的内容随 editorTabs 一起没了。必须让用户知道。
+            final String why = msgOf(t);
+            handler.post(() -> UiKit.toast(ctx, "未保存的修改备份失败：" + why));
         }
     }
 
@@ -6910,7 +7068,10 @@ public class FileManagerModule extends HyVqModule {
                 String path = o.optString("path", "");
                 if (path.isEmpty()) continue;
                 File draft = new File(dir, "draft_" + o.optInt("i", -1) + ".txt");
-                if (!draft.isFile() || draft.length() == 0) continue;
+                // ⚠️ 不能因 length()==0 跳过：0 字节草稿 = 「用户把内容全删了」，
+                // 是合法状态。跳过等于把「清空文件」这个修改当成没发生过，
+                // 用户重开会看到完整原文，以为自己的删除没生效。
+                if (!draft.isFile()) continue;
                 String text;
                 try (java.io.FileInputStream fis = new java.io.FileInputStream(draft)) {
                     java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
@@ -11485,13 +11646,25 @@ public class FileManagerModule extends HyVqModule {
             if (f.renameTo(dest)) {
                 moved = true;
             } else {
-                // 跨分区：复制 + 删源。复制失败必须中止，绝不删源，
-                // 否则「移入回收站」变成不可恢复的物理删除
-                // copy 现在保证「不完整就抛异常」（FileOps.copyRecursive
-                // 对 listFiles()==null 已改为抛 IOException）。
-                // 旧判据 dest.exists() 只能证明路径有东西，不能证明复制完整 ——
-                // 半截文件也满足，于是继续删源，回收站里留下的是残file。
-                FileOps.copy(f, dest);
+                // 跨分区：复制 + 删源。
+                //
+                // 两个必须：
+                // a) copy 不完整就抛异常（FileOps.copyRecursive 对 listFiles()==null
+                //    已改为抛 IOException），异常时**绝不执行 deleteTree** ——
+                //    旧判据 dest.exists() 只证明路径有东西，半截文件也满足。
+                // b) 异常时**必须清掉半截目标**。否则回收站里留下一个残缺的
+                //    目录/文件，且因为 writeTrashMeta 在下面才执行，
+                //    它没有 .trashmeta → loadTrash 会把它当正常条目展示，
+                //    用户「恢复」得到的是残缺数据，比直接失败更糟。
+                try {
+                    FileOps.copy(f, dest);
+                } catch (Throwable copyErr) {
+                    try {
+                        deleteTree(dest);
+                    } catch (Throwable ignored) {
+                    }
+                    throw copyErr;
+                }
                 deleteTree(f);
                 moved = true;
             }
@@ -11894,14 +12067,77 @@ public class FileManagerModule extends HyVqModule {
         return list == null ? 0 : list.length;
     }
 
+    /**
+     * 递归删除。
+     *
+     * <p><b>必须不跟随符号链接</b>。旧实现用 {@code f.isDirectory()}，
+     * 它对符号链接会跟随目标判断 —— 若存在 {@code /sdcard/a -> /sdcard}
+     * 这种环（Termux / root 操作后很常见），递归会进入自身：
+     *   ① 深度递归直到 StackOverflowError；
+     *   ② 更严重的是，溢出前它已经**真的删掉了上层的文件**。
+     *
+     * <p>现在显式判断：符号链接只删链接本身（delete 一个 symlink 不会碰目标），
+     * 不递归进去。用 {@code Files.isSymbolicLink} 而不是 canRead/isFile，
+     * 因为后者同样会跟随。</p>
+     *
+     * <p>另外把栈递归改成显式栈：深目录（几千层）不会 StackOverflow。</p>
+     */
     private void deleteTree(File f) {
-        if (f.isDirectory()) {
-            File[] ch = f.listFiles();
-            if (ch != null) {
-                for (File c : ch) deleteTree(c);
+        if (f == null) return;
+        // 非目录（含符号链接）直接删。delete() 对 symlink 只移除链接，不动目标。
+        if (!f.isDirectory() || isSymlink(f)) {
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+            return;
+        }
+        // 显式栈，避免深目录栈溢出
+        java.util.ArrayDeque<File> stack = new java.util.ArrayDeque<>();
+        java.util.ArrayList<File> dirs = new java.util.ArrayList<>();
+        stack.push(f);
+        while (!stack.isEmpty()) {
+            File cur = stack.pop();
+            if (isSymlink(cur)) {
+                //noinspection ResultOfMethodCallIgnored
+                cur.delete();
+                continue;
+            }
+            if (cur.isDirectory()) {
+                dirs.add(cur);           // 目录最后删（子项先删）
+                File[] ch = cur.listFiles();
+                if (ch != null) {
+                    for (File c : ch) stack.push(c);
+                }
+            } else {
+                //noinspection ResultOfMethodCallIgnored
+                cur.delete();
             }
         }
-        f.delete();
+        // 逆序删目录：先深后浅
+        for (int i = dirs.size() - 1; i >= 0; i--) {
+            //noinspection ResultOfMethodCallIgnored
+            dirs.get(i).delete();
+        }
+    }
+
+    /**
+     * 是否是符号链接本身（不跟随）。
+     *
+     * <p>Android 上 {@code Files.isSymbolicLink} 需要 API 26；低版本用
+     * {@code getCanonicalPath != getAbsolutePath} 兜底 —— 不完全等价
+     * （路径中任意一段是链接都会判为 true），但方向是安全的一侧（少删不多删）。</p>
+     */
+    private static boolean isSymlink(File f) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                return java.nio.file.Files.isSymbolicLink(f.toPath());
+            }
+            File p = f.getParentFile();
+            File canon = p == null ? f : new File(p.getCanonicalFile(), f.getName());
+            return !canon.getCanonicalPath().equals(canon.getAbsolutePath());
+        } catch (Throwable t) {
+            // 判定失败时保守：当作普通目录/文件处理（保持旧行为）
+            return false;
+        }
     }
 
     private ImageView toolIcon(int res, View.OnClickListener onClick) {
