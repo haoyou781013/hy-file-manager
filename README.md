@@ -1,71 +1,114 @@
-# HY 文件管理
+# HY文件管理
 
-> 一个轻量级 Android 文件管理器 · 纯 Java + XML
+Android 双窗格文件管理器。支持 11 种压缩格式的创建与解压、内置文本编辑器、媒体播放器。
 
-## 项目简介
+- **仓库**：[GitHub](https://github.com/haoyou781013/hy-file-manager) · [Gitee](https://gitee.com/haoyou781/hy-file-manager)
+- **当前版本**：1.0.0（versionCode 5）
+- **包名**：`com.aliya.hyfilemgr`
+- **最低系统**：Android 6.0（API 23）
 
-HY 文件管理（HY_FileManager）是一个极简、高效的 Android 文件管理工具，专注于
-快速浏览、搜索和操作本地文件。依赖以「能省则省」为原则，但归档、播放等能力需要专门库时按需引入（见技术栈）。
+---
 
-## 特性
+## 功能
 
-- 📁 双栏文件浏览（左目录树 + 右文件列表）
-- 🔍 文件搜索、排序、过滤
-- 📦 压缩包内部浏览（虚拟路径 `zip://`，不解压）
-- 📋 多选批量操作（复制 / 移动 / 删除 / 重命名 / 解压）
-- 📊 文件属性查看（大小 / 修改时间 / 权限 / 校验）
-- 🚀 性能优化：lazy 加载 + 异步 IO
+### 文件管理
+- 双窗格浏览，独立历史栈（前进/后退/上级）
+- 列表 / 网格两种视图，三档显示密度
+- 排序（名称自然序 / 时间 / 大小）、隐藏文件开关
+- 多选、复制、剪切、粘贴、重命名、删除
+- 回收站：删除可恢复，`.trashmeta` 记录原始路径，按天自动清理
+- 书签、最近文件
 
-## 技术栈
-
-| 项 | 值 |
+### 压缩
+| 操作 | 支持的格式 |
 |---|---|
-| 语言 | Java 17 |
-| 最低 Android | 5.0（API 21） |
-| 目标 Android | 14（API 34） |
-| UI 框架 | AndroidX · Material 3 |
-| 构建 | Gradle 8.x · AGP 8.x |
-| 依赖 | androidx(core/appcompat/material/recyclerview/activity)、media3、okhttp、zip4j、commons-compress、xz、zstd-jni、junrar |
+| 创建 | zip · 7z · tar · tar.gz · tar.bz2 · tar.xz · tar.zst · gz · bz2 · xz · zst |
+| 解压 | 上述全部 + rar / rar5 |
+| 内部浏览 | zip · 7z · rar · tar 家族（可直接查看包内结构，无需解压） |
 
-## 项目状态
+- 加密压缩（zip AES / 7z AES256），解压时自动识别并询问口令
+- 解压炸弹防护：条目数上限、单文件 1GB、总量 4GB、压缩比检测
+- 定点提取单个条目（「解到对侧」不整包解压）
 
-- **阶段**：功能完善（v0.2.0-beta.3）
-- **范围**：本地文件管理，不联网、不发布到 Play
-- **分发**：自签名 APK（GitHub Releases + Gitee Releases）
+### 其他
+- 文本编辑器：多标签、撤销/重做、正则查找替换、GBK/UTF-8 编码处理
+- 媒体播放器：基于 media3（视频 / 音频）
+- 图片查看、字体预览、APK 图标解析
+- SAF 授权目录挂载、root 路径浏览（需 root）
+- 局域网 FTP / HTTP 文件服务
 
-## 开发与构建
+---
+
+## 构建
 
 ```bash
-# 构建（命令行）
-sh tools/build.sh    # 或按 01-重建脚本 还原工具链后手动调用 gradle
-
-# 产物
-app/build/outputs/apk/release/app-release.apk
+export JAVA_HOME=/path/to/jdk17
+export ANDROID_HOME=/path/to/android-sdk
+./gradlew assembleRelease
 ```
 
-## 发布
+环境要求：
+- JDK 17
+- AGP 8.1.4 / Gradle 8.1.1
+- compileSdk 36 / minSdk 23 / targetSdk 34
+- **aarch64 设备需自建 aapt2**（官方 build-tools 的 aapt2 只有 x86-64）
 
-- 双平台：GitHub `haoyou781013/HY_FileManager` + Gitee `haoyou781/hy_filemanager`
-- 测试版 `X.Y.Z-beta.N`，正式版 `X.Y.Z`
-- 版本号唯一来源：`app/build.gradle.kts` 里的 `versionName/versionCode`
+---
 
-## 目录结构
+## 开发说明
 
-```
-HY文件管理/
-├── app/                          Android 工程
-├── docs/                         设计与变更文档
-├── tools/                        构建辅助脚本
-├── versions.json                 版本历史（发布记录）
-└── README.md                     本文件
-```
+**本项目在开发过程中使用了 AI 辅助工具**，具体包括：
+
+| 用途 | 工具 |
+|---|---|
+| 代码生成与重构 | DeepSeek 系列模型 |
+| 代码审查（8 角色并行，两轮共 16 路） | DeepSeek 系列模型 |
+| 文档整理与一致性核对 | DeepSeek 系列模型 |
+| 构建工具链 | Gradle 8.1.1 / AGP 8.1.4 / JDK 17 |
+| aapt2 | 自行编译的 aarch64 版本 2.20-android-16.0.0_r4 |
+
+所有 AI 产出的代码均经过：
+1. 编译验证（Gradle 全量构建）
+2. 真机安装验证（OnePlus PLQ110 / Android 16）
+3. 关键路径实测（压缩、解压、预览、回收站、返回键、长任务保活）
+
+代码审查采用「生成 → 独立审查 → 交叉验证」流程，审查角色按职责固定（UI / IO / 架构 / 健壮性 / 媒体 / 一致性等），
+每个角色独立阅读代码并输出带行号的问题清单，再由主流程核对后修复。
+
+---
+
+## 已知限制
+
+- **RAR 不能创建**：UnRAR 许可证禁止开发 RAR 兼容的压缩器，只能解压
+- **zstd 压缩依赖 JNI 原生库**，需真机运行（x86 模拟器/容器可能加载失败）
+- 大 `tar.gz` 首次列目录需完整扫一遍，几十 MB 的包会有可感知等待
+- 加密 rar 未接口令输入
+- `dirCache` 指纹基于父目录 mtime + 直接子项数，**外部 App 在子目录内增删文件**后
+  父目录缓存不会失效（应用内操作会正确刷新）
+
+---
 
 ## 隐私
 
-- **不上传数据**：文件管理、归档、终端均为本地操作，不向任何服务器上传文件或元数据
-- **联网能力**：仅媒体播放器使用 OkHttp 拉取网络视频流；可断网使用其余全部功能
-- **不索取多余权限**：只申请文件读写、安装包权限
+所有文件操作均在本地完成，不上传任何数据。
 
-## License
+**唯一的网络请求**是「设置 → 软件更新 → 检查更新」，向
+`raw.githubusercontent.com` 或 `gitee.com` 拉取 `versions.json`，
+请求中只带 User-Agent（含版本号），不发送设备标识或任何文件内容。
 
-私有项目，不公开分发。
+---
+
+## 版本记录
+
+见 [CHANGELOG.md](CHANGELOG.md) 与 [versions.json](versions.json)。
+
+发布规则：
+- 版本号唯一来源是 `app/build.gradle.kts` 的 `versionName` / `versionCode`
+- `versions.json` 与之一致，更新检查读 `versionCode` **最大**项
+- 正式版 `X.Y.Z`，测试版 `X.Y.Z-beta.N`
+
+---
+
+## 许可
+
+见 [LICENSE](LICENSE)。

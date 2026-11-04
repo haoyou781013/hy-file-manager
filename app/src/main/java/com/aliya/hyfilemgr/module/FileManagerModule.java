@@ -3536,7 +3536,300 @@ public class FileManagerModule extends HyVqModule {
                 "显示密度(DPI) · 列表文件密度 · 界面主题", R.drawable.ic_sliders, v -> {
                     showInSettingsDialog(this::buildAppearanceSettings);
                 });
+
+        // ── 软件更新 ──
+        addSettingsRow(box, "软件更新",
+                "当前 " + appVersionName() + " · 检查是否有新版本",
+                R.drawable.ic_refresh, v -> {
+                    showInSettingsDialog(this::showUpdatePageBody);
+                });
+
+        // ── 关于 ──
+        addSettingsRow(box, "关于",
+                "版本信息 · 开源仓库 · 开发说明", R.drawable.ic_info, v -> {
+                    showInSettingsDialog(this::showAboutPageBody);
+                });
         return box;
+    }
+
+
+    // ══════════ 软件更新 + 关于 ══════════
+
+    /**
+     * 更新清单的端点。
+     *
+     * <p><b>为什么只读 versions.json 而不读 Releases API</b>：
+     * 你说「不管多少个版本都能正常接收最新版」。Releases API 需要
+     * 分页遍历（默认 30 条/页），且「最新 Release」不一定是「最新版本」
+     * （可能有人补发了旧版 Release）。versions.json 里带 versionCode，
+     * 直接取 <b>versionCode 最大</b>的那项，与发布顺序、条数解耦。</p>
+     *
+     * <p>双源：GitHub 优先，失败回落 Gitee（国内网络更稳）。
+     * 两个地址指向同一份 versions.json 内容。</p>
+     */
+    private static final String[] UPDATE_MANIFEST_URLS = {
+            "https://raw.githubusercontent.com/haoyou781013/hy-file-manager/main/versions.json",
+            "https://gitee.com/haoyou781/hy-file-manager/raw/main/versions.json",
+    };
+
+    private static final String REPO_GITHUB = "https://github.com/haoyou781013/hy-file-manager";
+    private static final String REPO_GITEE = "https://gitee.com/haoyou781/hy-file-manager";
+
+    /** 设置页「软件更新」内容（由 showInSettingsDialog 承载） */
+    private View showUpdatePageBody() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(buildSettingsBackRow("设置"));
+
+        String cur = appVersionName();
+        int curCode = appVersionCode();
+
+        LinearLayout card = new LinearLayout(ctx);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(14), dp(14), dp(14));
+        card.setBackground(UiKit.rounded(ctx, dp(14),
+                UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow),
+                UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
+
+        TextView tvCur = new TextView(ctx);
+        tvCur.setText("当前版本\n" + cur + "  （versionCode " + curCode + "）");
+        tvCur.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tvCur.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        tvCur.setLineSpacing(dp(2), 1f);
+        card.addView(tvCur);
+
+        TextView tvState = new TextView(ctx);
+        tvState.setText("点下方按钮检查更新");
+        tvState.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tvState.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tvState.setPadding(0, dp(10), 0, 0);
+        card.addView(tvState);
+        box.addView(card);
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setOrientation(LinearLayout.HORIZONTAL);
+        btns.setGravity(Gravity.END);
+        btns.setPadding(0, dp(14), 0, 0);
+
+        final boolean[] checking = {false};
+        var checkBtnHolder = new Object() { TextView v; };
+
+        checkBtnHolder.v = textButton("检查更新", v -> {
+            if (checking[0]) return;
+            checking[0] = true;
+            tvState.setText("正在检查…");
+            new Thread(() -> {
+                UpdateInfo info = fetchLatestUpdate();
+                handler.post(() -> {
+                    if (detached) return;
+                    checking[0] = false;
+                    if (info == null) {
+                        tvState.setText("检查失败：无法连接更新服务器\n"
+                                + "可稍后重试，或直接访问项目主页手动下载");
+                        return;
+                    }
+                    if (info.code <= curCode) {
+                        tvState.setText("已是最新版本（最新 " + info.ver
+                                + " / versionCode " + info.code + "）\n"
+                                + "发布日期：" + info.date);
+                    } else {
+                        tvState.setText("发现新版本 " + info.ver
+                                + "（versionCode " + info.code + "）\n"
+                                + "发布日期：" + info.date);
+                        showUpdateDetailDialog(info);
+                    }
+                });
+            }, "HyUpdateCheck").start();
+        });
+        btns.addView(checkBtnHolder.v);
+        box.addView(btns);
+
+        return box;
+    }
+
+    /** 解析出的更新信息 */
+    private static final class UpdateInfo {
+        String ver;
+        int code;
+        String date;
+        String body;
+        String apkUrl;
+    }
+
+    private String appVersionName() {
+        try {
+            android.content.pm.PackageInfo pi = ctx.getPackageManager()
+                    .getPackageInfo(ctx.getPackageName(), 0);
+            return pi.versionName == null ? "?" : pi.versionName;
+        } catch (Throwable t) {
+            return "?";
+        }
+    }
+
+    private int appVersionCode() {
+        try {
+            android.content.pm.PackageInfo pi = ctx.getPackageManager()
+                    .getPackageInfo(ctx.getPackageName(), 0);
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                return (int) pi.getLongVersionCode();
+            }
+            //noinspection deprecation
+            return pi.versionCode;
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
+    /**
+     * 拉取 versions.json，返回 versionCode **最大**的那一项。
+     *
+     * <p>遍历整个 versions 数组取最大值，而不是取第一个 ——
+     * 数组顺序可能因手工编辑而乱，取 max 才能保证「不管多少个版本
+     * 都能拿到真正最新的那个」。</p>
+     */
+    private UpdateInfo fetchLatestUpdate() {
+        for (String url : UPDATE_MANIFEST_URLS) {
+            java.io.InputStream in = null;
+            java.net.HttpURLConnection conn = null;
+            try {
+                java.net.URL u = new java.net.URL(url);
+                conn = (java.net.HttpURLConnection) u.openConnection();
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(15000);
+                conn.setRequestProperty("Accept", "application/json");
+                conn.setRequestProperty("User-Agent", "HYFileManager/" + appVersionName());
+                conn.setInstanceFollowRedirects(true);
+                int code = conn.getResponseCode();
+                if (code != 200) continue;
+                in = conn.getInputStream();
+                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+                String json = new String(bos.toByteArray(),
+                        java.nio.charset.StandardCharsets.UTF_8);
+
+                org.json.JSONObject root = new org.json.JSONObject(json);
+                org.json.JSONArray arr = root.optJSONArray("versions");
+                if (arr == null || arr.length() == 0) continue;
+
+                UpdateInfo best = null;
+                for (int i = 0; i < arr.length(); i++) {
+                    org.json.JSONObject o = arr.optJSONObject(i);
+                    if (o == null) continue;
+                    UpdateInfo it = new UpdateInfo();
+                    it.ver = o.optString("ver", "");
+                    it.code = o.optInt("versionCode", 0);
+                    it.date = o.optString("publishedAt", "");
+                    it.body = o.optString("body", "");
+                    it.apkUrl = o.optString("apkUrl", "");
+                    if (best == null || it.code > best.code) best = it;
+                }
+                if (best != null && best.code > 0) return best;
+            } catch (Throwable t) {
+                android.util.Log.w("HyUpdate", "拉取失败 " + url, t);
+            } finally {
+                if (in != null) try { in.close(); } catch (Throwable ignored) { }
+                if (conn != null) try { conn.disconnect(); } catch (Throwable ignored) { }
+            }
+        }
+        return null;
+    }
+
+    /** 有新版本时的详情弹窗 */
+    private void showUpdateDetailDialog(UpdateInfo info) {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "发现新版本 " + info.ver));
+
+        TextView tv = new TextView(ctx);
+        StringBuilder sb = new StringBuilder();
+        sb.append("版本：").append(info.ver).append('\n');
+        sb.append("versionCode：").append(info.code).append('\n');
+        sb.append("发布：" ).append(info.date).append('\n');
+        if (!info.body.isEmpty()) {
+            sb.append('\n').append(info.body);
+        }
+        tv.setText(sb.toString());
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tv.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        tv.setLineSpacing(dp(2), 1f);
+        tv.setTextIsSelectable(true);
+        box.addView(tv);
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        btns.addView(textButton("稍后", v -> UiKit.dismissWithAnim(d)));
+        btns.addView(textButton("去下载", v -> {
+            UiKit.dismissWithAnim(d);
+            openUrl(info.apkUrl != null && !info.apkUrl.isEmpty()
+                    ? info.apkUrl : REPO_GITHUB + "/releases");
+        }));
+        box.addView(btns);
+        d.show();
+    }
+
+    /** 关于页内容（由 showInSettingsDialog 承载） */
+    private View showAboutPageBody() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(buildSettingsBackRow("设置"));
+
+        TextView title = new TextView(ctx);
+        title.setText("HY文件管理");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        title.setPadding(dp(4), dp(8), dp(4), dp(2));
+        box.addView(title);
+
+        addInfoRow(box, "版本", appVersionName() + "（" + appVersionCode() + "）", true, null);
+        addInfoRow(box, "包名", ctx.getPackageName(), true, null);
+        addInfoRow(box, "最低系统", "Android 6.0（API 23）", true, null);
+
+        box.addView(UiKit.sectionHeader(ctx, "开源仓库"));
+        addInfoRow(box, "GitHub", REPO_GITHUB, true, v -> openUrl(REPO_GITHUB));
+        addInfoRow(box, "Gitee", REPO_GITEE, true, v -> openUrl(REPO_GITEE));
+
+        box.addView(UiKit.sectionHeader(ctx, "关于本项目"));
+        TextView desc = new TextView(ctx);
+        desc.setText(
+                "HY文件管理是一个 Android 双窗格文件管理器，"
+                + "支持 11 种压缩格式的创建与解压、内置文本编辑器和媒体播放器。\n\n"
+                + "开发说明：\n"
+                + "本项目在开发过程中使用了 AI 辅助工具进行代码编写、"
+                + "审查与文档整理，所有产出均经过人工核对与真机验证。"
+                + "具体使用的工具包括 DeepSeek 系列模型（代码生成与审查）、"
+                + "Gradle 8.1.1 / AGP 8.1.4 构建工具链、"
+                + "以及自建的 aarch64 版 aapt2。\n\n"
+                + "开源许可：详见仓库内 LICENSE 文件。");
+        desc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        desc.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        desc.setLineSpacing(dp(3), 1f);
+        desc.setPadding(dp(8), dp(8), dp(8), dp(8));
+        desc.setTextIsSelectable(true);
+        box.addView(desc);
+
+        return box;
+    }
+
+    /** 用系统浏览器打开链接 */
+    private void openUrl(String url) {
+        try {
+            android.content.Intent i = new android.content.Intent(
+                    android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(url));
+            i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(i);
+        } catch (Throwable t) {
+            UiKit.alert(ctx, "无法打开链接：" + msgOf(t) + "\n" + url);
+        }
     }
 
     /** 设置页对话框引用（供子页返回时复用） */
