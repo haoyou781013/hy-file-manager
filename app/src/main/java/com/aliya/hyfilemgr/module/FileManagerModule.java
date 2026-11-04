@@ -201,6 +201,20 @@ public class FileManagerModule extends HyVqModule {
     private static final String EDITOR_PREF_TABS = "editor_tabs";
     /** 编辑器草稿的元数据（内容本身存在 files/editor_drafts/ 下） */
     private static final String EDITOR_PREF_DRAFTS = "editor_drafts_meta";
+    /**
+     * 内置编辑器能打开的单文件大小上限。
+     *
+     * <p><b>必须只有这一处定义</b>。此前存在三套互相矛盾的判据：
+     *   openTextEditorInternal  —— >2MB 硬拒
+     *   tryOpenInEditor         —— >12MB 才提示「可能无法加载」
+     *   openInEditorByName      —— 完全不判
+     * 结果是从「打开方式」菜单点进来会先看到「可能无法加载」，
+     * 真进去又被硬拒；换一个入口则可能直接 OOM。
+     *
+     * <p>取 2MB 的理由：编辑器是全文读进内存 + 每次撤销存整份快照，
+     * 再大就不可靠。要读大文件请用外部编辑器。</p>
+     */
+    private static final long MAX_EDIT_BYTES = 2L * 1024 * 1024;
     /** 编辑器设置持久化 key：字号 / 等宽 / Tab宽度 / 主题（0跟随系统 1浅色 2深色） */
     private static final String EDITOR_PREF_FONT_SIZE = "editor_font_size";
     private static final String EDITOR_PREF_MONO = "editor_mono";
@@ -6428,8 +6442,10 @@ public class FileManagerModule extends HyVqModule {
             UiKit.alert(ctx, "文件不存在");
             return;
         }
-        if (f.length() > 2 * 1024 * 1024) {
-            UiKit.toast(ctx, "文件过大（>2MB），请用其他应用打开");
+        if (f.length() > MAX_EDIT_BYTES) {
+            UiKit.alert(ctx, "文件过大（" + (f.length() / 1024 / 1024)
+                    + "MB，上限 " + (MAX_EDIT_BYTES / 1024 / 1024)
+                    + "MB），请用其他应用打开");
             return;
         }
         // 已在标签列表 → 直接切换激活
@@ -6954,7 +6970,7 @@ public class FileManagerModule extends HyVqModule {
                 boolean isRoot = p.startsWith("root://");
                 String real = isRoot ? p.substring("root://".length()) : p;
                 File f = new File(real);
-                if (!f.isFile() || f.length() > 2 * 1024 * 1024) continue;
+                if (!f.isFile() || f.length() > MAX_EDIT_BYTES) continue;
                 String[] rc = readTextContent(f);
                 if (rc == null) continue;
                 // root 标签的 file 指向缓存副本，rootTarget 记真实路径；
@@ -8059,7 +8075,7 @@ public class FileManagerModule extends HyVqModule {
             return;
         }
         closeEditorDrawer();
-        if (f.length() <= 2 * 1024 * 1024 && isTextFile(f.getName())) {
+        if (f.length() <= MAX_EDIT_BYTES && isTextFile(f.getName())) {
             openTextEditor(f);
         } else {
             openFile(f);
@@ -8443,8 +8459,11 @@ public class FileManagerModule extends HyVqModule {
         if (!f.exists()) return "文件不存在或无法访问";
         if (!f.canRead()) return "没有读取该文件的权限";
         if (f.isDirectory()) return "这是一个文件夹，不能作为文本编辑";
-        if (f.length() > 12L * 1024 * 1024) {
-            return "文件过大（" + (f.length() / 1024 / 1024) + "MB），编辑器可能无法加载";
+        // 与 openTextEditorInternal 用同一个上限。旧值 12MB 只给「可能无法加载」的
+        // 提示，真进去还是被 2MB 硬拒 —— 用户被误导一次。
+        if (f.length() > MAX_EDIT_BYTES) {
+            return "文件过大（" + (f.length() / 1024 / 1024) + "MB，上限 "
+                    + (MAX_EDIT_BYTES / 1024 / 1024) + "MB），请用其他应用打开";
         }
         openInEditorByName(pathOrUri, name, false);
         return null;
@@ -11852,624 +11871,13 @@ public class FileManagerModule extends HyVqModule {
     }
 
     // ── 网络模式：极简 FTP 服务器（左上角入口；参考 Ghost Commander 网络能力方向；
-    //    单连接串行、PASV 数据通道，支持浏览/下载/上传/删除，
-    //    登录：用户名 hyvq + 每次启动随机生成的一次性密码） ──
-
-    private static java.net.ServerSocket ftpCtrlSocket = null;
-    private static java.net.ServerSocket ftpDataSocket = null;
-    private static volatile boolean ftpRunning = false;
-    private static final File FTP_ROOT = Environment.getExternalStorageDirectory();
-    private static final int FTP_PORT = 2121;
-    /** FTP 登录凭据：用户名固定，密码每次启动随机生成（6 位数字），仅当前会话有效。
-     *  ⭐ 安全修复：原实现 USER/PASS 无条件返回 230，同一局域网任何设备都能免密读写全盘。 */
-    private static final String FTP_USER = "hyvq";
-    private static volatile String ftpPass = "";
-
-    private void stopFtpServer() {
-        ftpRunning = false;
-        ftpPass = "";   // 清空一次性密码，重新启动时会生成新的
-        try {
-            if (ftpCtrlSocket != null) ftpCtrlSocket.close();
-        } catch (Throwable ignored) {
-        }
-        ftpCtrlSocket = null;
-        UiKit.toast(ctx, "FTP 服务器已停止");
-    }
-
-    /**
-     * FTP 运行信息弹窗 —— 持续可见，替代原来一闪而过的 toast。
-     * <p>原实现用 Toast 展示「地址 + 用户名 + 密码」，长文本在 Toast 里几秒即消失，
-     * 用户来不及抄写或看清（尤其密码），因此改为常驻弹窗：
-     * 地址用等宽大字突出、可长按选中，并提供一键复制与「停止服务器」。</p>
-     */
-    private void showFtpRunningDialog(final java.util.List<String> ips) {
-        final int onSurface = UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface);
-        final int onVar = UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant);
-        final int primary = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
-        final int container = UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHighest);
-        final String mainUrl = "ftp://" + ips.get(0) + ":" + FTP_PORT;
-
-        LinearLayout box = new LinearLayout(ctx);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(UiKit.sectionHeader(ctx, "FTP 服务器运行中"));
-
-        // ── 主地址：等宽大字，长按可选中 ──
-        TextView tvUrl = new TextView(ctx);
-        tvUrl.setText(mainUrl);
-        tvUrl.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        tvUrl.setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD);
-        tvUrl.setTextColor(primary);
-        tvUrl.setTextIsSelectable(true);
-        tvUrl.setPadding(dp(2), dp(10), dp(2), dp(2));
-        box.addView(tvUrl);
-
-        TextView tvHint = new TextView(ctx);
-        tvHint.setText("电脑端：文件资源管理器地址栏粘贴（浏览器不支持 ftp://）");
-        tvHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        tvHint.setTextColor(onVar);
-        tvHint.setPadding(dp(2), 0, dp(2), dp(10));
-        box.addView(tvHint);
-
-        // ── 备用地址（多网卡时列出，便于挨个试）──
-        if (ips.size() > 1) {
-            StringBuilder alts = new StringBuilder("备用地址（主地址连不上时换这个）");
-            for (int i = 1; i < ips.size(); i++) {
-                alts.append("\n    ftp://").append(ips.get(i)).append(":").append(FTP_PORT);
-            }
-            TextView tvAlt = new TextView(ctx);
-            tvAlt.setText(alts.toString());
-            tvAlt.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            tvAlt.setTypeface(android.graphics.Typeface.MONOSPACE);
-            tvAlt.setTextColor(onVar);
-            tvAlt.setTextIsSelectable(true);
-            tvAlt.setPadding(dp(2), 0, dp(2), dp(10));
-            box.addView(tvAlt);
-        }
-
-        // ── 登录凭据卡 ──
-        LinearLayout cred = new LinearLayout(ctx);
-        cred.setOrientation(LinearLayout.VERTICAL);
-        cred.setPadding(dp(12), dp(10), dp(12), dp(10));
-        cred.setBackground(UiKit.rounded(ctx, 14, container, 0));
-        TextView tvCred = new TextView(ctx);
-        tvCred.setText("用户名：" + FTP_USER + "\n密　码：" + ftpPass);
-        tvCred.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        tvCred.setTypeface(android.graphics.Typeface.MONOSPACE);
-        tvCred.setTextColor(onSurface);
-        tvCred.setTextIsSelectable(true);
-        cred.addView(tvCred);
-        box.addView(cred);
-
-        TextView tvNote = new TextView(ctx);
-        tvNote.setText("· 密码为本次启动临时生成，停止服务器后失效\n"
-                + "· 电脑端弹登录框时填入上面的用户名与密码\n"
-                + "· 用完请点下方「停止服务器」，避免长期暴露在局域网");
-        tvNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        tvNote.setTextColor(onVar);
-        tvNote.setLineSpacing(dp(2), 1.2f);
-        tvNote.setPadding(dp(2), dp(10), dp(2), dp(2));
-        box.addView(tvNote);
-
-        // ── 按钮 ──
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setOrientation(LinearLayout.HORIZONTAL);
-        btns.setGravity(Gravity.END);
-        box.addView(btns);
-
-        final android.app.Dialog dialog = UiKit.glassDialog(ctx, box);
-        btns.addView(textButton("复制地址", v -> {
-            copyToClipboard("FTP 地址", mainUrl);
-            UiKit.toast(ctx, "地址已复制");
-        }));
-        btns.addView(textButton("复制密码", v -> {
-            copyToClipboard("FTP 密码", ftpPass);
-            UiKit.toast(ctx, "密码已复制");
-        }));
-        btns.addView(textButton("停止服务器", v -> {
-            UiKit.dismissWithAnim(dialog);
-            stopFtpServer();
-        }));
-        btns.addView(textButton("关闭", v -> UiKit.dismissWithAnim(dialog)));
-        dialog.show();
-    }
-
-    /** 写入系统剪贴板（供 FTP 地址/密码一键复制） */
-    private void copyToClipboard(String label, String text) {
-        try {
-            android.content.ClipboardManager cm = (android.content.ClipboardManager)
-                    ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
-            if (cm != null) {
-                cm.setPrimaryClip(android.content.ClipData.newPlainText(label, text));
-            }
-        } catch (Throwable ignored) {
-        }
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    //  HTTP 文件服务（浏览器原生支持，手机/电脑都不必安装客户端）
-    //  ⭐ 为什么加它：Chrome/Firefox/Edge 及所有国产浏览器已在 2021 年前后
-    //     彻底移除 FTP 支持，ftp:// 在浏览器里等于打不开；而 http:// 人人能用。
-    //  实现：手写极简 HTTP/1.1（零第三方依赖，与 FTP 同样自给自足）
-    //  安全：Basic 认证（一次性随机密码）+ 路径穿越防护 + 限定在存储根内
-    // ══════════════════════════════════════════════════════════════
-
-    private static java.net.ServerSocket httpSocket = null;
-    private static volatile boolean httpRunning = false;
-    private static final int HTTP_PORT = 8080;
-    private static volatile String httpPass = "";
-
-    private void stopHttpServer() {
-        httpRunning = false;
-        httpPass = "";
-        try {
-            if (httpSocket != null) httpSocket.close();
-        } catch (Throwable ignored) {
-        }
-        httpSocket = null;
-        UiKit.toast(ctx, "HTTP 服务已停止");
-    }
-
-    /** 极简 HTTP 处理：解析请求头 → Basic 认证 → 路由（目录列表 / 文件下载） */
-    private void handleHttp(final Socket s) {
-        java.io.OutputStream out = null;
-        try {
-            s.setSoTimeout(15000);
-            java.io.InputStream rawIn = s.getInputStream();
-            out = s.getOutputStream();
-
-            // 只读到头部结束 \r\n\r\n（GET 无 body）
-            java.io.ByteArrayOutputStream headBuf = new java.io.ByteArrayOutputStream();
-            int state = 0, b, guard = 0;
-            while ((b = rawIn.read()) != -1 && guard++ < 16384) {
-                headBuf.write(b);
-                if ((state == 0 || state == 2) && b == '\r') state++;
-                else if ((state == 1 || state == 3) && b == '\n') state++;
-                else state = (b == '\r') ? 1 : 0;
-                if (state == 4) break;
-            }
-            String head = new String(headBuf.toByteArray(), "ISO-8859-1");
-            String[] lines = head.split("\r\n");
-            if (lines.length == 0 || lines[0].isEmpty()) {
-                sendHttpError(out, 400, "Bad Request");
-                return;
-            }
-            String[] req = lines[0].split(" ");
-            if (req.length < 2) {
-                sendHttpError(out, 400, "Bad Request");
-                return;
-            }
-            String method = req[0], target = req[1];
-            if (!"GET".equals(method) && !"HEAD".equals(method)) {
-                sendHttpError(out, 405, "Method Not Allowed");
-                return;
-            }
-
-            // ── Basic 认证 ──
-            String auth = null;
-            for (int i = 1; i < lines.length; i++) {
-                if (lines[i].regionMatches(true, 0, "Authorization:", 0, 14)) {
-                    auth = lines[i].substring(14).trim();
-                    break;
-                }
-            }
-            boolean ok = false;
-            if (auth != null && auth.regionMatches(true, 0, "Basic ", 0, 6)) {
-                try {
-                    String dec = new String(android.util.Base64.decode(
-                            auth.substring(6).trim(), android.util.Base64.DEFAULT), "UTF-8");
-                    String pw = dec.contains(":") ? dec.substring(dec.indexOf(':') + 1) : "";
-                    ok = !httpPass.isEmpty() && pw.equals(httpPass);
-                } catch (Throwable ignored) {
-                }
-            }
-            if (!ok) {
-                String resp = "HTTP/1.1 401 Unauthorized\r\n"
-                        + "WWW-Authenticate: Basic realm=\"HY_VQ\", charset=\"UTF-8\"\r\n"
-                        + "Content-Type: text/html; charset=utf-8\r\n"
-                        + "Connection: close\r\nContent-Length: 0\r\n\r\n";
-                out.write(resp.getBytes("ISO-8859-1"));
-                out.flush();
-                return;
-            }
-
-            // ── 解析路径（去查询串 + URL 解码）──
-            String path = target;
-            int q = path.indexOf('?');
-            if (q >= 0) path = path.substring(0, q);
-            try {
-                path = java.net.URLDecoder.decode(path, "UTF-8");
-            } catch (Throwable ignored) {
-            }
-
-            File f = resolveHttpPath(path);
-            if (f == null) {
-                sendHttpError(out, 403, "Forbidden");
-                return;
-            }
-
-            if (f.isDirectory()) {
-                byte[] body = renderDirHtml(f, path).getBytes("UTF-8");
-                String resp = "HTTP/1.1 200 OK\r\n"
-                        + "Content-Type: text/html; charset=utf-8\r\n"
-                        + "Cache-Control: no-store\r\n"
-                        + "Connection: close\r\n"
-                        + "Content-Length: " + body.length + "\r\n\r\n";
-                out.write(resp.getBytes("ISO-8859-1"));
-                if (!"HEAD".equals(method)) out.write(body);
-                out.flush();
-            } else if (f.isFile()) {
-                sendHttpFile(out, f, "HEAD".equals(method));
-            } else {
-                sendHttpError(out, 404, "Not Found");
-            }
-        } catch (Throwable ignored) {
-        } finally {
-            try {
-                if (out != null) out.flush();
-            } catch (Throwable ignored) {
-            }
-            try {
-                s.close();
-            } catch (Throwable ignored) {
-            }
-        }
-    }
-
-    /** 把请求路径解析成 File，并确保不越出存储根（防目录穿越） */
-    private static File resolveHttpPath(String path) {
-        try {
-            String root = FTP_ROOT.getAbsolutePath();
-            String rel = path == null ? "/" : path;
-            if (!rel.startsWith("/")) rel = "/" + rel;
-            StringBuilder sb = new StringBuilder();
-            for (String seg : rel.split("/")) {
-                if (seg.isEmpty() || ".".equals(seg)) continue;
-                if ("..".equals(seg)) return null;   // 任何 ".." 直接拒绝
-                sb.append('/').append(seg);
-            }
-            File f = new File(root + sb);
-            return f.getAbsolutePath().startsWith(root) ? f : null;
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-    /** 下载/预览文件（流式，不整体读入内存） */
-    private void sendHttpFile(java.io.OutputStream out, File f, boolean headOnly) {
-        java.io.FileInputStream in = null;
-        try {
-            String resp = "HTTP/1.1 200 OK\r\n"
-                    + "Content-Type: " + guessHttpMime(f.getName()) + "\r\n"
-                    + "Content-Length: " + f.length() + "\r\n"
-                    + "Content-Disposition: inline; filename*=UTF-8''"
-                    + urlEnc(f.getName()) + "\r\n"
-                    + "Connection: close\r\n\r\n";
-            out.write(resp.getBytes("ISO-8859-1"));
-            if (!headOnly) {
-                in = new java.io.FileInputStream(f);
-                byte[] buf = new byte[65536];
-                int n;
-                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            }
-            out.flush();
-        } catch (Throwable ignored) {
-        } finally {
-            try {
-                if (in != null) in.close();
-            } catch (Throwable ignored) {
-            }
-        }
-    }
-
-    private void sendHttpError(java.io.OutputStream out, int code, String msg) {
-        try {
-            byte[] body = ("<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>"
-                    + "<body style=\"font-family:sans-serif;background:#FAFCFF;color:#1A1C1E;"
-                    + "padding:40px\"><h2>" + code + " " + msg + "</h2></body></html>")
-                    .getBytes("UTF-8");
-            String resp = "HTTP/1.1 " + code + " " + msg + "\r\n"
-                    + "Content-Type: text/html; charset=utf-8\r\n"
-                    + "Connection: close\r\nContent-Length: " + body.length + "\r\n\r\n";
-            out.write(resp.getBytes("ISO-8859-1"));
-            out.write(body);
-            out.flush();
-        } catch (Throwable ignored) {
-        }
-    }
-
-    /** 极简 MIME 猜测（浏览器预览图片/文本/媒体需要） */
-    private static String guessHttpMime(String name) {
-        String n = name.toLowerCase(Locale.US);
-        int dot = n.lastIndexOf('.');
-        String e = dot >= 0 ? n.substring(dot + 1) : "";
-        switch (e) {
-            case "html": case "htm": return "text/html; charset=utf-8";
-            case "txt": case "log": case "md": case "json": case "xml": case "java":
-            case "js": case "css": case "ini": case "conf": return "text/plain; charset=utf-8";
-            case "jpg": case "jpeg": return "image/jpeg";
-            case "png": return "image/png";
-            case "gif": return "image/gif";
-            case "webp": return "image/webp";
-            case "bmp": return "image/bmp";
-            case "svg": return "image/svg+xml";
-            case "mp4": return "video/mp4";
-            case "mp3": return "audio/mpeg";
-            case "m4a": return "audio/mp4";
-            case "wav": return "audio/wav";
-            case "pdf": return "application/pdf";
-            case "apk": return "application/vnd.android.package-archive";
-            case "zip": return "application/zip";
-            default: return "application/octet-stream";
-        }
-    }
-
-    /** 目录列表页（浅蓝 Material 风格，与 App 配色一致） */
-    private String renderDirHtml(File dir, String reqPath) {
-        String base = reqPath == null || reqPath.isEmpty() ? "/" : reqPath;
-        if (!base.endsWith("/")) base = base + "/";
-        StringBuilder sb = new StringBuilder(8192);
-        sb.append("<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">")
-          .append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
-          .append("<title>HY_VQ · ").append(escHtml(dir.getName().isEmpty() ? "存储" : dir.getName()))
-          .append("</title><style>")
-          .append("body{margin:0;font-family:-apple-system,'Noto Sans CJK SC',sans-serif;")
-          .append("background:#FAFCFF;color:#1A1C1E;padding:20px}")
-          .append("h1{font-size:17px;margin:0 0 4px;color:#42A5F5;word-break:break-all}")
-          .append(".sub{font-size:12px;color:#43525E;margin-bottom:16px}")
-          .append("a{text-decoration:none;color:inherit}")
-          .append(".row{display:flex;align-items:center;padding:11px 14px;margin-bottom:8px;")
-          .append("background:#F1F8FD;border:1px solid #DCE9F5;border-radius:12px}")
-          .append(".row:hover{background:#E8F2FB}")
-          .append(".ic{width:30px;font-size:17px}")
-          .append(".nm{flex:1;font-size:14px;word-break:break-all}")
-          .append(".sz{font-size:12px;color:#43525E;margin-left:10px;white-space:nowrap}")
-          .append(".foot{margin-top:20px;font-size:11px;color:#79747E;text-align:center}")
-          .append("</style></head><body>");
-        sb.append("<h1>").append(escHtml(dir.getAbsolutePath())).append("</h1>");
-        sb.append("<div class=\"sub\">HY_VQ 文件服务 · 点文件夹进入，点文件下载或预览</div>");
-
-        if (!dir.getAbsolutePath().equals(FTP_ROOT.getAbsolutePath())) {
-            String parent = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
-            int slash = parent.lastIndexOf('/');
-            parent = slash <= 0 ? "/" : parent.substring(0, slash + 1);
-            sb.append("<a href=\"").append(escAttr(parent)).append("\"><div class=\"row\">")
-              .append("<span class=\"ic\">⬆️</span><span class=\"nm\">返回上级</span></div></a>");
-        }
-
-        File[] fs = dir.listFiles();
-        if (fs != null) {
-            java.util.Arrays.sort(fs, (a, b) -> {
-                if (a.isDirectory() != b.isDirectory()) return a.isDirectory() ? -1 : 1;
-                return a.getName().compareToIgnoreCase(b.getName());
-            });
-            for (File f : fs) {
-                if (f.getName().startsWith(".")) continue;
-                String name = f.getName();
-                String href = base + urlEnc(name)
-                        + (f.isDirectory() ? "/" : "");
-                sb.append("<a href=\"").append(escAttr(href)).append("\"><div class=\"row\">")
-                  .append("<span class=\"ic\">").append(f.isDirectory() ? "📁" : iconFor(name)).append("</span>")
-                  .append("<span class=\"nm\">").append(escHtml(name)).append("</span>")
-                  .append("<span class=\"sz\">").append(f.isDirectory() ? "" : humanSize(f.length()))
-                  .append("</span></div></a>");
-            }
-        }
-        sb.append("<div class=\"foot\">HY_VQ · 仅供局域网内使用</div></body></html>");
-        return sb.toString();
-    }
-
-    private static String iconFor(String name) {
-        String n = name.toLowerCase(Locale.US);
-        if (n.endsWith(".apk")) return "📦";
-        if (n.matches(".*\\.(jpg|jpeg|png|gif|webp|bmp|svg)$")) return "🖼️";
-        if (n.matches(".*\\.(mp4|mkv|avi|mov|webm)$")) return "🎬";
-        if (n.matches(".*\\.(mp3|m4a|wav|flac|aac|ogg)$")) return "🎵";
-        if (n.matches(".*\\.(zip|rar|7z|tar|gz)$")) return "🗜️";
-        if (n.matches(".*\\.(txt|md|log|json|xml|java|js|css|html)$")) return "📄";
-        return "📎";
-    }
-
+    /** 人类可读的字节数（B/KB/MB/GB）。原在 FTP 块内，删网络功能后仍被占用率条使用 */
     private static String humanSize(long b) {
         if (b < 1024) return b + " B";
         if (b < 1048576) return String.format(Locale.US, "%.1f KB", b / 1024.0);
         if (b < 1073741824L) return String.format(Locale.US, "%.1f MB", b / 1048576.0);
         return String.format(Locale.US, "%.2f GB", b / 1073741824.0);
     }
-
-    /** URL 编码（把受检异常收敛掉，避免每个调用点都写 try-catch） */
-    private static String urlEnc(String s) {
-        try {
-            return java.net.URLEncoder.encode(s == null ? "" : s, "UTF-8").replace("+", "%20");
-        } catch (Throwable t) {
-            return s == null ? "" : s;
-        }
-    }
-
-    private static String escHtml(String s) {
-        return s == null ? "" : s.replace("&", "&amp;").replace("<", "&lt;")
-                .replace(">", "&gt;").replace("\"", "&quot;");
-    }
-
-    private static String escAttr(String s) {
-        return escHtml(s).replace("'", "&#39;");
-    }
-
-    /** HTTP 运行信息弹窗（与 FTP 弹窗同风格；浏览器可直接打开，无需客户端） */
-    private void showHttpRunningDialog(final java.util.List<String> ips) {
-        final int onSurface = UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface);
-        final int onVar = UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant);
-        final int primary = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
-        final int container = UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHighest);
-        final String mainUrl = "http://" + ips.get(0) + ":" + HTTP_PORT;
-
-        LinearLayout box = new LinearLayout(ctx);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(UiKit.sectionHeader(ctx, "HTTP 文件服务运行中"));
-
-        TextView tvUrl = new TextView(ctx);
-        tvUrl.setText(mainUrl);
-        tvUrl.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        tvUrl.setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD);
-        tvUrl.setTextColor(primary);
-        tvUrl.setTextIsSelectable(true);
-        tvUrl.setPadding(dp(2), dp(10), dp(2), dp(2));
-        box.addView(tvUrl);
-
-        TextView tvHint = new TextView(ctx);
-        tvHint.setText("手机或电脑的浏览器直接打开（无需安装任何客户端）");
-        tvHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        tvHint.setTextColor(onVar);
-        tvHint.setPadding(dp(2), 0, dp(2), dp(10));
-        box.addView(tvHint);
-
-        if (ips.size() > 1) {
-            StringBuilder alts = new StringBuilder("备用地址（主地址连不上时换这个）");
-            for (int i = 1; i < ips.size(); i++) {
-                alts.append("\n    http://").append(ips.get(i)).append(":").append(HTTP_PORT);
-            }
-            TextView tvAlt = new TextView(ctx);
-            tvAlt.setText(alts.toString());
-            tvAlt.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            tvAlt.setTypeface(android.graphics.Typeface.MONOSPACE);
-            tvAlt.setTextColor(onVar);
-            tvAlt.setTextIsSelectable(true);
-            tvAlt.setPadding(dp(2), 0, dp(2), dp(10));
-            box.addView(tvAlt);
-        }
-
-        LinearLayout cred = new LinearLayout(ctx);
-        cred.setOrientation(LinearLayout.VERTICAL);
-        cred.setPadding(dp(12), dp(10), dp(12), dp(10));
-        cred.setBackground(UiKit.rounded(ctx, 14, container, 0));
-        TextView tvCred = new TextView(ctx);
-        tvCred.setText("用户名：" + FTP_USER + "\n密　码：" + httpPass);
-        tvCred.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        tvCred.setTypeface(android.graphics.Typeface.MONOSPACE);
-        tvCred.setTextColor(onSurface);
-        tvCred.setTextIsSelectable(true);
-        cred.addView(tvCred);
-        box.addView(cred);
-
-        TextView tvNote = new TextView(ctx);
-        tvNote.setText("· 浏览器首次打开会弹出登录框，填入上面的用户名与密码\n"
-                + "· 可浏览目录、下载文件；图片与文本会直接在浏览器里打开\n"
-                + "· 密码为本次启动临时生成，停止服务后失效\n"
-                + "· 用完请点「停止服务」，避免长期暴露在局域网");
-        tvNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        tvNote.setTextColor(onVar);
-        tvNote.setLineSpacing(dp(2), 1.2f);
-        tvNote.setPadding(dp(2), dp(10), dp(2), dp(2));
-        box.addView(tvNote);
-
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setOrientation(LinearLayout.HORIZONTAL);
-        btns.setGravity(Gravity.END);
-        box.addView(btns);
-
-        final android.app.Dialog dialog = UiKit.glassDialog(ctx, box);
-        btns.addView(textButton("复制网址", v -> {
-            copyToClipboard("HTTP 地址", mainUrl);
-            UiKit.toast(ctx, "网址已复制");
-        }));
-        btns.addView(textButton("复制密码", v -> {
-            copyToClipboard("HTTP 密码", httpPass);
-            UiKit.toast(ctx, "密码已复制");
-        }));
-        btns.addView(textButton("停止服务", v -> {
-            UiKit.dismissWithAnim(dialog);
-            stopHttpServer();
-        }));
-        btns.addView(textButton("关闭", v -> UiKit.dismissWithAnim(dialog)));
-        dialog.show();
-    }
-
-
-    /** 虚拟/隧道类接口名关键字：这些接口即使 isUp() 也不该作为对外地址，
-     *  否则会给出电脑无法访问的 IP（如 ColorOS 的 vgate0 虚拟网关）。 */
-    private static final String[] VIRTUAL_IF_KEYWORDS = {
-            "vgate", "dummy", "ovnet", "tun", "tap", "ifb", "gre", "gretap",
-            "sit", "ip6", "ip_vti", "erspan", "p2p", "rmnet_ipa", "wifi-aware", "lo"};
-
-    private static boolean isVirtualIface(String name) {
-        if (name == null) return true;
-        String n = name.toLowerCase(Locale.getDefault());
-        for (String k : VIRTUAL_IF_KEYWORDS) {
-            if (n.contains(k)) return true;
-        }
-        return false;
-    }
-
-    /** 收集本机可供局域网访问的 IPv4（按可达性排序）。
-     *  ⭐ 修复：原实现「返回第一个非回环 IPv4」在多网卡设备上会选中虚拟网卡
-     *  （实测 vgate0=172.30.220.67 排在 wlan0 之前且状态非 down），
-     *  导致提示里给出电脑无法访问的地址 → 表现为「FTP 连不上」。
-     *  现按 WiFi → 热点 → 移动数据 → 其它 的优先级返回，并排除虚拟接口。 */
-    private static java.util.List<String> localIps() {
-        java.util.LinkedHashMap<String, String> wifi = new java.util.LinkedHashMap<>();
-        java.util.LinkedHashMap<String, String> ap = new java.util.LinkedHashMap<>();
-        java.util.LinkedHashMap<String, String> cell = new java.util.LinkedHashMap<>();
-        java.util.LinkedHashMap<String, String> other = new java.util.LinkedHashMap<>();
-        try {
-            for (java.util.Enumeration<java.net.NetworkInterface> en =
-                 java.net.NetworkInterface.getNetworkInterfaces(); en.hasMoreElements(); ) {
-                java.net.NetworkInterface ni = en.nextElement();
-                String nm = ni.getName();
-                if (nm == null || isVirtualIface(nm)) continue;
-                if (!ni.isUp()) continue;
-                for (java.util.Enumeration<java.net.InetAddress> ae = ni.getInetAddresses();
-                     ae.hasMoreElements(); ) {
-                    java.net.InetAddress ia = ae.nextElement();
-                    if (!(ia instanceof java.net.Inet4Address) || ia.isLoopbackAddress()) continue;
-                    String ip = ia.getHostAddress();
-                    if (ip == null || ip.startsWith("127.") || ip.startsWith("169.254.")) continue;
-                    String n = nm.toLowerCase(Locale.getDefault());
-                    if (n.startsWith("wlan")) wifi.put(ip, nm);
-                    else if (n.startsWith("ap") || n.startsWith("swlan") || n.contains("softap")) ap.put(ip, nm);
-                    else if (n.startsWith("rmnet") || n.startsWith("r_rmnet")) cell.put(ip, nm);
-                    else other.put(ip, nm);
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-        java.util.List<String> out = new java.util.ArrayList<>();
-        out.addAll(wifi.values().isEmpty() ? wifi.keySet() : wifi.keySet());
-        for (String k : ap.keySet()) if (!out.contains(k)) out.add(k);
-        for (String k : cell.keySet()) if (!out.contains(k)) out.add(k);
-        for (String k : other.keySet()) if (!out.contains(k)) out.add(k);
-        return out;
-    }
-
-    private static java.net.Socket acceptData() {
-        try {
-            if (ftpDataSocket == null) return null;
-            ftpDataSocket.setSoTimeout(15000);
-            java.net.Socket ds = ftpDataSocket.accept();
-            try {
-                ftpDataSocket.close();
-            } catch (Throwable ignored) {
-            }
-            ftpDataSocket = null;
-            return ds;
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-    /** FTP 路径解析：限制在 FTP_ROOT（/storage/emulated/0）内，越界回退根 */
-    private static File resolveFtp(File cwd, String arg) {
-        try {
-            File f = (arg == null || arg.isEmpty()) ? cwd
-                    : (arg.startsWith("/") ? new File(arg) : new File(cwd, arg));
-            String root = FTP_ROOT.getAbsolutePath();
-            String fp = f.getAbsolutePath();
-            if (fp.equals(root) || fp.startsWith(root + "/")) return f;
-            return FTP_ROOT;
-        } catch (Throwable t) {
-            return FTP_ROOT;
-        }
-    }
-
-    // ── 权限 ──
 
     private boolean checkPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {

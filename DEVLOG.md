@@ -97,7 +97,27 @@
    - 恢复成功时 toast 告知「已恢复 N 个未保存的编辑草稿」。
    - root:// 前缀已剥离。
 
+10. **删除 FTP / HTTP 文件服务**（按用户要求，不是修而是移除）
+    排查时发现这套功能**早已没有 UI 入口** —— 侧边栏只有「文件管理」
+    一张卡片，show{Ftp,Http}RunningDialog 没有任何调用者，
+    stop{Ftp,Http}Server 只被 dialo g内部引用。属于纯死代码，
+    但 static ServerSocket 一旦启动就跨实例存活，
+    还带着「局域网端口持续暴露」的安全面。
+    整块删除 619 行（11855–12473），保留 checkPermission / humanSize
+    —— 这两个在块外仍有使用者。
+    README 中「局域网 FTP / HTTP 文件服务」一行同步移除。
+    AndroidManifest 的 ACCESS_NETWORK_STATE 保留（INTERNET 仍被更新检查使用）。
+
+11. **文件大小闸三处不一致**（`FileManagerModule`）
+    旧有三套互相矛盾的判据：
+      openTextEditorInternal  >2MB 硬拒
+      tryOpenInEditor         >12MB 才提示「可能无法加载」
+      openInEditorByName      完全不判
+    从「打开方式」进来先看到「可能无法加载」，真进去又被 2MB 拒；
+    换入口则可能直接 OOM。
+    新增 MAX_EDIT_BYTES = 2MB 单一常量，三处全部改用它。
+    tryOpenInEditor 的文案从「可能无法加载」改为明确拒绝 + 实际上限。
+
 #### 待办
-- 文件大小闸三处不一致
-- FTP/HTTP 服务器不在生命周期关闭
+（无）
 
