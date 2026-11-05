@@ -894,8 +894,6 @@ public class FileManagerModule extends HyVqModule {
         bar.addView(fileActions);
         topBarFileActions = fileActions;
 
-
-
         return bar;
     }
 
@@ -910,10 +908,6 @@ public class FileManagerModule extends HyVqModule {
     // ════════════════════════════════════════════════════════════════
 
     /** ROOT 快捷目录（标签 + 路径 + 说明） */
-
-
-
-
 
 
 
@@ -933,10 +927,6 @@ public class FileManagerModule extends HyVqModule {
         tv.setLayoutParams(lp);
         return tv;
     }
-
-
-
-
 
 
 
@@ -2152,8 +2142,6 @@ public class FileManagerModule extends HyVqModule {
         }
         if (syncBtn != null) refreshSyncButton();
     }
-
-
 
     /** 同步复制/移动（root 移除后替代原 RootFs.copy/move，走 App 自身权限） */
     private static boolean copyOrMoveSync(String src, String dst, boolean cut) {
@@ -3921,7 +3909,6 @@ public class FileManagerModule extends HyVqModule {
     private View showUpdatePageBody() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(buildSettingsBackRow("设置"));
 
         String cur = appVersionName();
         int curCode = appVersionCode();
@@ -4243,7 +4230,6 @@ public class FileManagerModule extends HyVqModule {
     private View showAboutPageBody() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(buildSettingsBackRow("设置"));
 
         TextView title = new TextView(ctx);
         title.setText("HY文件管理");
@@ -4355,6 +4341,13 @@ public class FileManagerModule extends HyVqModule {
         if (contentWrapRef == null) return;
         View v = contentSupplier.get();
         if (v == null) return;
+        // 进任何设置页都必须处于 SETTINGS 模式。
+        // 从文件页 / 侧边栏直接调进来时 contentMode 还是 FILES，
+        // 之前只切了内容 View，顶栏却停在文件态（面包屑 + 文件操作按钮），
+        // 于是出现「顶栏看着像文件页、内容是设置页」的错位。
+        if (contentMode != ContentMode.SETTINGS) {
+            setContentMode(ContentMode.SETTINGS);
+        }
         currentSettingsPage = (title == null) ? "" : title;
         if (settingsTopTitle != null) settingsTopTitle.setText(title == null ? "" : title);
         refreshSettingsLeftIcon();
@@ -4436,35 +4429,6 @@ public class FileManagerModule extends HyVqModule {
         setContentMode(ContentMode.FILES);
     }
 
-    /** 设置页顶部的返回行（比底部的按钮更方便，符合常见设置页习惯） */
-    private View buildSettingsBackRow(String label) {
-        LinearLayout row = new LinearLayout(ctx);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(4), dp(10), dp(4), dp(10));
-        row.setClickable(true);
-        row.setFocusable(true);
-        row.setBackgroundResource(R.drawable.bg_ripple_round);
-        row.setOnClickListener(v -> showSettingsPage());
-
-        ImageView icon = new ImageView(ctx);
-        icon.setImageResource(R.drawable.ic_back);
-        icon.setColorFilter(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorPrimary));
-        row.addView(icon, new LinearLayout.LayoutParams(dp(20), dp(20)));
-
-        TextView tv = new TextView(ctx);
-        tv.setText(label);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        tv.setTextColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorPrimary));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        lp.leftMargin = dp(6);
-        row.addView(tv, lp);
-        return row;
-    }
-
     /** 打开设置主页（内嵌视图） */
     private void showSettingsPage() {
         // 标题传 ""：
@@ -4543,7 +4507,6 @@ public class FileManagerModule extends HyVqModule {
     /** 权限管理页：所有文件访问 / 存储权限 / SAF 授权目录 */
     private View buildPermissionManager() {
         LinearLayout box = new LinearLayout(ctx);
-        box.addView(buildSettingsBackRow("返回设置主页"));
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "权限管理"));
 
@@ -4937,7 +4900,6 @@ public class FileManagerModule extends HyVqModule {
     /** 个性化设置页：显示密度(DPI) + 列表文件密度（均为进度条式） */
     private View buildAppearanceSettings() {
         LinearLayout box = new LinearLayout(ctx);
-        box.addView(buildSettingsBackRow("返回设置主页"));
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "个性化"));
 
@@ -5049,8 +5011,6 @@ public class FileManagerModule extends HyVqModule {
         final View row = addPickerRow(box, "列表文件密度", value, null);
         row.setOnClickListener(v -> showDensityPopup(row, names, value));
     }
-
-
 
     /**
      * 密度选择：锚定在当前选项行正下方的小弹窗。
@@ -5297,7 +5257,6 @@ public class FileManagerModule extends HyVqModule {
     /** 文件管理设置页：隐藏文件 / 缩略图 / 排序 */
     private View buildFileSettings() {
         LinearLayout box = new LinearLayout(ctx);
-        box.addView(buildSettingsBackRow("返回设置主页"));
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(UiKit.sectionHeader(ctx, "文件管理"));
 
@@ -5745,6 +5704,10 @@ public class FileManagerModule extends HyVqModule {
         toolsBody.setVisibility(navToolsExpanded ? View.VISIBLE : View.GONE);
 
         // 工具项：卡片式（与「本地」组的挂载行视觉一致，但更紧凑）
+        // 注意：这张卡是「跳到设置里的文件管理页」，不是「切到文件浏览」。
+        // 所以必须先离开设置层（如果在设置里），再进这个子页 ——
+        // 否则会出现：顶栏已经是返回键，页内又有一行「← 返回设置主页」，
+        // 两个返回叠在一起，用户不知道点哪个。
         toolsBody.addView(buildToolCard("文件管理",
                 "隐藏文件 · 缩略图 · 排序 · 回收站",
                 R.drawable.ic_folder, v -> {
@@ -6139,8 +6102,16 @@ public class FileManagerModule extends HyVqModule {
             // SAF 授权目录一律 app 内浏览（同 MT）：可进入用真实路径（可读写），
             // 不可进入（如 Termux 数据目录 SELinux 不可读）用 content:// uri 走 SafStrategy；
             // navPrev 记录进入前路径，供授权根的".."返回
+            // 点侧边栏目录 = 「回到文件管理，并把当前焦点窗格跳到这个目录」。
+            // 旧实现只改 active 的 path 并 reload：如果当时正停在设置页，
+            // 界面还留在设置，用户看到的是一次「消失的跳转」。
+            // 所以先切回文件模式，再改路径。
+            if (contentMode != ContentMode.FILES) {
+                setContentMode(ContentMode.FILES);
+            }
             active.navPrev = active.path;
             active.path = e.enterable ? e.target : e.id;
+            closeNavSidebar();
             reload(active);
         });
 
@@ -9979,8 +9950,6 @@ public class FileManagerModule extends HyVqModule {
         playCurrent.run();
     }
 
-
-
     private void runOnUi(Runnable r) {
         if (hostActivity != null) hostActivity.runOnUiThread(r);
         else handler.post(r);
@@ -10290,8 +10259,6 @@ public class FileManagerModule extends HyVqModule {
         }));
         dialog.show();
     }
-
-
 
     /** 打开 SAF（content://）文件：uri + provider mime 直发系统（无需 FileProvider 中转） */
     private void openSafFile(FileEntry e) {
@@ -11374,8 +11341,6 @@ public class FileManagerModule extends HyVqModule {
         }
         return total > 0 && bad * 200 > total;   // 超过 0.5%
     }
-
-
 
     /** 递归扫描：深度≤10、结果≤3000（防卡死）；跳过隐藏目录（含回收站）与 Android 大目录 */
     private void scanDir(File dir, Set<String> extSet, List<FileEntry> out, int depth) {
