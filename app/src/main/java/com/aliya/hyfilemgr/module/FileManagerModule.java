@@ -1839,18 +1839,51 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 刷新同步按钮的高亮：左焦点→右箭头亮；右焦点→左箭头亮 */
+    /**
+     * 刷新同步按钮的可用状态。
+     *
+     * <p>同步方向由<b>焦点栏</b>决定（syncByFocus：焦点在左则左→右）。
+     * 所以「按钮是否该亮」要同时满足三个条件，缺一都点不出效果：</p>
+     * <ol>
+     *   <li>两栏都存在且路径非空</li>
+     *   <li>两栏路径不同 —— 相同时 syncPath 会直接 toast「两边已经是同一目录」</li>
+     *   <li><b>焦点栏</b>（同步的源）路径非空 —— 旧实现只看前两条，
+     *       焦点栏为空指针时按钮仍然亮，点了静默无反应</li>
+     * </ol>
+     *
+     * <p>用一个可读的 disableReason 直接把「为什么不能点」写到按钮的
+     * contentDescription 上，长按/读屏能说出原因，不靠用户猜。</p>
+     */
     private void refreshSyncButton() {
         if (syncIcon == null) return;
-        // 单图标无法再用「左右哪个亮」表达焦点，改用颜色区分：
-        // 可同步（两栏路径不同）用主色，路径相同则灰掉表示点了也没变化。
-        boolean canSync = paneL != null && paneR != null
-                && paneL.path != null && paneR.path != null
-                && !paneL.path.equals(paneR.path);
+
+        String disableReason = null;
+        if (paneL == null || paneR == null) {
+            disableReason = "单窗格模式不支持同步";
+        } else if (paneL.path == null || paneR.path == null) {
+            disableReason = "窗格路径未就绪";
+        } else if (paneL.path.equals(paneR.path)) {
+            disableReason = "两边已经是同一目录";
+        } else {
+            // 焦点栏 = 同步的源。它必须有有效路径，否则 syncByFocus 无源可移
+            Pane src = (active == paneL) ? paneL : paneR;
+            if (src.path == null || src.path.isEmpty()) {
+                disableReason = "当前焦点栏没有有效路径";
+            }
+        }
+
+        boolean enabled = (disableReason == null);
         int on = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
         int off = UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant);
-        syncIcon.setColorFilter(canSync ? on : off);
-        if (syncBtn != null) syncBtn.setAlpha(canSync ? 1f : 0.45f);
+        syncIcon.setColorFilter(enabled ? on : off);
+        if (syncBtn != null) {
+            syncBtn.setAlpha(enabled ? 1f : 0.45f);
+            syncBtn.setContentDescription(enabled
+                    ? "同步路径：" + ((active == paneL) ? "左 → 右" : "右 → 左")
+                    : disableReason);
+        }
     }
+
 
     /**
      * 同步路径。
