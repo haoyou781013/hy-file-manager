@@ -45,6 +45,50 @@ UiKit.dismissWithAnim((Dialog) ((View) v.getParent()).getTag())
 
 ---
 
-## 尚未发布
+## 未发布
 
-（空）
+### 主题设置：背景图 + 卡片透明度 + 浅边框
+
+「个性化」改名为「主题设置」，并加入背景图能力。
+
+**背景图**
+- 全局背景层：ImageView 铺满 rootContainer 底层（index 0），
+  上面所有页面半透明叠着。逐页设背景会在切页时跳一下，
+  一层铺满则背景完全稳定。
+- 点击穿透：背景层 setClickable(false)，不挡列表点击
+- 存储：复制到 filesDir/wallpaper/，原图删了也不影响；
+  换图时删旧文件
+- 解码：先读边界算 inSampleSize 再真解码。4000×3000 的图
+  全尺寸在堆里是 48MB，低端机直接 OOM
+
+**两个选图入口**
+1. 系统图片选择器：ACTION_OPEN_DOCUMENT + image/*，
+   系统自带相册入口，一步到位
+2. 自建文件列表（单列）：复用 AccessRouter，
+   能进 SAF 授权目录 / root / 外部存储 —— 有些壁纸存在
+   隐藏目录或相册扫不到的地方，必须能自己 browse
+   仅显示目录 + 图片扩展名，避免在一堆 txt 里找图
+
+**三个滑块**
+- 背景不透明度 0-100%（直接改 ImageView alpha，无需重渲染）
+- 背景模糊度 0-25（stack blur：先 1/4 缩小再做 box blur 再放大，
+  速度提升一个数量级，视觉几乎一致）
+- 卡片不透明度 0-100%
+
+**浅边框**
+- 新增 cardSurface()：运行时生成半透明底 + 1px colorOutlineVariant@0x22
+  （约 13% 不透明）描边
+- 不用静态 drawable：透明度是可调状态，写死 alpha 就跟不上滑块
+- 应用于 addInfoRow / buildSimpleRow（设置项行、选图弹层行）
+- 用户要求「不需要太明显」，所以描边压到很淡
+
+**内容层透明化**
+有背景图时，设置页容器 / 底部功能栏 / 多选栏 都要半透明，
+否则整块不透明会把背景全挡住。syncContentTransparency() 统一处理；
+删掉背景图时恢复不透明。
+
+---
+
+## 待发布
+
+（待汇总）

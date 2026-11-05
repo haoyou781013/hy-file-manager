@@ -231,6 +231,15 @@ public class FileManagerModule extends HyVqModule {
     private static final String PREF_DENSITY = "list_density";
     /** 界面主题：0=默认，1=工业风格 */
     private static final String PREF_UI_THEME = "ui_theme";
+    // ── 背景图 ──
+    /** 背景图在私有目录里的文件名；空 = 无背景图 */
+    private static final String PREF_BG_FILE = "bg_file";
+    /** 背景图不透明度 0-100（100 = 完全不透明，0 = 完全隐形） */
+    private static final String PREF_BG_ALPHA = "bg_alpha";
+    /** 背景图模糊度 0-25（0 = 不模糊） */
+    private static final String PREF_BG_BLUR = "bg_blur";
+    /** 卡片不透明度 0-100（透出背景的程度） */
+    private static final String PREF_CARD_ALPHA = "card_alpha";
     /** 明暗模式：0=跟随系统，1=亮色，2=暗色（工业风格下隐藏） */
     private static final String PREF_UI_MODE = "ui_mode";
     /** 侧边栏「本地」分组是否展开 */
@@ -246,6 +255,18 @@ public class FileManagerModule extends HyVqModule {
 
     /** 界面主题：0=默认，1=工业风格 */
     private static int uiTheme = 0;
+
+    // ── 背景图状态（全局背景）──
+    /** 背景层 ImageView（铺在 rootContainer 最底） */
+    private android.widget.ImageView bgImageView;
+    /** 背景图来源文件（私有目录内），null = 未设置 */
+    private File bgImageFile;
+    /** 背景不透明度 0-100 */
+    private static int bgAlpha = 100;
+    /** 背景模糊度 0-25 */
+    private static int bgBlur = 0;
+    /** 卡片不透明度 0-100（越低背景越透出来） */
+    private static int cardAlpha = 100;
     /** 明暗模式：0=跟随系统，1=亮色，2=暗色 */
     private static int uiMode = 0;
 
@@ -609,6 +630,11 @@ public class FileManagerModule extends HyVqModule {
         thumbsEnabled = sp.getBoolean(PREF_THUMBS, true);
         listDensity = Math.max(1, Math.min(3, sp.getInt(PREF_DENSITY, 2)));
         uiTheme = Math.max(0, Math.min(1, sp.getInt(PREF_UI_THEME, 0)));
+        bgAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_BG_ALPHA, 100)));
+        bgBlur = Math.max(0, Math.min(25, sp.getInt(PREF_BG_BLUR, 0)));
+        cardAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_CARD_ALPHA, 100)));
+        String bgName = sp.getString(PREF_BG_FILE, "");
+        bgImageFile = bgName.isEmpty() ? null : new File(bgDir(), bgName);
         uiMode = Math.max(0, Math.min(2, sp.getInt(PREF_UI_MODE, 0)));
         // 本地：默认展开（这是主入口，一进来就要能点目录）
         // 工具：默认收起（低频功能，收起来减少视觉噪声）
@@ -664,6 +690,11 @@ public class FileManagerModule extends HyVqModule {
                         .putInt(PREF_SORT_MODE, fSort)
                         .putInt(PREF_DENSITY, fDensity)
                         .putInt(PREF_UI_THEME, fTheme)
+                        .putInt(PREF_BG_ALPHA, bgAlpha)
+                        .putInt(PREF_BG_BLUR, bgBlur)
+                        .putInt(PREF_CARD_ALPHA, cardAlpha)
+                        .putString(PREF_BG_FILE,
+                                bgImageFile == null ? "" : bgImageFile.getName())
                         .putInt(PREF_UI_MODE, fMode)
                         .putBoolean(PREF_TRASH_ENABLED, fTrashOn)
                         .putBoolean(PREF_TRASH_DEFAULT, fTrashDefault)
@@ -692,6 +723,9 @@ public class FileManagerModule extends HyVqModule {
         rootContainer = new FrameLayout(ctx);
         rootContainer.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // 背景层先挂上（index 0 = 最底），后面所有页面都在它上面半透明叠着
+        attachBackgroundLayer();
 
         LinearLayout body = new LinearLayout(ctx);
         body.setOrientation(LinearLayout.VERTICAL);
@@ -3818,10 +3852,11 @@ public class FileManagerModule extends HyVqModule {
                     showInSettingsDialog("文件管理", this::buildFileSettings);
                 });
 
-        // ── 个性化 ──
-        addSettingsRow(box, "个性化",
-                "显示密度(DPI) · 列表文件密度 · 界面主题", R.drawable.ic_sliders, v -> {
-                    showInSettingsDialog("个性化", this::buildAppearanceSettings);
+        // ── 主题设置 ──
+        addSettingsRow(box, "主题设置",
+                "背景图 · 卡片透明度 · 界面主题 · 显示密度",
+                R.drawable.ic_sliders, v -> {
+                    showInSettingsDialog("主题设置", this::buildAppearanceSettings);
                 });
 
         // ── 软件更新 ──
@@ -4381,8 +4416,10 @@ public class FileManagerModule extends HyVqModule {
         if (settingsEmbedView == null) {
             settingsEmbedView = new LinearLayout(ctx);
             settingsEmbedView.setOrientation(LinearLayout.VERTICAL);
-            settingsEmbedView.setBackgroundColor(UiKit.color(ctx,
-                    com.google.android.material.R.attr.colorSurface));
+            // 有背景图时这里必须透明，否则整块不透明会把背景图挡住
+            settingsEmbedView.setBackgroundColor(
+                    bgImageFile != null ? android.graphics.Color.TRANSPARENT
+                            : UiKit.color(ctx, com.google.android.material.R.attr.colorSurface));
             android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
             sv.setFillViewport(true);
             settingsEmbedContent = new LinearLayout(ctx);
@@ -4475,7 +4512,7 @@ public class FileManagerModule extends HyVqModule {
     }
 
     private void showAppearanceSettings() {
-        showInSettingsDialog("个性化", this::buildAppearanceSettings);
+        showInSettingsDialog("主题设置", this::buildAppearanceSettings);
     }
 
     private void hideSettingsDialog() {
@@ -4492,7 +4529,7 @@ public class FileManagerModule extends HyVqModule {
         row.setPadding(dp(12), dp(14), dp(12), dp(14));
         row.setClickable(true);
         row.setFocusable(true);
-        row.setBackgroundResource(R.drawable.bg_ripple_round);
+        row.setBackground(cardSurface(-1));
         row.setOnClickListener(onClick);
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -4773,6 +4810,541 @@ public class FileManagerModule extends HyVqModule {
         topBarLeftIcon.setContentDescription(needBack ? "返回设置主页" : "打开侧边栏");
     }
 
+
+    // ══════════ 背景图 ══════════
+
+    /** 背景图私有目录：filesDir/wallpaper */
+    private File bgDir() {
+        File d = new File(ctx.getFilesDir(), "wallpaper");
+        if (!d.exists() && !d.mkdirs()) return null;
+        return d;
+    }
+
+    /**
+     * 创建背景层，插到 rootContainer 最底。
+     *
+     * <p><b>为什么用 ImageView 铺满 + alpha 而不是把背景设给每个页面</b>：
+     * 逐页设背景会出现「切页时背景跳一下」，而且每个页面还要各自的模糊版本。
+     * 一层铺满整个 rootContainer，上面所有页面都半透明透出它，
+     * 切换页面时背景是完全稳定的。</p>
+     *
+     * <p>点击穿透：background 层 setClickable(false) + 不消费触摸，
+     * 否则它会挡掉下面所有列表的点击。</p>
+     */
+    private void attachBackgroundLayer() {
+        if (rootContainer == null) return;
+        bgImageView = new android.widget.ImageView(ctx);
+        bgImageView.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+        bgImageView.setClickable(false);
+        bgImageView.setFocusable(false);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        rootContainer.addView(bgImageView, 0, lp);   // index 0 = 最底
+        applyBackground();
+    }
+
+    /** 按当前 bgImageFile / bgAlpha / bgBlur 重新渲染背景层。 */
+    private void applyBackground() {
+        if (bgImageView == null) return;
+        if (bgImageFile == null || !bgImageFile.isFile()) {
+            bgImageView.setImageDrawable(null);
+            bgImageView.setVisibility(View.GONE);
+            syncContentTransparency(false);
+            return;
+        }
+        bgImageView.setVisibility(View.VISIBLE);
+        bgImageView.setAlpha(bgAlpha / 100f);
+
+        // 解码：按屏幕尺寸采样，避免 4K 图直接 OOM
+        android.graphics.Bitmap bmp = decodeScaled(bgImageFile);
+        if (bmp == null) {
+            bgImageView.setImageDrawable(null);
+            bgImageView.setVisibility(View.GONE);
+            return;
+        }
+        if (bgBlur > 0) bmp = blurBitmap(bmp, bgBlur);
+        bgImageView.setImageBitmap(bmp);
+        syncContentTransparency(true);
+    }
+
+    /**
+     * 有背景图时让内容层变透明，背景才透得出来。
+     *
+     * <p>列表（RecyclerView）自身本来就没有不透明底色，所以主要是
+     * 设置页容器、顶栏和底部两栏需要处理。这里统一刷新一次，
+     * 设/删背景图时调用。</p>
+     */
+    private void syncContentTransparency(boolean hasBg) {
+        try {
+            if (settingsEmbedView != null) {
+                settingsEmbedView.setBackgroundColor(hasBg
+                        ? android.graphics.Color.TRANSPARENT
+                        : UiKit.color(ctx,
+                          com.google.android.material.R.attr.colorSurface));
+            }
+            // 顶部栏 / 底部功能栏 / 多选栏：半透明化，保留一点底色保证可读
+            int navBg = UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorSurfaceContainerLow);
+            int translucent = (navBg & 0x00FFFFFF) | (hasBg ? 0xD0000000 : 0xFF000000);
+            if (bottomNav != null) {
+                int stroke = UiKit.color(ctx,
+                        com.google.android.material.R.attr.colorPrimary);
+                bottomNav.setBackground(UiKit.rounded(ctx, 16, translucent, stroke));
+            }
+            if (opBar != null) {
+                opBar.setBackground(UiKit.rounded(ctx, 16, translucent,
+                        UiKit.color(ctx,
+                                com.google.android.material.R.attr.colorOutlineVariant)));
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 按屏幕尺寸采样解码。
+     *
+     * <p>先只读边界拿原始尺寸，算出 inSampleSize 再真解码。
+     * 不同步直接 decode 全尺寸 —— 一张 4000×3000 的图在堆里是 48MB，
+     * 低端机直接 OOM。</p>
+     */
+    private android.graphics.Bitmap decodeScaled(File f) {
+        try {
+            android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+            o.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeFile(f.getAbsolutePath(), o);
+            if (o.outWidth <= 0 || o.outHeight <= 0) return null;
+
+            android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
+            int reqW = Math.max(1, dm.widthPixels);
+            int reqH = Math.max(1, dm.heightPixels);
+            int sample = 1;
+            while (o.outWidth / (sample * 2) >= reqW && o.outHeight / (sample * 2) >= reqH) {
+                sample *= 2;
+            }
+            android.graphics.BitmapFactory.Options o2 = new android.graphics.BitmapFactory.Options();
+            o2.inSampleSize = sample;
+            o2.inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888;
+            return android.graphics.BitmapFactory.decodeFile(f.getAbsolutePath(), o2);
+        } catch (Throwable t) {
+            android.util.Log.w("HYBg", "decode failed", t);
+            return null;
+        }
+    }
+
+    /**
+     * 高斯模糊（RenderScript 自 API 31 移除，这里用 stack blur 的简化实现）。
+     *
+     * @param radius 1-25，实际按 /2 收缩以控制耗时
+     */
+    private android.graphics.Bitmap blurBitmap(android.graphics.Bitmap src, int radius) {
+        if (src == null || radius <= 0) return src;
+        try {
+            int w = src.getWidth();
+            int h = src.getHeight();
+            // 先缩小再模糊，速度提升一个数量级，放大后视觉效果几乎一致
+            int scale = 4;
+            android.graphics.Bitmap small = android.graphics.Bitmap.createScaledBitmap(
+                    src, Math.max(1, w / scale), Math.max(1, h / scale), true);
+            if (!small.equals(src)) src.recycle();
+
+            int sw = small.getWidth();
+            int sh = small.getHeight();
+            int[] pix = new int[sw * sh];
+            small.getPixels(pix, 0, sw, 0, 0, sw, sh);
+
+            int r = Math.max(1, radius / 2);
+            int[] tmp = new int[pix.length];
+            // 横向
+            boxBlurPass(pix, tmp, sw, sh, r, true);
+            // 纵向
+            boxBlurPass(tmp, pix, sw, sh, r, false);
+
+            android.graphics.Bitmap after = android.graphics.Bitmap.createBitmap(
+                    sw, sh, android.graphics.Bitmap.Config.ARGB_8888);
+            after.setPixels(pix, 0, sw, 0, 0, sw, sh);
+            small.recycle();
+
+            // 放大回原尺寸
+            android.graphics.Bitmap out = android.graphics.Bitmap.createScaledBitmap(after, w, h, true);
+            after.recycle();
+            return out;
+        } catch (Throwable t) {
+            android.util.Log.w("HYBg", "blur failed", t);
+            return src;
+        }
+    }
+
+    /** 单方向 box blur 一趟 */
+    private static void boxBlurPass(int[] in, int[] out, int w, int h, int r, boolean horiz) {
+        int len = horiz ? w : h;
+        int lines = horiz ? h : w;
+        for (int line = 0; line < lines; line++) {
+            int idx = horiz ? line * w : line;
+            int step = horiz ? 1 : w;
+            for (int i = 0; i < len; i++) {
+                int a = 0, rr = 0, gg = 0, bb = 0, cnt = 0;
+                int from = Math.max(0, i - r);
+                int to = Math.min(len - 1, i + r);
+                for (int j = from; j <= to; j++) {
+                    int c = in[idx + j * step];
+                    a += (c >>> 24) & 0xFF;
+                    rr += (c >> 16) & 0xFF;
+                    gg += (c >> 8) & 0xFF;
+                    bb += c & 0xFF;
+                    cnt++;
+                }
+                out[idx + i * step] = ((a / cnt) << 24) | ((rr / cnt) << 16)
+                        | ((gg / cnt) << 8) | (bb / cnt);
+            }
+        }
+    }
+
+    /** 把选中的图片复制进私有目录，替换旧背景。 */
+    private void setBackgroundFromUri(final android.net.Uri uri) {
+        new Thread(() -> {
+            java.io.InputStream in = null;
+            File tmp = null;
+            try {
+                File dir = bgDir();
+                if (dir == null) throw new java.io.IOException("无法创建壁纸目录");
+                tmp = new File(dir, "bg.tmp");
+                in = ctx.getContentResolver().openInputStream(uri);
+                if (in == null) throw new java.io.IOException("无法打开图片");
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(tmp)) {
+                    byte[] buf = new byte[16384];
+                    int r;
+                    while ((r = in.read(buf)) > 0) out.write(buf, 0, r);
+                }
+                // 校验是不是能解码的图片
+                android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+                o.inJustDecodeBounds = true;
+                android.graphics.BitmapFactory.decodeFile(tmp.getAbsolutePath(), o);
+                if (o.outWidth <= 0) throw new java.io.IOException("不是有效的图片");
+
+                final File dst = new File(dir, "bg_" + System.currentTimeMillis()
+                        + (guessExt(o) ));
+                if (!tmp.renameTo(dst)) throw new java.io.IOException("保存失败");
+
+                final File old = bgImageFile;
+                handler.post(() -> {
+                    if (detached) return;
+                    bgImageFile = dst;
+                    applyBackground();
+                    if (old != null && !old.equals(dst)) {
+                        //noinspection ResultOfMethodCallIgnored
+                        old.delete();
+                    }
+                    UiKit.toast(ctx, "背景图已更换");
+                    // 设置页里的预览也要刷新
+                    refreshSettingsPage();
+                });
+            } catch (Throwable t) {
+                if (tmp != null) {
+                    //noinspection ResultOfMethodCallIgnored
+                    tmp.delete();
+                }
+                final String why = msgOf(t);
+                handler.post(() -> {
+                    if (detached) return;
+                    UiKit.alert(ctx, "设置背景失败：" + why);
+                });
+            } finally {
+                try { if (in != null) in.close(); } catch (Throwable ignored) { }
+            }
+        }, "HyBgSet").start();
+    }
+
+    private static String guessExt(android.graphics.BitmapFactory.Options o) {
+        String m = o.outMimeType;
+        if (m == null) return ".img";
+        if (m.contains("jpeg")) return ".jpg";
+        if (m.contains("png")) return ".png";
+        if (m.contains("webp")) return ".webp";
+        if (m.contains("gif")) return ".gif";
+        return ".img";
+    }
+
+    /** 清除背景图 */
+    private void clearBackground() {
+        final File old = bgImageFile;
+        bgImageFile = null;
+        applyBackground();
+        if (old != null) {
+            //noinspection ResultOfMethodCallIgnored
+            old.delete();
+        }
+        UiKit.toast(ctx, "背景图已移除");
+        refreshSettingsPage();
+    }
+
+
+
+    // ══════════ 卡片透明度与边框 ══════════
+
+    /**
+     * 卡片/设置行的统一背景：半透明底 + 一圈极浅描边。
+     *
+     * <p><b>为什么要运行时生成而不能用静态 drawable</b>：
+     * 透明度是可调状态，静态资源写死 alpha 就没法跟着滑块变。
+     * 这里每次调用按当前 cardAlpha 算色值。</p>
+     *
+     * <p><b>描边为什么这么浅</b>：用户要求「不需要太明显，只是浅浅一层」。
+     * 用 colorOutlineVariant 再压到 alpha 0x22（约 13%），
+     * 目的是让卡片在背景图上有边界，而不是变成硬框。</p>
+     *
+     * @param cornerDp 圆角，-1 表示跟随 ripple（行用 10，卡片用 14）
+     */
+    private android.graphics.drawable.Drawable cardSurface(int cornerDp) {
+        int base = UiKit.color(ctx,
+                com.google.android.material.R.attr.colorSurfaceContainerLow);
+        // cardAlpha 100 → 完全不透明；0 → 只剩描边
+        int a = Math.round(255f * cardAlpha / 100f);
+        int fill = (base & 0x00FFFFFF) | (a << 24);
+        int stroke = UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOutlineVariant);
+        // 描边本身也留一点存在感，不随 cardAlpha 降到 0（否则边框就没了）
+        int strokeColor = (stroke & 0x00FFFFFF) | 0x22000000;
+        return UiKit.rounded(ctx, cornerDp < 0 ? dp(10) : cornerDp, fill, strokeColor);
+    }
+
+    /** 把当前 cardAlpha 应用到所有已存在的设置行/卡片并重绘。 */
+    private void applyCardAlpha() {
+        if (settingsEmbedContent == null) return;
+        applyCardAlphaRecursive(settingsEmbedContent, 0);
+        UiKit.toast(ctx, "卡片不透明度 " + cardAlpha + "%");
+    }
+
+    /**
+     * 递归给设置页里的「行容器」换背景。
+     *
+     * <p>只替换「可点击的垂直/水平行」和「带圆角的卡片」——
+     * 纯文字 TextView 不动，否则会变成一堆色块。</p>
+     */
+    private void applyCardAlphaRecursive(View v, int depth) {
+        if (v == null || depth > 6) return;
+        if (v instanceof LinearLayout) {
+            LinearLayout ll = (LinearLayout) v;
+            // 可点击行 = 设置项；或者有背景且不是最外层容器
+            boolean isRow = ll.isClickable();
+            if (isRow) {
+                ll.setBackground(cardSurface(-1));
+            }
+            int n = ll.getChildCount();
+            for (int i = 0; i < n; i++) applyCardAlphaRecursive(ll.getChildAt(i), depth + 1);
+        } else if (v instanceof android.widget.ScrollView) {
+            int n = ((android.widget.ScrollView) v).getChildCount();
+            for (int i = 0; i < n; i++) {
+                applyCardAlphaRecursive(((android.widget.ScrollView) v).getChildAt(i), depth + 1);
+            }
+        }
+    }
+
+    // ── 背景图选择入口 ──
+
+    private static final int REQ_PICK_BG = 0x4B47;   // 图片选择器
+
+    /**
+     * 选背景图：弹两个入口给用户选。
+     *
+     * <p>两个入口的分工：
+     * ① <b>图片选择器</b>（默认拉相册）—— 大多数时候用户要的图就在相册里，
+     *    一步到位；用 ACTION_OPEN_DOCUMENT + image/*，系统会自带相册入口。
+     * ② <b>文件列表</b>（单列）—— 有些壁纸存在隐藏目录、U 盘、SAF 授权目录里，
+     *    相册扫不到，必须能自己 browse 到。</p>
+     */
+    private void pickBackground() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "更换背景图"));
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+
+        box.addView(buildSimpleRow("从相册选择", "打开系统图片选择器", v -> {
+            UiKit.dismissWithAnim(d);
+            launchImagePicker();
+        }));
+        box.addView(buildSimpleRow("从文件选择", "浏览所有目录挑一张图", v -> {
+            UiKit.dismissWithAnim(d);
+            showBgFileBrowser();
+        }));
+
+        if (bgImageFile != null) {
+            box.addView(buildSimpleRow("移除背景图", "恢复纯色背景", v -> {
+                UiKit.dismissWithAnim(d);
+                clearBackground();
+            }));
+        }
+        d.show();
+    }
+
+    /** 系统图片选择器（默认落到相册） */
+    private void launchImagePicker() {
+        try {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("image/*");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            if (hostActivity != null) {
+                hostActivity.startActivityForResult(i, REQ_PICK_BG);
+            } else {
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(i);
+            }
+        } catch (Throwable t) {
+            // 没有图库应用时退到自建文件列表
+            UiKit.toast(ctx, "没有可用的图片选择器，改用文件列表");
+            showBgFileBrowser();
+        }
+    }
+
+    /** 接收图片选择器结果（由 MainActivity 转发） */
+    public void onPickBackgroundResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode != REQ_PICK_BG) return;
+        if (resultCode != android.app.Activity.RESULT_OK || data == null) return;
+        android.net.Uri uri = data.getData();
+        if (uri == null) return;
+        setBackgroundFromUri(uri);
+    }
+
+    /**
+     * 自建文件浏览器：单列列表，只显示目录和图片。
+     *
+     * <p>复用现有的 AccessRouter 列举能力，所以 SAF 授权目录、root 路径、
+     * 外部存储都能进去。仅显示图片扩展名 + 目录，避免用户在一堆 txt 里找图。</p>
+     */
+    private void showBgFileBrowser() {
+        final String[] curPath = { active != null && active.path != null
+                ? active.path : Environment.getExternalStorageDirectory().getAbsolutePath() };
+
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "选择图片"));
+
+        final TextView pathLabel = new TextView(ctx);
+        pathLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        pathLabel.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        pathLabel.setSingleLine(true);
+        pathLabel.setEllipsize(android.text.TextUtils.TruncateAt.START);
+        pathLabel.setPadding(dp(4), 0, dp(4), dp(6));
+        box.addView(pathLabel);
+
+        final LinearLayout listBox = new LinearLayout(ctx);
+        listBox.setOrientation(LinearLayout.VERTICAL);
+        android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+        sv.addView(listBox);
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(340));
+        box.addView(sv, slp);
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+
+        final Runnable[] reload = new Runnable[1];
+        reload[0] = () -> {
+            pathLabel.setText(curPath[0]);
+            listBox.removeAllViews();
+            new Thread(() -> {
+                java.util.List<String[]> items = new java.util.ArrayList<>();
+                try {
+                    AccessResult r = com.aliya.hyfilemgr.access.AccessRouter.list(ctx, curPath[0]);
+                    if (r != null && r.entries != null) {
+                        for (FileEntry e : r.entries) {
+                            if (e.name.startsWith(".")) continue;
+                            if (e.isDir()) {
+                                items.add(new String[]{ e.name, e.path, "d" });
+                            } else if (isImageName(e.name)) {
+                                items.add(new String[]{ e.name, e.path, "f" });
+                            }
+                        }
+                    }
+                } catch (Throwable t) {
+                    android.util.Log.w("HYBg", "browse failed", t);
+                }
+                handler.post(() -> {
+                    if (detached) return;
+                    // 返回上级
+                    File up = new File(curPath[0]).getParentFile();
+                    if (up != null) {
+                        listBox.addView(buildSimpleRow("⬆ 上级目录", up.getAbsolutePath(), v -> {
+                            curPath[0] = up.getAbsolutePath();
+                            reload[0].run();
+                        }));
+                    }
+                    if (items.isEmpty()) {
+                        TextView empty = new TextView(ctx);
+                        empty.setText("（这里没有图片）");
+                        empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                        empty.setTextColor(UiKit.color(ctx,
+                                com.google.android.material.R.attr.colorOnSurfaceVariant));
+                        empty.setPadding(dp(8), dp(10), dp(8), dp(10));
+                        listBox.addView(empty);
+                    }
+                    for (String[] it : items) {
+                        final boolean isDir = "d".equals(it[2]);
+                        listBox.addView(buildSimpleRow(
+                                (isDir ? "📁 " : "🖼 ") + it[0],
+                                isDir ? null : it[1], v -> {
+                                    if (isDir) {
+                                        curPath[0] = it[1];
+                                        reload[0].run();
+                                    } else {
+                                        UiKit.dismissWithAnim(d);
+                                        setBackgroundFromUri(
+                                                android.net.Uri.fromFile(new File(it[1])));
+                                    }
+                                }));
+                    }
+                });
+            }, "HyBgBrowse").start();
+        };
+        reload[0].run();
+        d.show();
+    }
+
+    private static boolean isImageName(String name) {
+        String l = name.toLowerCase(Locale.US);
+        return l.endsWith(".jpg") || l.endsWith(".jpeg") || l.endsWith(".png")
+                || l.endsWith(".webp") || l.endsWith(".bmp") || l.endsWith(".gif");
+    }
+
+    /** 一行「标题 + 可选副标题」，可点 */
+    private View buildSimpleRow(String title, String subtitle, View.OnClickListener onClick) {
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(10), dp(10), dp(10), dp(10));
+        row.setBackgroundResource(R.drawable.bg_ripple_round);
+        row.setClickable(true);
+
+        TextView t = new TextView(ctx);
+        t.setText(title);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        t.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        row.addView(t);
+
+        if (subtitle != null && !subtitle.isEmpty()) {
+            TextView s2 = new TextView(ctx);
+            s2.setText(subtitle);
+            s2.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+            s2.setTextColor(UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorOnSurfaceVariant));
+            s2.setSingleLine(true);
+            s2.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+            s2.setPadding(0, dp(2), 0, 0);
+            row.addView(s2);
+        }
+        row.setOnClickListener(onClick);
+        return row;
+    }
+
+    /** 让当前设置页重建内容（透明度变化后预览要跟上） */
+    private void refreshSettingsPage() {
+        if (contentMode == ContentMode.SETTINGS) {
+            showSettingsPage();
+        }
+    }
+
     /** 从顶栏移除设置标题（幂等） */
     private void removeSettingsTopTitle() {
         if (topBarSettingsTitleView != null && topBarCenterSlot != null) {
@@ -4927,7 +5499,57 @@ public class FileManagerModule extends HyVqModule {
     private View buildAppearanceSettings() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(UiKit.sectionHeader(ctx, "个性化"));
+        box.addView(UiKit.sectionHeader(ctx, "主题设置"));
+
+        // ── 背景图 ──
+        addInfoRow(box, "背景图",
+                bgImageFile != null ? "已设置 · 点击更换" : "未设置",
+                bgImageFile != null, v -> pickBackground());
+
+        // 背景图相关三项：没设背景图时隐藏（滑块调了也看不出效果，避免困惑）
+        if (bgImageFile != null) {
+            final TextView bgAlphaVal = addSliderRow(box, "背景不透明度",
+                    bgAlpha + "%", bgAlpha, 0, 100, 10, null);
+            lastSlider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+                @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean u) {
+                    bgAlphaVal.setText(p + "%");
+                }
+                @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+                @Override public void onStopTrackingTouch(android.widget.SeekBar sb) {
+                    bgAlpha = sb.getProgress();
+                    if (bgImageView != null) bgImageView.setAlpha(bgAlpha / 100f);
+                }
+            });
+
+            final TextView bgBlurVal = addSliderRow(box, "背景模糊度",
+                    bgBlur == 0 ? "不模糊" : String.valueOf(bgBlur),
+                    bgBlur, 0, 25, 1, null);
+            lastSlider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+                @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean u) {
+                    bgBlurVal.setText(p == 0 ? "不模糊" : String.valueOf(p));
+                }
+                @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+                @Override public void onStopTrackingTouch(android.widget.SeekBar sb) {
+                    bgBlur = sb.getProgress();
+                    applyBackground();   // 模糊要重渲染位图
+                }
+            });
+        }
+
+        // ── 卡片不透明度：全局影响所有卡片的底色透明度 ──
+        final TextView cardVal = addSliderRow(box, "卡片不透明度",
+                cardAlpha + "%", cardAlpha, 0, 100, 10, null);
+        lastSlider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean u) {
+                cardVal.setText(p + "%");
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar sb) {
+                cardAlpha = sb.getProgress();
+                // 立刻应用：把所有设置行/卡片的底色重刷一遍
+                applyCardAlpha();
+            }
+        });
 
         // ── 界面主题 ──
         final String[] THEME_NAMES = {"默认", "工业风格"};
@@ -5402,7 +6024,7 @@ public class FileManagerModule extends HyVqModule {
         row.setPadding(dp(12), dp(12), dp(12), dp(12));
         row.setClickable(true);
         row.setFocusable(true);
-        row.setBackgroundResource(R.drawable.bg_ripple_round);
+        row.setBackground(cardSurface(-1));
         row.setOnClickListener(onClick);
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);

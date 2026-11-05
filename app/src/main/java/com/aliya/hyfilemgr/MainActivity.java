@@ -171,6 +171,8 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        // 背景图选图结果转发给模块（模块持有壁纸落盘与渲染逻辑）
+        if (module != null) module.onPickBackgroundResult(requestCode, resultCode, data);
         if (requestCode != 1005 || resultCode != RESULT_OK || data == null) return;
         android.net.Uri treeUri = data.getData();
         if (treeUri == null) return;
