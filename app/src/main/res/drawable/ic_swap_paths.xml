@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  双窗格「同步路径」按钮图标。
+
+  语义：两条方向相反的弧形箭头首尾相接，构成循环 —— 这是 swap / exchange
+  的通用符号，比原来的两个平行直线箭头更符合「左右路径互换」的含义。
+
+  原来的 ic_sync_arrow_back / fwd 是两条平行直线，上下堆叠后看不出
+  「互换」关系，且总高 64dp 撑破了 48dp 的功能栏。
+
+  24×24 viewport，stroke 宽度 1.9，视觉重量与同栏的 chevron/add 图标一致。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+
+    <!-- 上弧：从左往右，右端带箭头 -->
+    <path
+        android:pathData="M7.5,8.5 L17,8.5"
+        android:strokeWidth="1.9"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M14.5,6 L17.2,8.5 L14.5,11"
+        android:strokeWidth="1.9"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- 下弧：从右往左，左端带箭头 -->
+    <path
+        android:pathData="M16.5,15.5 L7,15.5"
+        android:strokeWidth="1.9"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M9.5,13 L6.8,15.5 L9.5,18"
+        android:strokeWidth="1.9"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

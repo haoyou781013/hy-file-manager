@@ -1688,7 +1688,8 @@ public class FileManagerModule extends HyVqModule {
     private ImageView navBackBtn, navFwdBtn;
     /** 同步路径按钮容器 + 左右箭头 */
     private LinearLayout syncBtn;
-    private ImageView syncLeftIv, syncRightIv;
+    /** 同步按钮的交换图标（重绘后只保留一个） */
+    private ImageView syncIcon;
     /** 底部导航 Tab 视图列表（更新选中高亮用） */
     private final List<View> navTabs = new ArrayList<>();
     /** FAB 悬浮新建按钮 */
@@ -1727,7 +1728,7 @@ public class FileManagerModule extends HyVqModule {
         // ④ 同步路径：蓝色包裹的 ← → 组合
         syncBtn = buildSyncButton();
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
-                dp(44), ViewGroup.LayoutParams.WRAP_CONTENT);
+                dp(40), ViewGroup.LayoutParams.WRAP_CONTENT);
         bottomNav.addView(syncBtn, slp);
 
         // ⑤ 新建 +
@@ -1785,69 +1786,70 @@ public class FileManagerModule extends HyVqModule {
      * <p>语义：焦点在左窗格时 → 高亮（点击把左目录同步到右）；焦点在右窗格时 ← 高亮
      * （点击把右目录同步到左）。整块用蓝色描边包裹以示「这是一组联动操作」。</p>
      */
+    /**
+     * 双窗格「同步路径」按钮。
+     *
+     * <p><b>重绘原因</b>：旧实现是两个 40×32 的直线箭头上下堆叠，
+     * 总高 64dp —— 比功能栏本身还高，直接把栏撑破。而且两个箭头
+     * 都调用同一个 syncByFocus()，点哪个效果一样，「左右」没有方向含义。</p>
+     *
+     * <p>现在改为<b>单个 40×40 的环形交换图标</b>：
+     * 两条方向相反的弧形箭头首尾相接，是 swap / exchange 的通用符号。
+     * 一个按钮一个动作，不会再让人以为上下箭头有区别。</p>
+     *
+     * <p>高亮改为「描边 + 底色」而不是箭头颜色 —— 单图标没法再用
+     * 「哪个箭头亮」表达当前焦点，改用整体强调色表示「可切换」。</p>
+     */
     private LinearLayout buildSyncButton() {
         LinearLayout box = new LinearLayout(ctx);
-        box.setOrientation(LinearLayout.VERTICAL);   // 上下堆叠
+        box.setOrientation(LinearLayout.HORIZONTAL);
         box.setGravity(Gravity.CENTER);
-        // 蓝色包裹：圆角 + 蓝色描边
+        box.setClickable(true);
+        box.setFocusable(true);
+
         int stroke = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
         int fill = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimaryContainer);
         android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable();
-        gd.setCornerRadius(dp(10));
+        gd.setShape(android.graphics.drawable.GradientDrawable.OVAL);
         gd.setColor((fill & 0x00FFFFFF) | 0x33000000);
         gd.setStroke(Math.round(dp(1) * 1.5f), stroke);
         box.setBackground(gd);
-        box.setPadding(0, 0, 0, 0);
 
-        // 上：← 靠左（右栏焦点时亮，点击 右→左）
-        syncLeftIv = new ImageView(ctx);
-        syncLeftIv.setImageResource(R.drawable.ic_sync_arrow_back);
-        syncLeftIv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        syncLeftIv.setPadding(dp(3), dp(1), dp(3), dp(1));
-        syncLeftIv.setClickable(true);
-        syncLeftIv.setBackgroundResource(R.drawable.bg_ripple_round);
-        syncLeftIv.setOnClickListener(v -> syncByFocus());
-        syncLeftIv.setOnTouchListener((v, ev) -> {
-            if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN) v.animate().scaleX(0.8f).scaleY(0.8f).setDuration(80).start();
-            else if (ev.getAction() == android.view.MotionEvent.ACTION_UP || ev.getAction() == android.view.MotionEvent.ACTION_CANCEL)
-                v.animate().scaleX(1f).scaleY(1f).setDuration(150).setInterpolator(new android.view.animation.OvershootInterpolator(3f)).start();
+        syncIcon = new ImageView(ctx);
+        syncIcon.setImageResource(R.drawable.ic_swap_paths);
+        syncIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        syncIcon.setColorFilter(stroke);
+        syncIcon.setPadding(dp(8), dp(8), dp(8), dp(8));
+        box.addView(syncIcon, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        box.setOnClickListener(v -> syncByFocus());
+        // 与同栏其它按钮一致的按压回弹
+        box.setOnTouchListener((v, ev) -> {
+            if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN) {
+                v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(80).start();
+            } else if (ev.getAction() == android.view.MotionEvent.ACTION_UP
+                    || ev.getAction() == android.view.MotionEvent.ACTION_CANCEL) {
+                v.animate().scaleX(1f).scaleY(1f).setDuration(160)
+                        .setInterpolator(new android.view.animation.OvershootInterpolator(3f))
+                        .start();
+            }
             return false;
         });
-        // 原来 32×16 —— 高度只有 16dp，是全部按钮里最小的。
-        // 改为 40×32：视觉仍是一上一下的交错箭头，可点区翻倍。
-        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(dp(40), dp(32));
-        llp.gravity = Gravity.START;          // 左对齐 → 形成交错
-        box.addView(syncLeftIv, llp);
-
-        // 下：→ 靠右（左栏焦点时亮，点击 左→右）
-        syncRightIv = new ImageView(ctx);
-        syncRightIv.setImageResource(R.drawable.ic_sync_arrow_fwd);
-        syncRightIv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        syncRightIv.setPadding(dp(3), dp(1), dp(3), dp(1));
-        syncRightIv.setClickable(true);
-        syncRightIv.setBackgroundResource(R.drawable.bg_ripple_round);
-        syncRightIv.setOnClickListener(v -> syncByFocus());
-        syncRightIv.setOnTouchListener((v, ev) -> {
-            if (ev.getAction() == android.view.MotionEvent.ACTION_DOWN) v.animate().scaleX(0.8f).scaleY(0.8f).setDuration(80).start();
-            else if (ev.getAction() == android.view.MotionEvent.ACTION_UP || ev.getAction() == android.view.MotionEvent.ACTION_CANCEL)
-                v.animate().scaleX(1f).scaleY(1f).setDuration(150).setInterpolator(new android.view.animation.OvershootInterpolator(3f)).start();
-            return false;
-        });
-        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(40), dp(32));
-        rlp.gravity = Gravity.END;            // 右对齐 → 形成交错
-        box.addView(syncRightIv, rlp);
-
         return box;
     }
 
     /** 刷新同步按钮的高亮：左焦点→右箭头亮；右焦点→左箭头亮 */
     private void refreshSyncButton() {
-        if (syncLeftIv == null || syncRightIv == null) return;
+        if (syncIcon == null) return;
+        // 单图标无法再用「左右哪个亮」表达焦点，改用颜色区分：
+        // 可同步（两栏路径不同）用主色，路径相同则灰掉表示点了也没变化。
+        boolean canSync = paneL != null && paneR != null
+                && paneL.path != null && paneR.path != null
+                && !paneL.path.equals(paneR.path);
         int on = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
         int off = UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant);
-        boolean leftActive = (active == paneL);
-        syncLeftIv.setColorFilter(leftActive ? off : on);    // 右栏焦点时 ← 亮
-        syncRightIv.setColorFilter(leftActive ? on : off);   // 左栏焦点时 → 亮
+        syncIcon.setColorFilter(canSync ? on : off);
+        if (syncBtn != null) syncBtn.setAlpha(canSync ? 1f : 0.45f);
     }
 
     /**
