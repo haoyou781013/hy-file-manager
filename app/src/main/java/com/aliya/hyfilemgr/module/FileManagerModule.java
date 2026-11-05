@@ -3870,7 +3870,7 @@ public class FileManagerModule extends HyVqModule {
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(14), dp(12), dp(10), dp(12));
-        card.setBackground(UiKit.rounded(ctx, dp(10),
+        card.setBackground(UiKit.rounded(ctx, dp(6),
                 UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow),
                 UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
         LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
@@ -3928,9 +3928,9 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout card = new LinearLayout(ctx);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(14), dp(14), dp(14), dp(14));
-        // 圆角 10dp：14dp 在 60dp 高的卡片上看起来接近药丸，与设置页
-        // 其他卡片（圆角 10）不一致。统一到 10。
-        card.setBackground(UiKit.rounded(ctx, dp(10),
+        // 圆角 6dp：10dp 在这个高度上仍偏「圆润」。设置页整体是偏方的
+        // 工具型观感，6dp 与输入框、分段控件的圆角更接近。
+        card.setBackground(UiKit.rounded(ctx, dp(6),
                 UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow),
                 UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
 
@@ -4987,28 +4987,108 @@ public class FileManagerModule extends HyVqModule {
             }
         });
 
-        // ── 列表文件密度：SeekBar（3 档） ──
-        final String[] densityNames = {"紧凑", "标准", "宽松"};
-        final TextView densityValue = addSliderRow(box, "列表文件密度",
-                densityNames[Math.max(0, Math.min(2, listDensity - 1))],
-                listDensity - 1, 0, 2, 1,
-                new String[]{"紧凑", "标准", "宽松"});
-
-        final android.widget.SeekBar densityBar = lastSlider;
-        densityBar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(android.widget.SeekBar sb, int progress, boolean fromUser) {
-                densityValue.setText(densityNames[Math.max(0, Math.min(2, progress))]);
-            }
-
-            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
-
-            @Override
-            public void onStopTrackingTouch(android.widget.SeekBar sb) {
-                applyDensity(sb.getProgress() + 1);
-            }
-        });
+        // ── 列表文件密度：左右布局，右侧显示当前值，点开在弹层里选 ──
+        //
+        // 旧实现是 SeekBar + 下方三段刻度文字，两个问题：
+        //   ① 三段文字按 seekbar 宽度均分，左边缘和标题行对不齐；
+        //   ② 三档是离散选项，用连续滑块表达不当 —— 手指停在两档之间时，
+        //      视觉上没有"已选中"的确定感。
+        // 改成「左标题 + 右当前值 ▾」，点整行弹出列表选择，
+        // 与压缩格式选择弹窗同一套交互。
+        addDensityPickerRow(box);
         return box;
+    }
+
+    /**
+     * 列表文件密度的选择行：左标题 + 右当前值（带 ▾），点整行弹层选择。
+     *
+     * <p>比 SeekBar 好的地方：三档是<b>离散</b>选项，列表里带勾选标记，
+     * 「当前是哪个」一目了然；标题与右侧值在同一基线，左边缘也和
+     * 上面的「界面主题」「明暗模式」完全对齐。</p>
+     */
+    private void addDensityPickerRow(LinearLayout box) {
+        final String[] names = {"紧凑", "标准", "宽松"};
+        final TextView value = new TextView(ctx);
+        value.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        value.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimary));
+        value.setText(names[Math.max(0, Math.min(2, listDensity - 1))] + "  ▾");
+        addPickerRow(box, "列表文件密度", value, v -> {
+            showDensityPicker(names, value);
+        });
+    }
+
+    /** 弹层里选密度 */
+    private void showDensityPicker(final String[] names, final TextView valueLabel) {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "列表文件密度"));
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        for (int i = 0; i < names.length; i++) {
+            final int level = i + 1;
+            final boolean cur = (listDensity == level);
+            LinearLayout row = new LinearLayout(ctx);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            row.setPadding(dp(10), dp(13), dp(10), dp(13));
+            row.setBackgroundResource(R.drawable.bg_ripple_round);
+            row.setClickable(true);
+
+            TextView tv = new TextView(ctx);
+            tv.setText(names[i]);
+            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            tv.setTextColor(UiKit.color(ctx, cur
+                    ? com.google.android.material.R.attr.colorPrimary
+                    : com.google.android.material.R.attr.colorOnSurface));
+            row.addView(tv, new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+            if (cur) {
+                TextView tick = new TextView(ctx);
+                tick.setText("✓");
+                tick.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+                tick.setTextColor(UiKit.color(ctx,
+                        com.google.android.material.R.attr.colorPrimary));
+                row.addView(tick);
+            }
+
+            row.setOnClickListener(v -> {
+                applyDensity(level);
+                if (valueLabel != null) valueLabel.setText(names[level - 1] + "  ▾");
+                UiKit.dismissWithAnim(d);
+            });
+            box.addView(row);
+        }
+        d.show();
+    }
+
+    /**
+     * 通用「左标题 + 右值」行。
+     *
+     * @param valueView 右侧承载当前值的 View（调用方负责文字与样式）
+     */
+    private void addPickerRow(LinearLayout parent, String title, View valueView,
+                              View.OnClickListener onClick) {
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(4), dp(12), dp(4), dp(12));
+        row.setBackgroundResource(R.drawable.bg_ripple_round);
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setOnClickListener(onClick);
+
+        TextView t = new TextView(ctx);
+        t.setText(title);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        t.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        row.addView(t, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        row.addView(valueView);
+        parent.addView(row);
     }
 
     /** addSliderRow 最近创建的 SeekBar（供调用方挂监听） */
