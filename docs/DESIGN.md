@@ -4,7 +4,8 @@
 
 与 HY_VQ 的关系：
 - **HY_VQ**：综合工具（文件管理 + 终端 + 插件化 UI）
-- **HY 文件管理**：**专注**文件管理与归档，包含内置终端、文本编辑器、播放器；不使用插件机制
+- **HY 文件管理**：**专注**文件管理与归档，包含文本编辑器、播放器；不使用插件机制
+  - 已推翻 → 内置终端已于 2026-11-04（7c4dd57）移除
 
 ## 二、技术选型
 
@@ -13,7 +14,8 @@
 | 语言 | Java 17 | 与 HY_VQ 一致，便于复用 |
 | UI | Material 3 | 与 HY_VQ 一致 |
 | 压缩 | `java.util.zip` + `zip4j` | zip4j 仅在解密时启用 |
-| 网络 | 仅在播放器 | 媒体流走 OkHttp；文件管理/归档/终端全离线 |
+| 网络 | 播放器 + 更新检查 | 媒体流走 OkHttp；更新检查拉 versions.json；其余全离线 |
+  - 已推翻 → 终端已移除；新增软件更新检查（2026-11-04）
 
 ## 三、模块划分
 
@@ -36,7 +38,7 @@ app/src/main/java/com/aliya/hyfilemgr/
 - `splitZipPath`、`loadZip`、`openZipEntry`
 
 不搬：
-- 终端相关（TermNative、SSH、PTY）
+- ~~终端相关（TermNative、SSH、PTY）~~ 已推翻 → 2026-11-04 全部移除
 - 插件化 UI（ModuleRegistry、抽屉）
 - 网络模块（更新、下载）
 

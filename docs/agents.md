@@ -7,7 +7,7 @@
 | 1 | **A1-UI** | 界面构建、布局、View 树、对话框、动画、主题、图标 | `module/FileManagerModule.java`（UI 部分）、`ui/`、`res/layout`、`res/drawable` |
 | 2 | **A2-IO** | 文件操作、读写、复制/移动/删除、SAF、Root、策略路由 | `access/`、`filemgr/FileOps.java`、`module` 中文件操作 |
 | 3 | **A3-ARCH** | 压缩/解压、归档格式、编码、加密 | `archive/`、`util/MarkdownUtils.java`、压缩相关 |
-| 4 | **A4-TERM** | 终端、Shell 会话、输入法连接、PTY | `terminal/` |
+| 4 | ~~**A4-TERM**~~ | ~~终端、Shell 会话、PTY~~ | 已停用（terminal/ 已于 2026-11-04 移除） |
 | 5 | **A5-EDIT** | 文本编辑器、语法、行号、查找替换、预览 | `module` 中 editor* 系列、`util/` 编辑器工具 |
 | 6 | **A6-MEDIA** | 播放器、图片查看、字体预览、弹幕、缩略图 | `MediaPlayerActivity`、`ImageViewerActivity`、`font/`、`player/`、`filemgr/ThumbLoader`、`apkicon/` |
 | 7 | **A7-ROBUST** | 崩溃处理、异常、线程、内存、性能、构建配置 | `crash/`、`HYApp`、`MainActivity`、`build.gradle.kts`、`AndroidManifest.xml` |

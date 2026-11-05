@@ -1792,7 +1792,9 @@ public class FileManagerModule extends HyVqModule {
                 v.animate().scaleX(1f).scaleY(1f).setDuration(150).setInterpolator(new android.view.animation.OvershootInterpolator(3f)).start();
             return false;
         });
-        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(dp(32), dp(16));
+        // 原来 32×16 —— 高度只有 16dp，是全部按钮里最小的。
+        // 改为 40×32：视觉仍是一上一下的交错箭头，可点区翻倍。
+        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(dp(40), dp(32));
         llp.gravity = Gravity.START;          // 左对齐 → 形成交错
         box.addView(syncLeftIv, llp);
 
@@ -1810,7 +1812,7 @@ public class FileManagerModule extends HyVqModule {
                 v.animate().scaleX(1f).scaleY(1f).setDuration(150).setInterpolator(new android.view.animation.OvershootInterpolator(3f)).start();
             return false;
         });
-        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(32), dp(16));
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(40), dp(32));
         rlp.gravity = Gravity.END;            // 右对齐 → 形成交错
         box.addView(syncRightIv, rlp);
 
@@ -7509,6 +7511,21 @@ public class FileManagerModule extends HyVqModule {
     }
 
     // ── 撤销 / 重做（EditText 无内置 API，手动快照栈；快照存于标签内，切换标签各自独立） ──
+    /** 撤销栈条数上限 */
+    private static final int UNDO_MAX_ENTRIES = 200;
+    /** 撤销栈总字符上限（约 64MB 堆），防止大文件快照撑爆内存 */
+    private static final long UNDO_MAX_CHARS = 32L * 1024 * 1024;
+
+    /** 撤销栈当前总字符数 */
+    private static long undoChars(java.util.List<String> st) {
+        long t = 0;
+        for (int i = 0; i < st.size(); i++) {
+            String v = st.get(i);
+            if (v != null) t += v.length();
+        }
+        return t;
+    }
+
     private void pushUndo(String text, int start) {
         if (currentEditTab == null) return;
         java.util.ArrayList<String> st = currentEditTab.undoStack;
@@ -7520,7 +7537,19 @@ public class FileManagerModule extends HyVqModule {
             st.set(st.size() - 1, text);
         } else {
             st.add(text);
-            if (st.size() > 200) st.remove(0); // 栈深上限
+            // 双重上限：条数 + 总字符数。
+            //
+            // 只按条数限 200 是不够的：每个快照是完整 String，
+            // Java 里 char 占 2 字节，2MB 文件的单份快照约 4MB 堆，
+            // 200 份就是 800MB —— 远超进程 heap（通常 256~512MB），
+            // 编辑大文件几十次就会 OOM。
+            //
+            // 按字符预算裁：保留「最近编辑」的若干份，砍掉最老的。
+            // 32M 字符 ≈ 64MB 堆，是常见 heap 的 1/4，留足余量。
+            while (st.size() > UNDO_MAX_ENTRIES || undoChars(st) > UNDO_MAX_CHARS) {
+                if (st.size() <= 1) break;   // 至少留一份，保证能撤销一步
+                st.remove(0);
+            }
         }
         lastUndoPush = now;
         lastUndoStart = start;
@@ -7536,7 +7565,10 @@ public class FileManagerModule extends HyVqModule {
         String prev = st.remove(st.size() - 1);
         String cur = editorEdit.getText().toString();
         currentEditTab.redoStack.add(cur);
-        while (currentEditTab.redoStack.size() > 200) {
+        // 与 undoStack 同一套预算：条数 + 总字符，防止大文件快照撑爆内存
+        while (currentEditTab.redoStack.size() > UNDO_MAX_ENTRIES
+                || undoChars(currentEditTab.redoStack) > UNDO_MAX_CHARS) {
+            if (currentEditTab.redoStack.size() <= 1) break;
             currentEditTab.redoStack.remove(0);
         }
         editorEdit.removeTextChangedListener(editorWatcher);
@@ -7668,6 +7700,28 @@ public class FileManagerModule extends HyVqModule {
      * <p>只是启发式拦截，不追求完备 —— 目的是拦住最典型的手滑写法，
      * 而不是做正则静态分析。</p>
      */
+
+    /**
+     * 安全编译正则：先过 ReDoS 启发式，可疑就返回 null。
+     *
+     * <p><b>为什么必须有它</b>：搜索/替换有三处 Pattern.compile，
+     * 其中「全部替换」最危险 —— 它一次扫全文，且跑在主线程。
+     * 实测 {@code (.*a){20}$} 在 28 个字符上耗时 25 秒，
+     * 在真实文档上就是永久卡死 + ANR。</p>
+     *
+     * <p>只有 regexFind 原来做过检查，两处替换裸奔。统一走这里，
+     * 以后新增正则入口照抄即可。</p>
+     */
+    private static java.util.regex.Pattern safeCompile(String query) {
+        if (query == null) return null;
+        try {
+            if (isReDoSRisky(query)) return null;
+            return java.util.regex.Pattern.compile(query);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     private static boolean isReDoSRisky(String pattern) {
         if (pattern == null || pattern.length() > 200) return false;
         // 形如 (  ... 量词  ...  )  紧跟另一个量词
@@ -7718,8 +7772,13 @@ public class FileManagerModule extends HyVqModule {
         String rep = replacement;
         if (regex) {
             try {
-                rep = java.util.regex.Pattern.compile(query)
-                        .matcher(text.substring(hit[0], hit[1]))
+                java.util.regex.Pattern cp = safeCompile(query);
+                if (cp == null) {
+                    UiKit.alert(ctx, "这个正则在长文本上可能卡死，已阻止。\n"
+                            + "请简化嵌套量词，例如避免 (a*)*、(.*a){20} 这类写法。");
+                    return false;
+                }
+                rep = cp.matcher(text.substring(hit[0], hit[1]))
                         .replaceAll(java.util.regex.Matcher.quoteReplacement(replacement));
             } catch (Throwable t) {
                 UiKit.alert(ctx, "正则错误：" + t.getMessage());
@@ -7739,7 +7798,13 @@ public class FileManagerModule extends HyVqModule {
         int count;
         if (regex) {
             try {
-                java.util.regex.Matcher m = java.util.regex.Pattern.compile(query).matcher(text);
+                java.util.regex.Pattern cpAll = safeCompile(query);
+                if (cpAll == null) {
+                    UiKit.alert(ctx, "这个正则在长文本上可能卡死，已阻止。\n"
+                            + "请简化嵌套量词，例如避免 (a*)*、(.*a){20} 这类写法。");
+                    return 0;
+                }
+                java.util.regex.Matcher m = cpAll.matcher(text);
                 count = 0;
                 StringBuffer sb = new StringBuffer();
                 while (m.find()) {
@@ -12489,11 +12554,11 @@ public class FileManagerModule extends HyVqModule {
 
     private ImageView toolIcon(int res, View.OnClickListener onClick) {
         ImageView iv = new ImageView(ctx);
-        // 视觉：图标内容 22dp（原 30dp 偏大）；判定：容器仍 36dp（可点区域不缩）
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(36), dp(36));
+        // 视觉：图标内容 22dp；判定：容器 48dp —— Material 建议最小触摸目标 48dp。
+        // 原来是 36dp 且上下各 -3dp 负边距，实际可点区约 30dp，
+        // 顶栏一排图标挤在一起时很容易点错。
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(48), dp(48));
         lp.setMarginStart(dp(1));
-        lp.topMargin = dp(-3);
-        lp.bottomMargin = dp(-3);
         iv.setLayoutParams(lp);
         iv.setImageResource(res);
         // 上下左右各 7dp 内边距 → 可见图标 36-14 = 22dp
