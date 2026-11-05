@@ -313,6 +313,8 @@ public class FileManagerModule extends HyVqModule {
      * 总感知约 200ms，符合 Material「transition ≤300ms」的约束。</p>
      */
     private static final int ANIM_DIR_FADE_OUT = 90;
+    /** 文件 ↔ 设置 内容区切换时长 */
+    private static final int ANIM_MODE_SWITCH = 180;
     private static final int ANIM_DIR_FADE_IN = 140;
 
     /**
@@ -598,9 +600,10 @@ public class FileManagerModule extends HyVqModule {
         listDensity = Math.max(1, Math.min(3, sp.getInt(PREF_DENSITY, 2)));
         uiTheme = Math.max(0, Math.min(1, sp.getInt(PREF_UI_THEME, 0)));
         uiMode = Math.max(0, Math.min(2, sp.getInt(PREF_UI_MODE, 0)));
-        // 新安装默认收起：首次打开侧边栏时列表是空的、只看到分组标题，
-        // 用户按需展开。已有用户的选择（无论开还是收）会被沿用。
-        navLocalExpanded = sp.getBoolean(PREF_NAV_LOCAL_OPEN, false);
+        // 本地：默认展开（这是主入口，一进来就要能点目录）
+        // 工具：默认收起（低频功能，收起来减少视觉噪声）
+        // 已有用户的选择不论开收都照旧沿用，这里只是首次默认值。
+        navLocalExpanded = sp.getBoolean(PREF_NAV_LOCAL_OPEN, true);
         navToolsExpanded = sp.getBoolean(PREF_NAV_TOOLS_OPEN, false);
         trashEnabled = sp.getBoolean(PREF_TRASH_ENABLED, true);
         trashDefault = sp.getBoolean(PREF_TRASH_DEFAULT, true);
@@ -3727,7 +3730,9 @@ public class FileManagerModule extends HyVqModule {
     private View buildSettingsRoot() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(buildSettingsBackRow("返回文件列表"));
+        // 不在这里再放一行「返回文件列表」：
+        // 共享顶栏的返回键已经能回文件列表，两者功能完全相同。
+        // 保留共享顶栏那个（所有设置子页都靠它），删掉这个页内重复的。
         box.addView(UiKit.sectionHeader(ctx, "设置"));
 
 
@@ -4599,11 +4604,37 @@ public class FileManagerModule extends HyVqModule {
         boolean fileVisible = target == ContentMode.FILES;
         boolean settingsVisible = target == ContentMode.SETTINGS;
 
-        if (fileContentView != null) {
-            fileContentView.setVisibility(fileVisible ? View.VISIBLE : View.GONE);
+        // ── 内容区切换：加过渡 ──
+        // 旧实现直接 VISIBLE/GONE，切设置页和返回文件列表都是"啪"一下换掉。
+        // 现在：进来的一层从「淡+轻微位移」到正常，出去的一层直接隐藏。
+        // 不用同时双向动画 —— 两层叠加时如果都做 alpha，中间会出现
+        // 两页半透明重叠的糊状帧，比硬切还难看。
+        final View inView = fileVisible ? fileContentView
+                : (settingsVisible ? settingsEmbedView : null);
+        final View outView = fileVisible ? settingsEmbedView
+                : (settingsVisible ? fileContentView : null);
+        if (outView != null) {
+            outView.animate().cancel();
+            outView.setVisibility(View.GONE);
+            outView.setAlpha(1f);
+            outView.setTranslationY(0f);
         }
-        if (settingsEmbedView != null) {
-            settingsEmbedView.setVisibility(settingsVisible ? View.VISIBLE : View.GONE);
+        if (inView != null) {
+            inView.animate().cancel();
+            inView.setVisibility(View.VISIBLE);
+            if (animScale > 0f && prev != target) {
+                // 设置页从右侧轻滑入，文件列表从左侧轻滑入 —— 有方向感
+                final boolean toSettings = settingsVisible;
+                inView.setAlpha(0f);
+                inView.setTranslationX(dp(toSettings ? 24 : -24));
+                inView.animate().alpha(1f).translationX(0f)
+                        .setDuration(ANIM_MODE_SWITCH)
+                        .setInterpolator(new android.view.animation.DecelerateInterpolator())
+                        .start();
+            } else {
+                inView.setAlpha(1f);
+                inView.setTranslationX(0f);
+            }
         }
 
         // 底部两栏与 FAB 只在文件模式显示
