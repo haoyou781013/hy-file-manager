@@ -4467,7 +4467,12 @@ public class FileManagerModule extends HyVqModule {
 
     /** 打开设置主页（内嵌视图） */
     private void showSettingsPage() {
-        showInSettingsDialog("设置", this::buildSettingsRoot);
+        // 标题传 ""：
+        //   ① 顶栏不会显示成「设置 | 设置」这种重复；
+        //   ② currentSettingsPage 为空 → 顶栏图标回到面包键（主页层级），
+        //      而不是返回键。之前传 "设置" 导致从子页回来仍判为非空，
+        //      图标停在返回键，点它又调用 showSettingsPage —— 表现为「返回到了设置页」。
+        showInSettingsDialog("", this::buildSettingsRoot);
     }
 
     /** 薄包装：以独立弹窗打开（保持既有调用点兼容） */
@@ -5117,8 +5122,17 @@ public class FileManagerModule extends HyVqModule {
         p.setOutsideTouchable(true);
         p.setFocusable(true);
         pw[0] = p;
-        // 左对齐锚点行、贴在它下沿
-        p.showAsDropDown(anchor, 0, dp(2));
+        // showAsDropDown 默认以锚点行的**左边缘**为基准，弹窗会甩到最左边。
+        // 这里等布局完成后再按「右对齐锚点行右边缘」重新定位：
+        // xoff = 锚点宽 - 弹窗宽，让弹窗右边贴住行的右边（也就是值标签那一侧）。
+        anchor.post(() -> {
+            if (anchor.getWindowToken() == null) return;
+            int anchorW = anchor.getWidth();
+            int pwW = dp(150);
+            int xoff = anchorW - pwW;
+            if (xoff < 0) xoff = 0;   // 锚点比弹窗窄时退回左对齐
+            p.showAsDropDown(anchor, xoff, dp(2));
+        });
     }
 
     /**
