@@ -221,6 +221,10 @@ public class FileManagerModule extends HyVqModule {
     private static final String EDITOR_PREF_TAB_W = "editor_tab_w";
     private static final String EDITOR_PREF_THEME = "editor_theme";
     // ── 浏览状态持久化键（2026-09-06 补齐：排序/隐藏文件/双窗格路径原为纯内存，重启即回默认） ──
+    /** 启动时自动检查更新（默认开启） */
+    private static final String PREF_AUTO_CHECK_UPDATE = "auto_check_update";
+    /** 自动提示过的版本号：同一版本只弹一次，避免每次启动都打扰 */
+    private static final String PREF_UPDATE_LAST_ASKED = "update_last_asked";
     private static final String PREF_SORT_MODE = "sort_mode";
     private static final String PREF_SHOW_HIDDEN = "show_hidden";
     private static final String PREF_DPI = "ui_dpi";
@@ -446,6 +450,38 @@ public class FileManagerModule extends HyVqModule {
         // 进程被系统回收后静态计数会停留在旧值，这里归零避免泄漏
         com.aliya.hyfilemgr.service.TaskKeepAliveService.resetCount();
         installBackCallback();
+        maybeAutoCheckUpdate();
+    }
+
+    /**
+     * 启动时自动检查更新（可在「设置 → 软件更新」里关掉）。
+     *
+     * <p>时机选择：延后 3 秒。启动瞬间要做的事很多（恢复状态、
+     * 首次列表、缩略图），此时发网络请求会抢带宽和线程，
+     * 而且用户还没看到界面就弹窗很突兀。3 秒后界面已稳定。</p>
+     *
+     * <p>失败静默：自动检查是「顺便看一下」，连不上更新服务器
+     * 不该在启动时弹错误框打断用户。只有真发现新版本才提示。</p>
+     */
+    private void maybeAutoCheckUpdate() {
+        if (!fmPrefs().getBoolean(PREF_AUTO_CHECK_UPDATE, true)) return;
+        handler.postDelayed(() -> {
+            if (detached) return;
+            new Thread(() -> {
+                UpdateInfo info = fetchLatestUpdate();
+                if (info == null) return;                 // 失败静默
+                if (info.code <= appVersionCode()) return; // 已最新，不打扰
+                handler.post(() -> {
+                    if (detached) return;
+                    // 同一版本只自动提示一次，避免每次启动都弹
+                    String seen = fmPrefs().getString(PREF_UPDATE_LAST_ASKED, "");
+                    if (!info.ver.equals(seen)) {
+                        fmPrefs().edit().putString(PREF_UPDATE_LAST_ASKED, info.ver).apply();
+                        showUpdateDetailDialog(info);
+                    }
+                });
+            }, "HyUpdateAuto").start();
+        }, 3000);
     }
 
     /**
@@ -562,8 +598,10 @@ public class FileManagerModule extends HyVqModule {
         listDensity = Math.max(1, Math.min(3, sp.getInt(PREF_DENSITY, 2)));
         uiTheme = Math.max(0, Math.min(1, sp.getInt(PREF_UI_THEME, 0)));
         uiMode = Math.max(0, Math.min(2, sp.getInt(PREF_UI_MODE, 0)));
-        navLocalExpanded = sp.getBoolean(PREF_NAV_LOCAL_OPEN, true);
-        navToolsExpanded = sp.getBoolean(PREF_NAV_TOOLS_OPEN, true);
+        // 新安装默认收起：首次打开侧边栏时列表是空的、只看到分组标题，
+        // 用户按需展开。已有用户的选择（无论开还是收）会被沿用。
+        navLocalExpanded = sp.getBoolean(PREF_NAV_LOCAL_OPEN, false);
+        navToolsExpanded = sp.getBoolean(PREF_NAV_TOOLS_OPEN, false);
         trashEnabled = sp.getBoolean(PREF_TRASH_ENABLED, true);
         trashDefault = sp.getBoolean(PREF_TRASH_DEFAULT, true);
         trashKeepDays = Math.max(0, sp.getInt(PREF_TRASH_KEEP_DAYS, 30));
@@ -3757,6 +3795,65 @@ public class FileManagerModule extends HyVqModule {
     private static final String REPO_GITEE = "https://gitee.com/haoyou781/hy-file-manager";
 
     /** 设置页「软件更新」内容（由 showInSettingsDialog 承载） */
+    /**
+     * 「启动时检查更新」开关卡片。
+     *
+     * <p>做成独立卡片而不是一行 addInfoRow：后者是「标题+副标题+整行跳转」，
+     * 适合导航项；这里是布尔开关，需要真实可见的 Switch。
+     * 圆角 10dp，与上面那张版本卡一致。</p>
+     */
+    private View buildAutoCheckCard() {
+        LinearLayout card = new LinearLayout(ctx);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(14), dp(12), dp(10), dp(12));
+        card.setBackground(UiKit.rounded(ctx, dp(10),
+                UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow),
+                UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
+        LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        clp.topMargin = dp(10);
+        card.setLayoutParams(clp);
+
+        LinearLayout textCol = new LinearLayout(ctx);
+        textCol.setOrientation(LinearLayout.VERTICAL);
+        textCol.setLayoutParams(new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView title = new TextView(ctx);
+        title.setText("启动时检查更新");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        title.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        textCol.addView(title);
+
+        final TextView sub = new TextView(ctx);
+        sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        sub.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        sub.setPadding(0, dp(3), 0, 0);
+        textCol.addView(sub);
+        card.addView(textCol);
+
+        final android.widget.Switch sw = new android.widget.Switch(ctx);
+        boolean on = fmPrefs().getBoolean(PREF_AUTO_CHECK_UPDATE, true);
+        sw.setChecked(on);
+        card.addView(sw);
+
+        final Runnable refreshSub = () -> sub.setText(sw.isChecked()
+                ? "打开 App 时自动查一次，有新版会提示"
+                : "只在手动点「检查更新」时查");
+        sw.setOnCheckedChangeListener((b, checked) -> {
+            fmPrefs().edit().putBoolean(PREF_AUTO_CHECK_UPDATE, checked).apply();
+            refreshSub.run();
+        });
+        // 整行可点：Switch 本身命中区偏小
+        card.setOnClickListener(v -> sw.setChecked(!sw.isChecked()));
+        refreshSub.run();
+        return card;
+    }
+
     private View showUpdatePageBody() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -3768,7 +3865,9 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout card = new LinearLayout(ctx);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(14), dp(14), dp(14), dp(14));
-        card.setBackground(UiKit.rounded(ctx, dp(14),
+        // 圆角 10dp：14dp 在 60dp 高的卡片上看起来接近药丸，与设置页
+        // 其他卡片（圆角 10）不一致。统一到 10。
+        card.setBackground(UiKit.rounded(ctx, dp(10),
                 UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow),
                 UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
 
@@ -3788,6 +3887,8 @@ public class FileManagerModule extends HyVqModule {
         tvState.setPadding(0, dp(10), 0, 0);
         card.addView(tvState);
         box.addView(card);
+
+        box.addView(buildAutoCheckCard());
 
         LinearLayout btns = new LinearLayout(ctx);
         btns.setOrientation(LinearLayout.HORIZONTAL);
@@ -3920,6 +4021,90 @@ public class FileManagerModule extends HyVqModule {
         return null;
     }
 
+    /**
+     * 下载新版本 APK 并调起安装。
+     *
+     * <p>先要「安装未知应用」权限再下载 —— 反过来会让用户白等
+     * 几十 MB 才被拦。</p>
+     *
+     * <p>下载到 cacheDir：不需要存储权限，装完能干净删掉。</p>
+     */
+    private void downloadAndInstall(final UpdateInfo info) {
+        final String url = (info.apkUrl != null && !info.apkUrl.isEmpty())
+                ? info.apkUrl
+                : REPO_GITHUB + "/releases/download/v" + info.ver
+                  + "/HYFileManager-" + info.ver + ".apk";
+
+        if (!canRequestInstall()) {
+            askInstallPermission();
+            return;
+        }
+
+        final android.app.ProgressDialog pd = new android.app.ProgressDialog(ctx);
+        pd.setMessage("正在下载 " + info.ver + "…");
+        pd.setCancelable(false);
+        pd.show();
+
+        new Thread(() -> {
+            final File out = new File(ctx.getCacheDir(), "update_" + info.ver + ".apk");
+            java.net.HttpURLConnection conn = null;
+            java.io.InputStream in = null;
+            try {
+                java.net.URL u = new java.net.URL(url);
+                conn = (java.net.HttpURLConnection) u.openConnection();
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(60000);
+                conn.setInstanceFollowRedirects(true);
+                conn.setRequestProperty("User-Agent", "HYFileManager/" + appVersionName());
+                int code = conn.getResponseCode();
+                if (code != 200) throw new java.io.IOException("服务器返回 " + code);
+                final long total = conn.getContentLengthLong();
+                in = conn.getInputStream();
+                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
+                    byte[] buf = new byte[16384];
+                    long got = 0;
+                    int r;
+                    int lastPct = -1;
+                    while ((r = in.read(buf)) > 0) {
+                        fos.write(buf, 0, r);
+                        got += r;
+                        if (total > 0) {
+                            final int pct = (int) (got * 100 / total);
+                            if (pct != lastPct) {
+                                lastPct = pct;
+                                handler.post(() -> pd.setMessage(
+                                        "正在下载 " + info.ver + "… " + pct + "%"));
+                            }
+                        }
+                    }
+                }
+                final long size = out.length();
+                handler.post(() -> {
+                    pd.dismiss();
+                    if (detached) return;
+                    if (size <= 0) {
+                        UiKit.alert(ctx, "下载失败：文件为空");
+                        return;
+                    }
+                    doInstall(out.getAbsolutePath(), false);
+                });
+            } catch (Throwable t) {
+                //noinspection ResultOfMethodCallIgnored
+                out.delete();
+                final String why = msgOf(t);
+                handler.post(() -> {
+                    pd.dismiss();
+                    if (detached) return;
+                    UiKit.alert(ctx, "下载失败：" + why
+                            + "\n\n可到仓库页面手动下载：\n" + REPO_GITEE);
+                });
+            } finally {
+                try { if (in != null) in.close(); } catch (Throwable ignored) { }
+                try { if (conn != null) conn.disconnect(); } catch (Throwable ignored) { }
+            }
+        }, "HyUpdateDownload").start();
+    }
+
     /** 有新版本时的详情弹窗 */
     /**
      * 把 Markdown 标记去掉，只留可读文本。
@@ -3982,10 +4167,9 @@ public class FileManagerModule extends HyVqModule {
         btns.setGravity(Gravity.END);
         final android.app.Dialog d = UiKit.glassDialog(ctx, box);
         btns.addView(textButton("稍后", v -> UiKit.dismissWithAnim(d)));
-        btns.addView(textButton("去下载", v -> {
+        btns.addView(textButton("下载并安装", v -> {
             UiKit.dismissWithAnim(d);
-            openUrl(info.apkUrl != null && !info.apkUrl.isEmpty()
-                    ? info.apkUrl : REPO_GITHUB + "/releases");
+            downloadAndInstall(info);
         }));
         box.addView(btns);
         d.show();
@@ -9631,6 +9815,13 @@ public class FileManagerModule extends HyVqModule {
     }
 
     private void doInstall(String pathOrUri, boolean isUri) {
+        // 「安装未知应用」是受限权限：没开时 startActivity 会直接抛
+        // ActivityNotFoundException / 或系统弹一个措辞含糊的拒绝，
+        // 用户只看到「无法安装：null」。先查再引导，比事后报错有用。
+        if (!canRequestInstall()) {
+            askInstallPermission();
+            return;
+        }
         try {
             Uri uri = isUri ? Uri.parse(pathOrUri)
                     : FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider",
@@ -9640,7 +9831,81 @@ public class FileManagerModule extends HyVqModule {
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
             ctx.startActivity(i);
         } catch (Throwable t) {
-            UiKit.alert(ctx, "无法安装：" + t.getMessage());
+            UiKit.alert(ctx, "无法安装：" + msgOf(t));
+        }
+    }
+
+    /**
+     * 是否已允许「安装未知应用」。
+     *
+     * <p>API 26 起改为按来源应用授权（{@code canRequestPackageInstalls}），
+     * 之前是系统级「未知来源」开关，无法查询，一律返回 true 交给系统处理。</p>
+     */
+    private boolean canRequestInstall() {
+        if (android.os.Build.VERSION.SDK_INT < 26) return true;
+        try {
+            return ctx.getPackageManager().canRequestPackageInstalls();
+        } catch (Throwable t) {
+            return true;   // 查询失败不拦路，交给系统决定
+        }
+    }
+
+    /** 跳系统设置让用户开启「安装未知应用」，回来后重试。 */
+    private void askInstallPermission() {
+        final android.app.Dialog d = UiKit.glassDialog(ctx, buildAskInstallBody());
+        d.show();
+    }
+
+    private View buildAskInstallBody() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "需要安装权限"));
+
+        TextView tv = new TextView(ctx);
+        tv.setText("安装更新需要你允许 HY文件管理「安装未知应用」。\n\n"
+                + "点下方「去开启」会跳到系统设置，找到本应用的开关打开，"
+                + "然后返回即可继续安装。\n\n"
+                + "这是 Android 从 8.0 开始的强制限制，任何应用安装安装包都要这一步。");
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tv.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        tv.setLineSpacing(dp(3), 1f);
+        box.addView(tv);
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        btns.setPadding(0, dp(16), 0, 0);
+        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim((android.app.Dialog)
+                ((View) v.getParent()).getTag())));
+        btns.addView(textButton("去开启", v -> {
+            UiKit.dismissWithAnim((android.app.Dialog) ((View) v.getParent()).getTag());
+            openInstallPermissionSetting();
+        }));
+        box.addView(btns);
+        return box;
+    }
+
+    /** 打开本应用的「安装未知应用」设置页。 */
+    private void openInstallPermissionSetting() {
+        if (android.os.Build.VERSION.SDK_INT < 26) return;
+        try {
+            Intent i = new Intent(android.provider.Settings
+                    .ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + ctx.getPackageName()));
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(i);
+        } catch (Throwable t) {
+            // 部分 ROM 没有这个 action，退到应用详情页
+            try {
+                Intent i = new Intent(android.provider.Settings
+                        .ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + ctx.getPackageName()));
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(i);
+            } catch (Throwable t2) {
+                UiKit.alert(ctx, "无法打开设置页，请手动到「设置 → 应用 → 特殊权限 → "
+                        + "安装未知应用」里允许本应用");
+            }
         }
     }
 
