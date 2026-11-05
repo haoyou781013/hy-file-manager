@@ -99,7 +99,9 @@ export ANDROID_HOME=/path/to/android-sdk
 
 ## 版本记录
 
-见 [CHANGELOG.md](CHANGELOG.md) 与 [versions.json](versions.json)。
+- **[CHANGELOG.md](CHANGELOG.md)** —— 面向开发者的技术记录
+- **[versions.json](versions.json)** —— 面向用户的更新说明（App 内「软件更新」展示的就是这里）
+- **[DEVLOG.md](DEVLOG.md)** —— 尚未发布的改动在此累积，发版时汇总进上面两个文件
 
 发布规则：
 - 版本号唯一来源是 `app/build.gradle.kts` 的 `versionName` / `versionCode`
