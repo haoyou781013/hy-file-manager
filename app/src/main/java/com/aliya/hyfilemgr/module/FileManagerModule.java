@@ -315,6 +315,16 @@ public class FileManagerModule extends HyVqModule {
     private static final int ANIM_DIR_FADE_OUT = 90;
     /** 文件 ↔ 设置 内容区切换时长 */
     private static final int ANIM_MODE_SWITCH = 180;
+    /**
+     * 底部功能栏高度。
+     *
+     * <p>原来用 WRAP_CONTENT：内部 navButton 是 20dp 图标 + 上下 2dp padding，
+     * 外面还有 wrap 的默认 padding 和 bottomNav 自己的 1dp，实测能顶到 56~64dp，
+     * 加上底边距 8dp 就是列表最后 70dp 被盖住。统一固定成 48dp。</p>
+     */
+    private static final int BOTTOM_NAV_HEIGHT = 48;
+    /** 列表底部额外留白 = 功能栏高度 + 底边距 + 一点余量，保证最后一项能完整露出来 */
+    private static final int BOTTOM_NAV_RESERVE = 62;
     private static final int ANIM_DIR_FADE_IN = 140;
 
     /**
@@ -735,7 +745,7 @@ public class FileManagerModule extends HyVqModule {
         // 放进 contentWrap 后两者互斥显示、位置完全一致，切换零布局变化。
         View nav = buildBottomNav();
         FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(BOTTOM_NAV_HEIGHT),
                 Gravity.BOTTOM);
         navLp.bottomMargin = dp(8);
         navLp.leftMargin = dp(8);
@@ -1264,7 +1274,16 @@ public class FileManagerModule extends HyVqModule {
         } else {
             rv.setLayoutManager(new LinearLayoutManager(ctx));
         }
-        rv.setPadding(0, dp(2), 0, 0);
+        // ── 底部避让 ──
+        // 底部功能栏是叠在 contentWrap 上的浮层（不占布局空间），
+        // 列表原来底部 padding=0 → 滚到末尾时最后几项被浮层盖住，点不到。
+        // 给列表加一段底部留白，高度 = 功能栏高度 + 底边距 + 余量。
+        //
+        // clipToPadding=false 是关键：否则留白区不参与滚动，
+        // 内容会在留白上方被截断，仍然有一截空白看起来像 bug。
+        // 关掉之后，留白只在「滚到最底」时出现，正好把最后一项让出来。
+        rv.setClipToPadding(false);
+        rv.setPadding(0, dp(2), 0, dp(BOTTOM_NAV_RESERVE));
 
         // ── 性能优化（官方 RecyclerView 指南建议项，此前一项都没做）──
 
@@ -1685,7 +1704,9 @@ public class FileManagerModule extends HyVqModule {
         int navStroke = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
         bottomNav.setBackground(UiKit.rounded(ctx, 16, bg, navStroke));
         int pad = dp(4);
-        bottomNav.setPadding(pad, dp(1), pad, dp(1));
+        bottomNav.setPadding(pad, 0, pad, 0);
+        // 固定高度：WRAP_CONTENT 会随内部按钮 padding 飘，导致"太高"
+        bottomNav.setMinimumHeight(dp(BOTTOM_NAV_HEIGHT));
         // LayoutParams 由外层 FrameLayout 指定（底部叠加，与 opBar 同位）
 
         // ① 后退 <
@@ -1726,7 +1747,7 @@ public class FileManagerModule extends HyVqModule {
         ImageView iv = new ImageView(ctx);
         iv.setColorFilter(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
         iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        iv.setPadding(dp(3), dp(2), dp(3), dp(2));
+        iv.setPadding(dp(3), 0, dp(3), 0);
         iv.setClickable(true);
         iv.setFocusable(true);
         iv.setOnClickListener(onClick);

@@ -281,6 +281,26 @@
    10 处调用点全部补上，并删掉子页内重复的 setText。
    这样新增子页时不可能再忘 —— 标题不再依赖子页自觉。
 
+
+### 底部功能栏高度与遮挡
+
+两个问题一起修：
+
+1. **功能栏太高**
+   bottomNav 用 WRAP_CONTENT，高度随内部内容飘：
+   navButton 是 20dp 图标 + 上下各 2dp padding，外面 wrap 有默认 padding，
+   bottomNav 自己还有 1dp，实测能顶到 56~64dp。
+   改：固定 48dp（BOTTOM_NAV_HEIGHT），navButton 去掉纵向 padding，
+   bottomNav 的 padding 改为上下 0。
+
+2. **滚到底时最后几项被浮层盖住，点不到**
+   功能栏是叠在 contentWrap 上的浮层，本来就不占布局空间；
+   而列表底部 padding = 0，于是最后 60 多 dp 永远在浮层下面。
+   改：列表底部 padding = BOTTOM_NAV_RESERVE（62dp = 48 + 8底边距 + 6余量），
+   并 setClipToPadding(false) —— 否则留白区不参与滚动，
+   内容在留白上方被截断，仍然看着像 bug。
+
+
 #### 待办
 （见上方「未修」）
 
