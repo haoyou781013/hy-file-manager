@@ -5704,16 +5704,17 @@ public class FileManagerModule extends HyVqModule {
         toolsBody.setVisibility(navToolsExpanded ? View.VISIBLE : View.GONE);
 
         // 工具项：卡片式（与「本地」组的挂载行视觉一致，但更紧凑）
-        // 注意：这张卡是「跳到设置里的文件管理页」，不是「切到文件浏览」。
-        // 所以必须先离开设置层（如果在设置里），再进这个子页 ——
-        // 否则会出现：顶栏已经是返回键，页内又有一行「← 返回设置主页」，
-        // 两个返回叠在一起，用户不知道点哪个。
+        // 「文件管理」= 回到文件列表本身，不是进设置里的显示选项页。
+        //
+        // 两个理由：
+        //   ① 文案叫「文件管理」，用户预期是回到浏览界面；
+        //   ② 从这里跳设置子页会让顶栏变成返回键，和"回文件列表"的直觉打架。
+        // 且**不动任何窗格的路径与焦点** —— 用户只是想关掉设置看看文件，
+        // 不希望顺手被换目录。
         toolsBody.addView(buildToolCard("文件管理",
-                "隐藏文件 · 缩略图 · 排序 · 回收站",
+                "回到文件列表（不改变当前目录）",
                 R.drawable.ic_folder, v -> {
-                    closeNavSidebarThen(() -> {
-                        showInSettingsDialog("文件管理", this::buildFileSettings);
-                    });
+                    closeNavSidebarThen(() -> setContentMode(ContentMode.FILES));
                 }));
 
 
