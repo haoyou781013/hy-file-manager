@@ -836,10 +836,11 @@ public class FileManagerModule extends HyVqModule {
         // 左上角：文件模式显示汉堡（打开侧边栏），终端/设置模式显示返回（回文件列表）
         topBarLeftIcon = toolIcon(R.drawable.ic_menu, v -> {
             if (contentMode == ContentMode.FILES) {
-                showNavSidebar();
+                showNavSidebar();                 // 文件页：开侧边栏
+            } else if (currentSettingsPage.isEmpty()) {
+                showNavSidebar();                 // 设置主页：也是开侧边栏
             } else {
-                // 设置模式：返回文件列表
-                closeSettingsEmbed();
+                showSettingsPage();               // 设置子页：回设置主页
             }
         });
         bar.addView(topBarLeftIcon);
@@ -4297,6 +4298,17 @@ public class FileManagerModule extends HyVqModule {
         }
     }
 
+    /**
+     * 当前停在设置的哪一层："" = 设置主页，非空 = 某个子页。
+     *
+     * <p>顶栏左上角图标的语义完全取决于它：
+     * 主页 → 面包键（开侧边栏，和文件页一致）
+     * 子页 → 返回键（回设置主页）
+     * 以前不管在哪一层都显示返回键，用户会把顶栏返回和页内返回行
+     * 当成两个「不同的返回」来回犹豫。</p>
+     */
+    private String currentSettingsPage = "";
+
     /** 设置页对话框引用（供子页返回时复用） */
 
     /**
@@ -4343,7 +4355,9 @@ public class FileManagerModule extends HyVqModule {
         if (contentWrapRef == null) return;
         View v = contentSupplier.get();
         if (v == null) return;
+        currentSettingsPage = (title == null) ? "" : title;
         if (settingsTopTitle != null) settingsTopTitle.setText(title == null ? "" : title);
+        refreshSettingsLeftIcon();
 
         if (settingsEmbedView == null) {
             settingsEmbedView = new LinearLayout(ctx);
@@ -4733,10 +4747,14 @@ public class FileManagerModule extends HyVqModule {
             }
         }
 
-        // 左上角图标：文件模式=汉堡，设置=返回
+        // 左上角图标三态：
+        //   文件页        → 面包键（开侧边栏）
+        //   设置主页      → 面包键（开侧边栏）—— 与文件页一致，不制造第二个"返回"
+        //   设置子页      → 返回键（回设置主页）
         if (topBarLeftIcon != null) {
-            topBarLeftIcon.setImageResource(fileVisible
-                    ? R.drawable.ic_menu : R.drawable.ic_back);
+            topBarLeftIcon.setImageResource(
+                    fileVisible || currentSettingsPage.isEmpty()
+                            ? R.drawable.ic_menu : R.drawable.ic_back);
         }
 
         // 顶栏：文件 / 设置 二选一
@@ -4749,6 +4767,16 @@ public class FileManagerModule extends HyVqModule {
         }
 
         if (prev != target && fileVisible && multiMode) updateOpBar();
+    }
+
+    /** 按「文件页 / 设置主页 / 设置子页」刷新左上角图标。 */
+    private void refreshSettingsLeftIcon() {
+        if (topBarLeftIcon == null) return;
+        boolean needBack = (contentMode == ContentMode.SETTINGS)
+                && !currentSettingsPage.isEmpty();
+        topBarLeftIcon.setImageResource(needBack
+                ? R.drawable.ic_back : R.drawable.ic_menu);
+        topBarLeftIcon.setContentDescription(needBack ? "返回设置主页" : "打开侧边栏");
     }
 
     /** 从顶栏移除设置标题（幂等） */
@@ -5013,31 +5041,52 @@ public class FileManagerModule extends HyVqModule {
         value.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorPrimary));
         value.setText(names[Math.max(0, Math.min(2, listDensity - 1))] + "  ▾");
-        addPickerRow(box, "列表文件密度", value, v -> {
-            showDensityPicker(names, value);
-        });
+        final View row = addPickerRow(box, "列表文件密度", value, null);
+        row.setOnClickListener(v -> showDensityPopup(row, names, value));
     }
 
-    /** 弹层里选密度 */
-    private void showDensityPicker(final String[] names, final TextView valueLabel) {
+
+
+    /**
+     * 密度选择：锚定在当前选项行正下方的小弹窗。
+     *
+     * <p>比整块居中弹窗好在：选择项紧贴触发它的那行，用户视线不用
+     * 跳到屏幕中央再跳回来；也不会盖住整个设置页。
+     * 带 1px 描边 + 阴影，与页面背景分离。</p>
+     */
+    private void showDensityPopup(final View anchor, final String[] names,
+                                  final TextView valueLabel) {
+        final android.widget.PopupWindow[] pw = new android.widget.PopupWindow[1];
+
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(UiKit.sectionHeader(ctx, "列表文件密度"));
+        int pad = dp(4);
+        box.setPadding(pad, pad, pad, pad);
 
-        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        int surface = UiKit.color(ctx,
+                com.google.android.material.R.attr.colorSurfaceContainerHigh);
+        int stroke = UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOutline);
+        android.graphics.drawable.GradientDrawable gd = UiKit.rounded(
+                ctx, dp(8), surface, stroke);
+        gd.setStroke(dp(1), stroke);   // 明确边框
+        box.setBackground(gd);
+
         for (int i = 0; i < names.length; i++) {
             final int level = i + 1;
             final boolean cur = (listDensity == level);
+
             LinearLayout row = new LinearLayout(ctx);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(10), dp(13), dp(10), dp(13));
-            row.setBackgroundResource(R.drawable.bg_ripple_round);
+            row.setPadding(dp(12), dp(10), dp(12), dp(10));
+            row.setBackgroundResource(cur
+                    ? R.drawable.bg_ripple_round : R.drawable.bg_ripple_round);
             row.setClickable(true);
 
             TextView tv = new TextView(ctx);
             tv.setText(names[i]);
-            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
             tv.setTextColor(UiKit.color(ctx, cur
                     ? com.google.android.material.R.attr.colorPrimary
                     : com.google.android.material.R.attr.colorOnSurface));
@@ -5047,7 +5096,7 @@ public class FileManagerModule extends HyVqModule {
             if (cur) {
                 TextView tick = new TextView(ctx);
                 tick.setText("✓");
-                tick.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+                tick.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
                 tick.setTextColor(UiKit.color(ctx,
                         com.google.android.material.R.attr.colorPrimary));
                 row.addView(tick);
@@ -5056,11 +5105,20 @@ public class FileManagerModule extends HyVqModule {
             row.setOnClickListener(v -> {
                 applyDensity(level);
                 if (valueLabel != null) valueLabel.setText(names[level - 1] + "  ▾");
-                UiKit.dismissWithAnim(d);
+                if (pw[0] != null) pw[0].dismiss();
             });
             box.addView(row);
         }
-        d.show();
+
+        android.widget.PopupWindow p = new android.widget.PopupWindow(box,
+                dp(150), ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        p.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0x00000000));
+        p.setElevation(dp(8));
+        p.setOutsideTouchable(true);
+        p.setFocusable(true);
+        pw[0] = p;
+        // 左对齐锚点行、贴在它下沿
+        p.showAsDropDown(anchor, 0, dp(2));
     }
 
     /**
@@ -5068,7 +5126,7 @@ public class FileManagerModule extends HyVqModule {
      *
      * @param valueView 右侧承载当前值的 View（调用方负责文字与样式）
      */
-    private void addPickerRow(LinearLayout parent, String title, View valueView,
+    private View addPickerRow(LinearLayout parent, String title, View valueView,
                               View.OnClickListener onClick) {
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -5089,6 +5147,7 @@ public class FileManagerModule extends HyVqModule {
 
         row.addView(valueView);
         parent.addView(row);
+        return row;
     }
 
     /** addSliderRow 最近创建的 SeekBar（供调用方挂监听） */
