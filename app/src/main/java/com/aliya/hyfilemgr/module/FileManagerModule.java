@@ -1226,6 +1226,29 @@ public class FileManagerModule extends HyVqModule {
     @Override
     public void onResume() {
         refreshPermissionBar();
+        resumePendingInstall();
+    }
+
+    /**
+     * 从「安装未知应用」系统设置回来后，自动继续之前被权限挡下的下载。
+     *
+     * <p>需一次 {@code post}：onResume 时 {@code canRequestPackageInstalls()}
+     * 在部分 ROM 上还有几十毫秒的延迟刷新，直接查可能仍返回 false。</p>
+     */
+    private void resumePendingInstall() {
+        final UpdateInfo pending = pendingInstallInfo;
+        if (pending == null) return;
+        handler.postDelayed(() -> {
+            if (detached || pendingInstallInfo == null) return;
+            if (!canRequestInstall()) {
+                // 用户没给权限就回来了：清掉待办，不要再打扰
+                pendingInstallInfo = null;
+                UiKit.toast(ctx, "未开启安装权限，已取消更新");
+                return;
+            }
+            pendingInstallInfo = null;
+            downloadAndInstall(pending);
+        }, 400);
     }
 
     private void requestAllFilesAccess() {
@@ -4087,9 +4110,12 @@ public class FileManagerModule extends HyVqModule {
                   + "/HYFileManager-" + info.ver + ".apk";
 
         if (!canRequestInstall()) {
+            // 记下来：用户在系统设置里授权完回来，onResume 会自动续上
+            pendingInstallInfo = info;
             askInstallPermission();
             return;
         }
+        pendingInstallInfo = null;
 
         final android.app.ProgressDialog pd = new android.app.ProgressDialog(ctx);
         pd.setMessage("正在下载 " + info.ver + "…");
@@ -10141,8 +10167,31 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 跳系统设置让用户开启「安装未知应用」，回来后重试。 */
+    /** 待下载的更新：授权回来后自动继续。null = 没有待办 */
+    private UpdateInfo pendingInstallInfo;
+    /** 授权弹窗引用：跳到系统设置前先关掉，避免回来后它还在最上层 */
+    private android.app.Dialog pkgInstallDialog;
+
+    /**
+     * 申请「安装未知应用」权限。
+     *
+     * <p><b>旧实现两个缺陷</b>：
+     * ① 按钮里用 {@code ((View) v.getParent()).getTag()} 取 Dialog，
+     *    但那段代码从来没 setTag 过 —— 取到 null，
+     *    {@code dismissWithAnim(null)} 什么也不做，「取消」点了没反应。
+     * ② 跳去系统设置授权后回来，没有任何续接逻辑，
+     *    用户必须自己去菜单再点一次「检查更新」。
+     *
+     * <p>现在：弹窗持有自身引用；「去开启」先 dismiss 再去设置页；
+     * 记录 pendingInstallInfo，在 onResume 检测到权限已给时自动继续下载。</p>
+     */
     private void askInstallPermission() {
+        if (pkgInstallDialog != null && pkgInstallDialog.isShowing()) return;
         final android.app.Dialog d = UiKit.glassDialog(ctx, buildAskInstallBody());
+        pkgInstallDialog = d;
+        d.setOnDismissListener(x -> {
+            if (pkgInstallDialog == d) pkgInstallDialog = null;
+        });
         d.show();
     }
 
@@ -10153,9 +10202,9 @@ public class FileManagerModule extends HyVqModule {
 
         TextView tv = new TextView(ctx);
         tv.setText("安装更新需要你允许 HY文件管理「安装未知应用」。\n\n"
-                + "点下方「去开启」会跳到系统设置，找到本应用的开关打开，"
-                + "然后返回即可继续安装。\n\n"
-                + "这是 Android 从 8.0 开始的强制限制，任何应用安装安装包都要这一步。");
+                + "点「去开启」会跳到系统设置，打开开关后返回，"
+                + "会**自动继续下载**，不用再点一次「检查更新」。\n\n"
+                + "这是 Android 8.0 起的强制限制，任何应用安装安装包都要这一步。");
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tv.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
@@ -10165,10 +10214,21 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout btns = new LinearLayout(ctx);
         btns.setGravity(Gravity.END);
         btns.setPadding(0, dp(16), 0, 0);
-        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim((android.app.Dialog)
-                ((View) v.getParent()).getTag())));
+
+        btns.addView(textButton("取消", v -> {
+            // 直接关掉这个弹窗（不走 tag，tag 从来没设过）
+            if (pkgInstallDialog != null) {
+                UiKit.dismissWithAnim(pkgInstallDialog);
+            }
+            // 取消就清掉待办，免得 onResume 又自动开始下载
+            pendingInstallInfo = null;
+        }));
+
         btns.addView(textButton("去开启", v -> {
-            UiKit.dismissWithAnim((android.app.Dialog) ((View) v.getParent()).getTag());
+            // 先关自己的弹窗，再去系统设置 —— 否则回来时它还盖在最上层
+            if (pkgInstallDialog != null) {
+                UiKit.dismissWithAnim(pkgInstallDialog);
+            }
             openInstallPermissionSetting();
         }));
         box.addView(btns);
