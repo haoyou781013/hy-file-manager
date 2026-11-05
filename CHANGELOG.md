@@ -58,6 +58,14 @@
 - 下载 APK 到 cacheDir 并调起安装；先查 `canRequestPackageInstalls()`
 - `stripMarkdown()`：弹窗不再显示 `##` / `**`
 
+**1.0.1 重发补丁**（首版发布后用户实测发现）：
+- 权限弹窗按钮用 `((View)v.getParent()).getTag()` 取 Dialog，但从未 setTag
+  → 取到 null → `dismissWithAnim(null)` 无效 →「取消」点不动，
+    「去开启」跳设置后弹窗不关，回来仍盖在最上层
+- 改为弹窗持有自身引用 `pkgInstallDialog`；「去开启」先 dismiss 再跳
+- 新增 `pendingInstallInfo` + `onResume → resumePendingInstall()`：
+  授权返回后延迟 400ms 自动续上下载；未授权则清待办并提示
+
 ### 导航（8 项）
 
 - 顶栏图标三态：文件页/设置主页=☰，设置子页=←
