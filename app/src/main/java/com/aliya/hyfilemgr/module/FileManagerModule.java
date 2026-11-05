@@ -3921,6 +3921,42 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 有新版本时的详情弹窗 */
+    /**
+     * 把 Markdown 标记去掉，只留可读文本。
+     *
+     * <p>更新说明是给普通用户看的，弹窗用 TextView 纯文本渲染 ——
+     * 直接把 ## / ### / ** 显示出来会像一堆符号噪声。
+     * 这里做最小转换：标题行去掉井号、去掉粗体星号、
+     * 列表符号统一成「·  」，去掉包装用的反引号。</p>
+     *
+     * <p>不做完整 Markdown 解析：更新说明的格式是我们自己写的，
+     * 只用到这几种标记，完整解析器是过度设计。</p>
+     */
+    private static String stripMarkdown(String md) {
+        if (md == null || md.isEmpty()) return "";
+        StringBuilder out = new StringBuilder(md.length());
+        for (String raw : md.split("\n", -1)) {
+            String line = raw;
+            if (line.trim().matches("^-{3,}$")) {
+                out.append('\n');
+                continue;
+            }
+            int hash = 0;
+            while (hash < line.length() && line.charAt(hash) == '#') hash++;
+            if (hash > 0 && hash < line.length() && line.charAt(hash) == ' ') {
+                out.append('\n').append(line.substring(hash + 1).trim()).append('\n');
+                continue;
+            }
+            String t = line.trim();
+            if (t.startsWith("- ") || t.startsWith("* ")) {
+                line = "·  " + t.substring(2);
+            }
+            line = line.replace("**", "").replace("__", "").replace("`", "");
+            out.append(line).append('\n');
+        }
+        return out.toString().replaceAll("\n{3,}", "\n\n").trim();
+    }
+
     private void showUpdateDetailDialog(UpdateInfo info) {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -3929,17 +3965,17 @@ public class FileManagerModule extends HyVqModule {
         TextView tv = new TextView(ctx);
         StringBuilder sb = new StringBuilder();
         sb.append("版本：").append(info.ver).append('\n');
-        sb.append("versionCode：").append(info.code).append('\n');
-        sb.append("发布：" ).append(info.date).append('\n');
+        sb.append("发布于：").append(info.date).append('\n');
         if (!info.body.isEmpty()) {
-            sb.append('\n').append(info.body);
+            sb.append('\n').append(stripMarkdown(info.body));
         }
         tv.setText(sb.toString());
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tv.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
-        tv.setLineSpacing(dp(2), 1f);
+        tv.setLineSpacing(dp(3), 1f);
         tv.setTextIsSelectable(true);
+        tv.setPadding(0, dp(8), 0, dp(4));
         box.addView(tv);
 
         LinearLayout btns = new LinearLayout(ctx);

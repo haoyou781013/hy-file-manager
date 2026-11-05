@@ -189,6 +189,28 @@
 - ACCESS_NETWORK_STATE / REQUEST_INSTALL_PACKAGES 零使用
 - docs/ 的终端 / 终末地残留 6 处
 
+
+### 更新日志改为面向普通用户
+
+两个问题：
+1. **`versions.json` 的 body 全是技术名词**：ArchiveItem、SevenZFile、
+   junrar、TaskKeepAliveService、RecyclerView…… 普通用户看不懂，
+   而这份内容正是 App 里「软件更新」弹窗直接展示的。
+2. **弹窗把 Markdown 当纯文本渲染**：用户看到的是 `## 1.0.0`、`### 新增`、
+   `**软件更新**`，一堆井号和星号。
+
+改法：
+- `versions.json` 的 body 重写为普通用户视角：只说「能看见什么变化」
+  和「以前会怎样、现在会怎样」，不出现任何类名/API 名。
+  技术名词已用脚本核验清零。
+- 新增 `stripMarkdown()`：弹窗渲染前去掉 `#`、`**`、反引号、
+  `---`，列表符号统一为「·」。不做完整 Markdown 解析 ——
+  格式是我们自己写的，只用这几种标记。
+- 弹窗字号 12sp → 13sp，行距 2dp → 3dp，长文更好读。
+- 「versionCode」那行去掉（用户不关心），日期改「发布于」。
+- `CHANGELOG.md` 保留技术细节，但头部加说明区分两者的用途。
+
+
 #### 待办
 （见上方「未修」）
 
