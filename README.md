@@ -3,7 +3,7 @@
 Android 双窗格文件管理器。支持 11 种压缩格式的创建与解压、内置文本编辑器、媒体播放器。
 
 - **仓库**：[GitHub](https://github.com/haoyou781013/hy-file-manager) · [Gitee](https://gitee.com/haoyou781/hy-file-manager)
-- **当前版本**：1.0.0（versionCode 5）
+- **当前版本**：1.0.1（versionCode 6）
 - **包名**：`com.aliya.hyfilemgr`
 - **最低系统**：Android 6.0（API 23）
 
@@ -91,8 +91,15 @@ export ANDROID_HOME=/path/to/android-sdk
 
 所有文件操作均在本地完成，不上传任何数据。
 
-**唯一的网络请求**是「设置 → 软件更新 → 检查更新」，向
-`raw.githubusercontent.com` 或 `gitee.com` 拉取 `versions.json`，
+**唯一的网络请求**是「设置 → 软件更新 → 检查更新」，按以下顺序依次尝试
+拉取 `versions.json`，任一成功即停止：
+
+1. `gitee.com`（国内直连，首选）
+2. `cdn.jsdelivr.net`（GitHub 镜像）
+3. `gh-proxy.com`（GitHub 镜像）
+4. `raw.githubusercontent.com`（GitHub 原始地址，兜底）
+
+下载新版本 APK 时同样只访问上述域名（GitHub Release 走 1、3、4）。
 请求中只带 User-Agent（含版本号），不发送设备标识或任何文件内容。
 
 ---
