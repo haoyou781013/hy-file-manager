@@ -3739,32 +3739,32 @@ public class FileManagerModule extends HyVqModule {
         // ── 权限管理 ──
         addSettingsRow(box, "权限管理",
                 "所有文件访问 · 存储权限 · SAF 授权", R.drawable.ic_lock, v -> {
-                    showInSettingsDialog(this::buildPermissionManager);
+                    showInSettingsDialog("权限管理", this::buildPermissionManager);
                 });
 
         // ── 文件管理 ──
         addSettingsRow(box, "文件管理",
                 "隐藏文件 · 缩略图 · 排序方式", R.drawable.ic_folder, v -> {
-                    showInSettingsDialog(this::buildFileSettings);
+                    showInSettingsDialog("文件管理", this::buildFileSettings);
                 });
 
         // ── 个性化 ──
         addSettingsRow(box, "个性化",
                 "显示密度(DPI) · 列表文件密度 · 界面主题", R.drawable.ic_sliders, v -> {
-                    showInSettingsDialog(this::buildAppearanceSettings);
+                    showInSettingsDialog("个性化", this::buildAppearanceSettings);
                 });
 
         // ── 软件更新 ──
         addSettingsRow(box, "软件更新",
                 "当前 " + appVersionName() + " · 检查是否有新版本",
                 R.drawable.ic_refresh, v -> {
-                    showInSettingsDialog(this::showUpdatePageBody);
+                    showInSettingsDialog("软件更新", this::showUpdatePageBody);
                 });
 
         // ── 关于 ──
         addSettingsRow(box, "关于",
                 "版本信息 · 开源仓库 · 开发说明", R.drawable.ic_info, v -> {
-                    showInSettingsDialog(this::showAboutPageBody);
+                    showInSettingsDialog("关于", this::showAboutPageBody);
                 });
         return box;
     }
@@ -4265,9 +4265,27 @@ public class FileManagerModule extends HyVqModule {
      * 这样没有任何窗口/遮罩开销，切换只是换子 View。</p>
      */
     private void showInSettingsDialog(java.util.function.Supplier<View> contentSupplier) {
+        showInSettingsDialog("", contentSupplier);
+    }
+
+    /**
+     * 在原地切到某个设置子页，并把子页名同步到共享顶栏。
+     *
+     * <p><b>为什么标题必须在这里设</b>：顶栏是共享的，只有
+     * {@code settingsTopTitle} 这一段会随子页变化。旧实现让各子页
+     * 自己在内容体开头写 {@code settingsTopTitle.setText(...)} ——
+     * 结果 5 个子页里只有 3 个写了（权限管理/个性化/文件管理），
+     * 软件更新、关于、设置主页全漏，顶栏显示成「设置 | 」后面空着，
+     * 用户不知道自己在哪一页。</p>
+     *
+     * <p>改成由入口统一传标题：新增子页时不可能再忘。</p>
+     */
+    private void showInSettingsDialog(String title,
+                                      java.util.function.Supplier<View> contentSupplier) {
         if (contentWrapRef == null) return;
         View v = contentSupplier.get();
         if (v == null) return;
+        if (settingsTopTitle != null) settingsTopTitle.setText(title == null ? "" : title);
 
         if (settingsEmbedView == null) {
             settingsEmbedView = new LinearLayout(ctx);
@@ -4377,20 +4395,20 @@ public class FileManagerModule extends HyVqModule {
 
     /** 打开设置主页（内嵌视图） */
     private void showSettingsPage() {
-        showInSettingsDialog(this::buildSettingsRoot);
+        showInSettingsDialog("设置", this::buildSettingsRoot);
     }
 
     /** 薄包装：以独立弹窗打开（保持既有调用点兼容） */
     private void showPermissionManager() {
-        showInSettingsDialog(this::buildPermissionManager);
+        showInSettingsDialog("权限管理", this::buildPermissionManager);
     }
 
     private void showFileSettings() {
-        showInSettingsDialog(this::buildFileSettings);
+        showInSettingsDialog("文件管理", this::buildFileSettings);
     }
 
     private void showAppearanceSettings() {
-        showInSettingsDialog(this::buildAppearanceSettings);
+        showInSettingsDialog("个性化", this::buildAppearanceSettings);
     }
 
     private void hideSettingsDialog() {
@@ -4447,7 +4465,6 @@ public class FileManagerModule extends HyVqModule {
 
     /** 权限管理页：所有文件访问 / 存储权限 / SAF 授权目录 */
     private View buildPermissionManager() {
-        if (settingsTopTitle != null) settingsTopTitle.setText("权限管理");
         LinearLayout box = new LinearLayout(ctx);
         box.addView(buildSettingsBackRow("返回设置主页"));
         box.setOrientation(LinearLayout.VERTICAL);
@@ -4828,7 +4845,6 @@ public class FileManagerModule extends HyVqModule {
 
     /** 个性化设置页：显示密度(DPI) + 列表文件密度（均为进度条式） */
     private View buildAppearanceSettings() {
-        if (settingsTopTitle != null) settingsTopTitle.setText("个性化");
         LinearLayout box = new LinearLayout(ctx);
         box.addView(buildSettingsBackRow("返回设置主页"));
         box.setOrientation(LinearLayout.VERTICAL);
@@ -5069,7 +5085,6 @@ public class FileManagerModule extends HyVqModule {
 
     /** 文件管理设置页：隐藏文件 / 缩略图 / 排序 */
     private View buildFileSettings() {
-        if (settingsTopTitle != null) settingsTopTitle.setText("文件管理");
         LinearLayout box = new LinearLayout(ctx);
         box.addView(buildSettingsBackRow("返回设置主页"));
         box.setOrientation(LinearLayout.VERTICAL);
@@ -5523,7 +5538,7 @@ public class FileManagerModule extends HyVqModule {
                 "隐藏文件 · 缩略图 · 排序 · 回收站",
                 R.drawable.ic_folder, v -> {
                     closeNavSidebarThen(() -> {
-                        showInSettingsDialog(this::buildFileSettings);
+                        showInSettingsDialog("文件管理", this::buildFileSettings);
                     });
                 }));
 
