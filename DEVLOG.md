@@ -88,6 +88,49 @@ UiKit.dismissWithAnim((Dialog) ((View) v.getParent()).getTag())
 删掉背景图时恢复不透明。
 
 ---
+### 修：打开侧边栏崩溃（ClassCastException）
+
+崩溃：
+```
+java.lang.ClassCastException: android.widget.ImageView
+  cannot be cast to android.view.ViewGroup
+  at showNavSidebar(FileManagerModule:3756)
+  at 汉堡图标 onClick
+```
+
+**根因**：是上一版加背景层引入的连锁反应。
+
+`showNavSidebar()` 要找 `rootContainer` 里除 `navOverlay` 外的第一个子节点，
+当作毛玻璃模糊目标：
+
+```java
+for (int i = 0; i < rootContainer.getChildCount(); i++) {
+    View c = rootContainer.getChildAt(i);
+    if (c != navOverlay) {
+        blurTarget = (ViewGroup) c;   // ← 崩
+        break;
+    }
+}
+```
+
+原来 `rootContainer` 的子节点是 `[body, navOverlay]`，第一个非 navOverlay 的就是
+`body`（LinearLayout，能转 ViewGroup）。
+
+`attachBackgroundLayer()` 用 `addView(bgImageView, 0, lp)` 把背景图插到了 index 0，
+于是变成 `[bgImageView, body, navOverlay]`，循环第一个命中的就是 `bgImageView`
+（ImageView），强转直接崩。
+
+**修法**：判断条件加上 `instanceof ViewGroup`，跳过非容器节点。
+
+**同一处隐患还有第二处**（关闭侧边栏时清 renderEffect，原 `FileManagerModule:6620`）：
+那里有 try-catch，`ClassCastException` 被吞掉不崩溃，但**模糊永远清不掉**。
+症状是关掉侧边栏后，文件列表一直糊着。一并改成 `instanceof` 判断。
+
+**核查**：全仓只有这两处遍历 `rootContainer`，没有其他按索引取子节点的代码；
+`navOverlay` 靠添加顺序置顶，未用 `bringToFront`，背景层插 index 0 不影响其 z-order。
+
+**验证**：assembleRelease 通过，装机启动无 FATAL。
+侧边栏开关的实际毛玻璃效果**未实测**。
 
 ## 设备侧工作（2026-11-06，非本项目代码）
 

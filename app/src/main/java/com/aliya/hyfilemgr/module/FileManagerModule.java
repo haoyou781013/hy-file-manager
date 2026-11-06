@@ -3749,10 +3749,12 @@ public class FileManagerModule extends HyVqModule {
         // 真毛玻璃：Android 12+ 对 body(文件列表)施加模糊，透过磨砂面板看到虚化内容(同外部侧边栏)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             ViewGroup blurTarget = rootContainer;
-            // 模糊 body(索引0)而非 navOverlay 本身
+            // 模糊 body 而非 navOverlay 本身。
+            // 必须同时判 instanceof：背景图 ImageView 也被插在 rootContainer 里，
+            // 只判 c != navOverlay 会第一个命中它，强转 ViewGroup 直接崩。
             for (int i = 0; i < rootContainer.getChildCount(); i++) {
                 View c = rootContainer.getChildAt(i);
-                if (c != navOverlay) {
+                if (c != navOverlay && c instanceof ViewGroup) {
                     blurTarget = (ViewGroup) c;
                     break;
                 }
@@ -6616,7 +6618,10 @@ public class FileManagerModule extends HyVqModule {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && rootContainer != null) {
                         for (int i = 0; i < rootContainer.getChildCount(); i++) {
                             View c = rootContainer.getChildAt(i);
-                            if (c != navOverlay) {
+                            // 同 showNavSidebar：背景图 ImageView 也在这个容器里，
+                            // 只判 c != navOverlay 会命中它，强转失败被 catch 吞掉，
+                            // 表现为模糊永远清不掉。必须判 instanceof。
+                            if (c != navOverlay && c instanceof ViewGroup) {
                                 try { ((ViewGroup) c).setRenderEffect(null); } catch (Throwable ignored) {}
                                 break;
                             }
