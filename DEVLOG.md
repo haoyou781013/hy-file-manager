@@ -89,6 +89,49 @@ UiKit.dismissWithAnim((Dialog) ((View) v.getParent()).getTag())
 
 ---
 
+## 设备侧工作（2026-11-06，非本项目代码）
+
+### 通过 OTG 在一加手机上建立 adb/fastboot 环境
+
+无 PC 前提下，用一加（USB Host）直接调试 Redmi 13R。
+
+**为什么这么绕**：Termux 运行在 `untrusted_app` SELinux 域，对 `usb_device` 判 deny，
+`chmod 666` 节点与 `chmod 755` 父目录均无效。必须以 root 运行 adb。
+
+**四道墙与破法**：
+1. Termux 用户无 USB 权限 → 以 root 运行 adb
+2. `/data/data` 在 root shell 内不可见 → 二进制与库先搬到 `/sdcard`，再搬到 `/data/local/tmp/usbh`
+3. 换 HOME 就换 RSA 密钥 → 复制 Termux 已授权的 `adbkey` 过去，否则 `adb devices` 恒为空
+4. 官方静态 aarch64 adb 必撞 bionic fdsan 崩溃 → 改用 Termux 版 android-tools 37.0.0p1
+
+**建成环境**：`/data/local/tmp/usbh/`（adb + fastboot + 322 个 .so + adbkey）
+
+**调用模板**：
+```bash
+export LD_LIBRARY_PATH=/data/local/tmp/usbh/lib HOME=/data/local/tmp/usbh
+/data/local/tmp/usbh/adb devices
+```
+
+**验证结果**：
+- `adb devices` → `CUX87P4T6XWWLZ5T device product:air model:23124RN87C`
+- `fastboot devices` → `CUX87P4T6XWWLZ5T fastboot`
+- 相册备份 1.6 GB / 2250 个文件 → `10-Redmi备份/`
+
+### 解锁 BL：未达成
+
+```
+fastboot flashing unlock   → unknown command
+fastboot oem unlock        → (bootloader) Start unlock flow
+                             FAILED (remote: 'Failed to unlock the device')
+```
+
+bootloader 接受命令并已向小米服务器发起校验，**被服务器拒绝**。
+阻塞点在账号资格（绑定时长/社区等级），不在本地环境。
+
+**下次入口**：目标机 `设置 → 更多设置 → 开发者选项 → 设备解锁状态` 读取提示。
+
+---
+
 ## 待发布
 
 （待汇总）
