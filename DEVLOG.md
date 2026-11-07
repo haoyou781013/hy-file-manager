@@ -160,18 +160,47 @@ export LD_LIBRARY_PATH=/data/local/tmp/usbh/lib HOME=/data/local/tmp/usbh
 - `fastboot devices` → `CUX87P4T6XWWLZ5T fastboot`
 - 相册备份 1.6 GB / 2250 个文件 → `10-Redmi备份/`
 
-### 解锁 BL：未达成
+### 解锁 BL：已实测排除，除官方通道外无技术路径
+
+2026-11-08 真机跑完 12 条 fastboot 命令：
+
+| 命令 | 返回 |
+|---|---|
+| `flashing unlock` / `unlock_critical` | `unknown command` |
+| `oem unlock` / `unlock-go` / `unlock 0` / `unlock 1` | `Start unlock flow` → `Failed to unlock the device` |
+| `oem device-info` / `get_unlock_ability` | `unknown command` |
+| `oem lock` | `No support by lock control` |
+| `flashing lock` / `oem relock` / `reboot-edl` | `unknown command` |
+
+**决定性变量**：
 
 ```
-fastboot flashing unlock   → unknown command
-fastboot oem unlock        → (bootloader) Start unlock flow
-                             FAILED (remote: 'Failed to unlock the device')
+tokenversion        = 2     ← 网上所有强解教程针对 v1，v2 协议已换
+anti                = 1     ← 防回滚启用
+get_unlock_ability  = 空     ← AOSP 规范要求为 1 才允许
+sys.oem_unlock_allowed = 1  ← 仅 Android 侧开关，bootloader 不读
 ```
 
-bootloader 接受命令并已向小米服务器发起校验，**被服务器拒绝**。
-阻塞点在账号资格（绑定时长/社区等级），不在本地环境。
+**不可行原因（物理层面，不是还没试）**：
 
-**下次入口**：目标机 `设置 → 更多设置 → 开发者选项 → 设备解锁状态` 读取提示。
+| 方案 | 阻塞点 |
+|---|---|
+| MTK BROM / mtkclient | proot 内 `libusb_init = -99`（实测），且需 PC |
+| 9008 / EDL | 联发科无此模式 |
+| amonet 等 BROM 漏洞 | README 只支持 3 款 Amazon Echo Show |
+| 伪造 token | v2 协议 + 服务端私钥签名 |
+| 改 bootloader | 签名保护，改一字节即砖 |
+
+**AOSP 规范依据**：`source.android.com` 明确 `get_unlock_ability` 未设置时
+设备 should deny `flashing unlock`。小米在上层加了服务端 token 校验。
+
+**唯一可行路径**：`gauthamnair2005/Redmi13C5G_Air_Resources` 的解锁请求脚本
+（README 承认不绕过资格，只自动抢整点），前提是 30 天小米账号 + 手机卡 + 社区活跃。
+拿到资格后等 168 小时 → `fastboot oem unlock` → 刷 TWRP/ROM
+（`suchit-7x/twrp_device_xiaomi_air` + `mt6835-devs/android_device_xiaomi_air`）。
+
+**附带教训**：`fastboot getvar all` 输出数百行，连续调用会让 bootloader
+卡死、手机自行重启。查变量必须逐个查。
 
 ---
 
