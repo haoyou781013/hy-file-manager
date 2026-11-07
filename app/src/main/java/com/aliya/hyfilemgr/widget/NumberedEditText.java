@@ -28,8 +28,12 @@ public class NumberedEditText extends AppCompatEditText {
     private int gutterBgColor;
     private int gutterTextColor;
 
-    private final Paint gutterText = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint gutterBg = new Paint();
+    // 不能用 final 就地初始化：ColorOS 的 OplusFontManager 会在
+    // TextView 构造**中途**（applyTextAppearance）回调 setTypeface，
+    // 那时这些字段还没赋上值，final 字段读出 null，下一行就 NPE。
+    // 改成普通字段 + 在 setTypeface 里判空跳过。
+    private Paint gutterText = null;
+    private Paint gutterBg = null;
 
     public NumberedEditText(@NonNull Context context) {
         super(context);
@@ -48,6 +52,8 @@ public class NumberedEditText extends AppCompatEditText {
     }
 
     private void init() {
+        if (gutterText == null) gutterText = new Paint(Paint.ANTI_ALIAS_FLAG);
+        if (gutterBg == null) gutterBg = new Paint();
         gutterText.setTextAlign(Paint.Align.RIGHT);
         gutterText.setTypeface(getTypeface());
         gutterText.setTextSize(getTextSize());
@@ -58,6 +64,7 @@ public class NumberedEditText extends AppCompatEditText {
 
     /** 设置行号栏宽度（px）、左右内边距（px）与配色 */
     public void setGutter(int widthPx, int padPx, int bgColor, int textColor) {
+        if (gutterText == null || gutterBg == null) init();
         this.gutterWidth = Math.max(0, widthPx);
         this.gutterPad = Math.max(0, padPx);
         this.gutterBgColor = bgColor;
@@ -76,6 +83,9 @@ public class NumberedEditText extends AppCompatEditText {
     @Override
     public void setTypeface(Typeface tf) {
         super.setTypeface(tf);
+        // 构造中途系统就会调到这里（见字段注释），此时 Paint 还是 null。
+        // 跳过即可：init() 里会用 getTypeface() 重新同步一次。
+        if (gutterText == null) return;
         gutterText.setTypeface(tf);
         invalidate();
     }
@@ -83,6 +93,8 @@ public class NumberedEditText extends AppCompatEditText {
     @Override
     public void setTextSize(float size) {
         super.setTextSize(size);
+        // 与 setTypeface 同理：构造期可能被系统提前回调，Paint 还没建
+        if (gutterText == null) return;
         gutterText.setTextSize(getTextSize());
         invalidate();
     }
@@ -90,6 +102,7 @@ public class NumberedEditText extends AppCompatEditText {
     @Override
     public void setTextSize(int unit, float size) {
         super.setTextSize(unit, size);
+        if (gutterText == null) return;
         gutterText.setTextSize(getTextSize());
         invalidate();
     }
@@ -112,6 +125,7 @@ public class NumberedEditText extends AppCompatEditText {
         // 横向滚动时内容整体左移 scrollX，gutter 要钉在左端 → translate(scrollX)。
         canvas.save();
         canvas.translate(scrollX, 0f);
+        if (gutterBg == null) return;
         canvas.drawRect(0f, 0f, gutterWidth, height, gutterBg);
         canvas.restore();
 
