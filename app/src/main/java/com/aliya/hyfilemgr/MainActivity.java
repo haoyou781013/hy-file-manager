@@ -20,6 +20,30 @@ public class MainActivity extends AppCompatActivity {
 
     private FileManagerModule module;
 
+    /**
+     * 系统照片选择器。
+     *
+     * <p>选背景图必须用它，不能用 {@code ACTION_OPEN_DOCUMENT} 或 {@code ACTION_PICK}：
+     * <ul>
+     *   <li>{@code ACTION_OPEN_DOCUMENT} 打开的是 DocumentsUI 文件树，不是相册；</li>
+     *   <li>{@code ACTION_PICK} 带 CATEGORY_DEFAULT，多个应用能处理时会弹
+     *       「打开方式」让用户再选一次，且各 ROM 的图库包名不同，
+     *       硬编码包名只能覆盖部分机型。</li>
+     * </ul>
+     * {@code PickVisualMedia} 是 AndroidX 的跨版本封装：Android 13+ 走系统
+     * Photo Picker，低版本自动回退到文档选择器，无需判断包名。
+     * 注册必须在 onCreate 之前（成员初始化阶段），否则会抛 IllegalStateException。</p>
+     */
+    private final androidx.activity.result.ActivityResultLauncher<
+            androidx.activity.result.PickVisualMediaRequest> bgPickerLauncher =
+            registerForActivityResult(
+                    new androidx.activity.result.contract.ActivityResultContracts
+                            .PickVisualMedia(), uri -> {
+                        if (module != null && uri != null) {
+                            module.onPickBackgroundResult(uri);
+                        }
+                    });
+
     @Override
     protected void attachBaseContext(Context base) {
         // 读取已保存的 DPI 覆盖，在 Activity 创建前套用到 Context。
@@ -113,6 +137,11 @@ public class MainActivity extends AppCompatActivity {
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
         module = new FileManagerModule();
+        module.setBgPickerLauncher(() -> bgPickerLauncher.launch(
+                new androidx.activity.result.PickVisualMediaRequest.Builder()
+                        .setMediaType(androidx.activity.result.contract
+                                .ActivityResultContracts.PickVisualMedia.ImageOnly.INSTANCE)
+                        .build()));
         // ⚠️ 必须先 onAttach：它内部调用 restoreState() 读取用户偏好
         // （隐藏文件 / 缩略图 / 排序 / 网格）。此前直接 createMainView 会跳过
         // 恢复流程，导致所有设置写入成功却永远不会被读回，表现为重启后丢失。

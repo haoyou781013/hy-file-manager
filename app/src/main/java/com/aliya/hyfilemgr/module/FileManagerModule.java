@@ -2478,9 +2478,16 @@ public class FileManagerModule extends HyVqModule {
         // 3. 设置弹窗（showSettingsDialog 系列的 Dialog）
         //    没有单独字段，靠 Activity 的 Window 判断太脆；
         //    这里靠 settingsEmbedView 与 contentMode 区分「内嵌设置页」
-        // 4. 内嵌设置页 → 回文件列表
+        // 4. 内嵌设置页：逐层退回，不要一步跳回文件列表。
+        //    子页 → 设置主页 → 文件列表。
+        //    直接 setContentMode(FILES) 会让用户在任意子页按返回都被弹到
+        //    文件列表，丢掉「我在设置里」的层级感。
         if (contentMode == ContentMode.SETTINGS) {
-            setContentMode(ContentMode.FILES);
+            if (!currentSettingsPage.isEmpty()) {
+                showSettingsPage();      // 子页 → 设置主页
+            } else {
+                setContentMode(ContentMode.FILES);   // 设置主页 → 文件列表
+            }
             return true;
         }
         // 5. 虚拟路径（压缩包内 / 回收站）→ 逐级返回
@@ -5399,7 +5406,14 @@ public class FileManagerModule extends HyVqModule {
 
     // ── 背景图选择入口 ──
 
-    private static final int REQ_PICK_BG = 0x4B47;   // 图片选择器
+    private static final int REQ_PICK_BG = 0x4B47;   // 老式 startActivityForResult 通道（retired）
+    /** 系统照片选择器的启动器，由 MainActivity 注册后注入 */
+    private Runnable bgPickerLauncher;
+
+    /** MainActivity 注册好 PickVisualMedia 后注入 */
+    public void setBgPickerLauncher(Runnable r) {
+        this.bgPickerLauncher = r;
+    }
 
     /**
      * 选背景图：弹两个入口给用户选。
@@ -5438,23 +5452,37 @@ public class FileManagerModule extends HyVqModule {
 
     /** 系统图片选择器（默认落到相册） */
     private void launchImagePicker() {
-        try {
-            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            i.addCategory(Intent.CATEGORY_OPENABLE);
-            i.setType("image/*");
-            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-            if (hostActivity != null) {
-                hostActivity.startActivityForResult(i, REQ_PICK_BG);
-            } else {
-                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                ctx.startActivity(i);
+        // 优先直连系统 Photo Picker（Android 13+ / API 33+）。
+        //
+        // 不能只依赖 AndroidX 的 PickVisualMedia：它在部分 ROM 上会判定
+        // 「没有系统选择器」并回退到 ACTION_OPEN_DOCUMENT，而后者能被多个
+        // 应用处理，于是弹出 ResolverActivity（「打开方式」）。
+        // 实测本机 com.android.photopicker 存在，直接走系统 Action 最稳。
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            try {
+                Intent pickImages = new Intent(android.provider.MediaStore.ACTION_PICK_IMAGES);
+                pickImages.setType("image/*");
+                // 限定包名，杜绝任何「打开方式」弹窗
+                pickImages.setPackage("com.android.photopicker");
+                if (hostActivity != null
+                        && pickImages.resolveActivity(ctx.getPackageManager()) != null) {
+                    hostActivity.startActivityForResult(pickImages, REQ_PICK_BG);
+                    return;
+                }
+            } catch (Throwable ignored) {
             }
-        } catch (Throwable t) {
-            // 没有图库应用时退到自建文件列表
-            UiKit.toast(ctx, "没有可用的图片选择器，改用文件列表");
-            showBgFileBrowser();
         }
+        // 没有系统 Photo Picker（或包名不同）：用 AndroidX PickVisualMedia，
+        // 它会自动回退到 ACTION_OPEN_DOCUMENT
+        if (bgPickerLauncher != null) {
+            try {
+                bgPickerLauncher.run();
+                return;
+            } catch (Throwable ignored) {
+            }
+        }
+        UiKit.toast(ctx, "图片选择器不可用，改用文件列表");
+        showBgFileBrowser();
     }
 
     /**
@@ -5516,12 +5544,17 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 接收图片选择器结果（由 MainActivity 转发） */
+    /** 接收系统照片选择器返回的图片 Uri */
+    public void onPickBackgroundResult(android.net.Uri uri) {
+        if (uri == null) return;
+        setBackgroundFromUri(uri);
+    }
+
+    /** 老式 startActivityForResult 通道，保留兼容（当前未使用） */
     public void onPickBackgroundResult(int requestCode, int resultCode, Intent data) {
         if (requestCode != REQ_PICK_BG) return;
         if (resultCode != android.app.Activity.RESULT_OK || data == null) return;
-        android.net.Uri uri = data.getData();
-        if (uri == null) return;
-        setBackgroundFromUri(uri);
+        onPickBackgroundResult(data.getData());
     }
 
     /**
@@ -6415,6 +6448,10 @@ public class FileManagerModule extends HyVqModule {
         // ── 回收站（展开项）──
         final LinearLayout trashBox = new LinearLayout(ctx);
         trashBox.setOrientation(LinearLayout.VERTICAL);
+        // 展开区里的卡片本身已有底色，这里只做视觉缩进：
+        // 左侧内缩 12dp，让「标题行 → 展开内容」的从属关系看得出来。
+        // 不给 trashBox 自己加底色，否则会变成卡片套卡片的双层描边。
+        trashBox.setPadding(dp(12), dp(4), 0, 0);
         trashBox.setVisibility(trashExpanded ? View.VISIBLE : View.GONE);
 
         addInfoRow(trashBox, "启用回收站",
@@ -6453,8 +6490,11 @@ public class FileManagerModule extends HyVqModule {
         final LinearLayout trashHeader = new LinearLayout(ctx);
         trashHeader.setOrientation(LinearLayout.HORIZONTAL);
         trashHeader.setGravity(Gravity.CENTER_VERTICAL);
-        trashHeader.setPadding(dp(4), dp(10), dp(4), dp(6));
-        trashHeader.setBackgroundResource(R.drawable.bg_ripple_round);
+        trashHeader.setPadding(dp(12), dp(12), dp(12), dp(12));
+        // 与其它卡片共用同一套底色与描边；原来用静态 bg_ripple_round，
+        // 既跟不上卡片透明度，也没有那层浅描边，看着像裸露的一行
+        trashHeader.setBackground(cardSurface(-1));
+        trashHeader.setTag(CARD_TAG_KEY, Boolean.TRUE);
         trashHeader.setClickable(true);
         ImageView trashArrow = new ImageView(ctx);
         trashArrow.setImageResource(R.drawable.ic_chevron_right);
@@ -11503,19 +11543,6 @@ public class FileManagerModule extends HyVqModule {
                     }
                     UiKit.toast(ctx, showHidden ? "已显示隐藏文件" : "已隐藏 . 开头文件");
                 });
-        addMenuRow(panel, thumbsEnabled ? "缩略图：已开启" : "缩略图：已关闭",
-                R.drawable.ic_thumbnail, v -> {
-                    popup.dismiss();
-                    thumbsEnabled = !thumbsEnabled;
-                    savePrefBool(PREF_THUMBS, thumbsEnabled);
-                    persistState();
-                    for (Pane pp : panes) {
-                        if (pp != null && pp.adapter != null) {
-                            pp.adapter.setThumbsEnabled(thumbsEnabled);
-                        }
-                    }
-                    UiKit.toast(ctx, thumbsEnabled ? "已开启缩略图" : "已关闭缩略图");
-                });
         addMenuRow(panel, "书签列表", R.drawable.ic_bookmarks, v -> {
             popup.dismiss();
             showBookmarks();
@@ -11524,14 +11551,6 @@ public class FileManagerModule extends HyVqModule {
             popup.dismiss();
             addBookmark();
         });
-        addMenuRow(panel, gridMode ? "切换到列表视图" : "切换到网格视图",
-                gridMode ? R.drawable.ic_list : R.drawable.ic_grid, v -> {
-                    popup.dismiss();
-                    gridMode = !gridMode;
-                    persistState();
-                    reloadAll();
-                    UiKit.toast(ctx, gridMode ? "已切换到网格视图" : "已切换到列表视图");
-                });
         addMenuRow(panel, "最近文件", R.drawable.ic_history, v -> {
             popup.dismiss();
             showRecentFiles();

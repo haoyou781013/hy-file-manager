@@ -3,7 +3,7 @@
 Android 双窗格文件管理器。支持 11 种压缩格式的创建与解压、内置文本编辑器、媒体播放器。
 
 - **仓库**：[GitHub](https://github.com/haoyou781013/hy-file-manager) · [Gitee](https://gitee.com/haoyou781/hy-file-manager)
-- **当前版本**：1.0.1（versionCode 6）
+- **当前版本**：1.0.2（versionCode 7）
 - **包名**：`com.aliya.hyfilemgr`
 - **最低系统**：Android 6.0（API 23）
 

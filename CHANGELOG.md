@@ -1,3 +1,69 @@
+## 1.0.2 — 2026-11-07
+
+主题系统重构 + 一批状态/持久性缺陷修复。
+
+### 新增：主题设置（原「个性化」）
+- **全局背景层**：`ImageView` 铺满 `rootContainer` index 0，上层页面半透明叠着。
+  逐页设背景会在切页时跳一下，一层铺满则完全稳定。
+- **三档滑块**：
+  - 背景不透明度 0-100%（改 `ImageView.alpha`，不重渲染）
+  - 背景模糊度 0-25（先 1/4 缩小 → box blur → 放大，快一个数量级）
+  - 卡片不透明度 0-100%
+- **选图双入口**：系统照片选择器 + 自建文件列表（单列，只显示目录与图片）
+- **解码采样**：先读边界算 `inSampleSize` 再解码。4000×3000 全尺寸在堆里 48MB。
+- **解码与模糊移出主线程**：`HyBgDecode` 线程 + `bgLoadSeq` 序号丢弃过期结果。
+
+### 新增：文件管理主题
+文件列表页独立于全局主题：
+- 独立背景图（`fmbg_` 前缀，不覆盖全局 `bg_`）
+- 独立背景不透明度/模糊度、文件行卡片不透明度、列表密度
+- 取值器 `fmActiveXxx()`：开关关闭时自动回落全局值，调用点不判开关
+- 选图分流：`pickForFmTheme` 标志决定落点
+
+### 卡片化
+| 元素 | 改动 |
+|---|---|
+| 共享顶栏 | `topBarSurface()`，alpha 跟 `cardAlpha` 同步 |
+| 文件列表行 | `FileListAdapter.rowAlpha`，`makeBg` 按它压 alpha |
+| 滑块行 | `wrap` 原先无背景，改 `cardSurface` + `CARD_TAG_KEY` |
+| `buildSimpleRow` / `addPickerRow` | 静态 `bg_ripple_round` → `cardSurface` |
+| `sectionHeader` | 套 `cardSurface`；无背景图时仍返回裸标题 |
+| 关于页标题/正文 | 套 `cardSurface` |
+| 更新页版本卡 | 硬编码色 → `cardSurface(10)` |
+
+**标题与内容分层**：标题用 `colorSurfaceContainerHigh` + 圆角 8dp，
+内容用 `Low` + 10dp。递归重刷读 `CARD_TAG_HDR_KEY` 保留标题色。
+
+**套卡片后压平 padding**：`UiKit.sectionHeader` 自带 `上 12 / 下 6`，
+套进卡片后变上 14 / 下 8，文字偏下。卡片内归零，由卡片给对称 10dp。
+
+### 修复
+- **侧边栏崩溃**：`ClassCastException: ImageView cannot be cast to ViewGroup`。
+  背景层插 index 0 后，「第一个非 navOverlay 的子 View」成了 ImageView。
+  两处（打开 + 关闭路径）都加 `instanceof ViewGroup`。
+  关闭路径原来被 `try-catch` 吞掉，症状是「模糊清不掉」。
+- **六个滑块不落盘**：只改内存字段，没调 `savePrefInt`，重启丢失。
+- **文件管理页状态不同步**：「隐藏文件」「缩略图」只改变量 + toast，
+  不重建 UI，状态文字与圆点是构建时写死的。
+- **抽屉展开项无容器**：`trashHeader` 用静态 `bg_ripple_round`，
+  展开区无视觉归属。标题行卡片化 + 展开区左侧缩进 12dp。
+- **相册选图打开文件树**：`ACTION_OPEN_DOCUMENT` 是 DocumentsUI。
+  改用 `ACTION_PICK_IMAGES` + `setPackage("com.android.photopicker")`，
+  回退 `PickVisualMedia`，再回退自建列表。
+- **设置返回层级**：`handleBackPressed` 一刀切 `setContentMode(FILES)`，
+  任意子页按返回都跳回文件列表。改为子页 → 主页 → 文件列表。
+
+### 移除
+- 文件列表三点菜单的「缩略图」（已移至设置 → 文件管理）
+- 文件列表三点菜单的「切换到网格视图」
+
+### 已知限制
+- 网格视图入口已移除，`gridMode` 的持久化与渲染逻辑仍保留（旧设置不会崩，
+  但无法再切换）。
+- 卡片透明度与侧边栏不透明度只作用于设置页/文件列表，弹窗需重进才生效。
+
+---
+
 # 更新日志（开发者版）
 
 > 本文件是**技术记录**，给开发和排查用，保留实现细节。
