@@ -249,6 +249,8 @@ public class FileManagerModule extends HyVqModule {
     private static final String PREF_FM_BG_BLUR = "fm_bg_blur";
     /** 文件列表行卡片不透明度 0-100 */
     private static final String PREF_FM_ROW_ALPHA = "fm_row_alpha";
+    /** 侧边栏面板不透明度 0-100 */
+    private static final String PREF_NAV_PANEL_ALPHA = "nav_panel_alpha";
     /** 列表密度 0标准 1紧凑 3宽松（沿用 listDensity 语义） */
     private static final String PREF_FM_DENSITY = "fm_density";
     /** 卡片不透明度 0-100（透出背景的程度） */
@@ -276,6 +278,8 @@ public class FileManagerModule extends HyVqModule {
     private LinearLayout topBar;
     /** 标记「这个 View 已经是卡片」，供 applyCardAlphaRecursive 识别不可点击的卡片（如滑块行） */
     private static final int CARD_TAG_KEY = 0x7C4D0001;
+    /** 标记「这是分区标题卡片」，重刷时保留它的高亮底色 */
+    private static final int CARD_TAG_HDR_KEY = 0x7C4D0002;
     /** 选图目标：true = 设为文件管理主题背景，false = 设为全局背景 */
     private boolean pickForFmTheme = false;
     /** 背景图渲染序号：拖滑块连发时只让最后一次的结果落地 */
@@ -302,6 +306,10 @@ public class FileManagerModule extends HyVqModule {
     private static int fmRowAlpha = 100;
     /** 文件列表页密度：0标准 1紧凑 3宽松 */
     private static int fmDensity = 0;
+    /** 侧边栏面板不透明度 0-100，默认 92（保留一点磨砂感又不牺牲可读性） */
+    private static int navPanelAlpha = 92;
+    /** 侧边栏面板的填充色，供 navPanelSurface 复用 */
+    private int navPanelFill = 0;
     /** 明暗模式：0=跟随系统，1=亮色，2=暗色 */
     private static int uiMode = 0;
 
@@ -680,6 +688,7 @@ public class FileManagerModule extends HyVqModule {
         fmBgBlur = Math.max(0, Math.min(25, sp.getInt(PREF_FM_BG_BLUR, 0)));
         fmRowAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_FM_ROW_ALPHA, 100)));
         fmDensity = sp.getInt(PREF_FM_DENSITY, 0);
+        navPanelAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_NAV_PANEL_ALPHA, 92)));
         String fmName = sp.getString(PREF_FM_BG_FILE, "");
         fmBgFile = fmName.isEmpty() ? null : new File(bgDir(), fmName);
         String bgName = sp.getString(PREF_BG_FILE, "");
@@ -747,6 +756,7 @@ public class FileManagerModule extends HyVqModule {
                         .putInt(PREF_FM_BG_BLUR, fmBgBlur)
                         .putInt(PREF_FM_ROW_ALPHA, fmRowAlpha)
                         .putInt(PREF_FM_DENSITY, fmDensity)
+                        .putInt(PREF_NAV_PANEL_ALPHA, navPanelAlpha)
                         .putString(PREF_FM_BG_FILE,
                                 fmBgFile == null ? "" : fmBgFile.getName())
                         .putString(PREF_BG_FILE,
@@ -900,10 +910,12 @@ public class FileManagerModule extends HyVqModule {
         // 面板背景必须用**主题色**，不能固定 glass_light_75（那是 75% 白）。
         // 固定白底 + colorOnSurface 文字 = 浅色主题下深字浅底尚可、
         // 工业风格下浅字浅底直接看不清；再叠加卡片的半透明，对比度严重不足。
-        int panelFill = UiKit.color(ctx,
+        navPanelFill = UiKit.color(ctx,
                 com.google.android.material.R.attr.colorSurfaceContainerHigh);
-        // 92% 不透明，保留一点磨砂感又不牺牲可读性
-        panelBg.setColor((panelFill & 0x00FFFFFF) | 0xEB000000);
+        // 不透明度由「侧边栏不透明度」控制，默认 92：
+        // 保留一点磨砂感又不牺牲可读性。调到 0 就等于完全透出背景图。
+        int pa = Math.round(255f * navPanelAlpha / 100f);
+        panelBg.setColor((navPanelFill & 0x00FFFFFF) | (pa << 24));
         panelBg.setCornerRadii(new float[]{0, 0, dp(20), dp(20), 0, 0, dp(20), dp(20)});
         panelBg.setStroke(dp(1), UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOutlineVariant));
@@ -4371,7 +4383,7 @@ public class FileManagerModule extends HyVqModule {
             titleCard.setOrientation(LinearLayout.VERTICAL);
             titleCard.setGravity(Gravity.CENTER_VERTICAL);
             titleCard.setPadding(dp(12), dp(12), dp(12), dp(12));
-            titleCard.setBackground(cardSurface(-1));
+            titleCard.setBackground(cardSurface(8, true));
             titleCard.addView(title);
             box.addView(titleCard);
         } else {
@@ -5222,8 +5234,25 @@ public class FileManagerModule extends HyVqModule {
      * @param cornerDp 圆角，-1 表示跟随 ripple（行用 10，卡片用 14）
      */
     private android.graphics.drawable.Drawable cardSurface(int cornerDp) {
+        return cardSurface(cornerDp, false);
+    }
+
+    /**
+     * 卡片底色。
+     *
+     * @param isHeader true = 分区标题卡片
+     *
+     * <p><b>为什么标题要和内容区分</b>：两者原本都用 colorSurfaceContainerLow，
+     * 摆在一起就是一整片同色块，看不出「这个标题管下面哪些行」。
+     * 标题改用更亮一级的 colorSurfaceContainerHigh，
+     * 在暗色下更亮、亮色下更白，天然比内容卡片「浮」起来一层。
+     * 圆角也收小：标题是小卡片，10dp 显得过于圆润。</p>
+     */
+    private android.graphics.drawable.Drawable cardSurface(int cornerDp, boolean isHeader) {
         int base = UiKit.color(ctx,
-                com.google.android.material.R.attr.colorSurfaceContainerLow);
+                isHeader
+                        ? com.google.android.material.R.attr.colorSurfaceContainerHigh
+                        : com.google.android.material.R.attr.colorSurfaceContainerLow);
         // cardAlpha 100 → 完全不透明；0 → 只剩描边
         int a = Math.round(255f * cardAlpha / 100f);
         int fill = (base & 0x00FFFFFF) | (a << 24);
@@ -5316,7 +5345,9 @@ public class FileManagerModule extends HyVqModule {
         card.setOrientation(LinearLayout.VERTICAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(10), dp(10), dp(10), dp(10));
-        card.setBackground(cardSurface(-1));
+        card.setBackground(cardSurface(8, true));
+        card.setTag(CARD_TAG_KEY, Boolean.TRUE);
+        card.setTag(CARD_TAG_HDR_KEY, Boolean.TRUE);
         card.addView(tv);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -5352,7 +5383,9 @@ public class FileManagerModule extends HyVqModule {
                 && !(v instanceof android.widget.AdapterView)
                 && (v.isClickable() || v.getTag(CARD_TAG_KEY) != null);
         if (isCard) {
-            v.setBackground(cardSurface(-1));
+            // 保留标题卡片的高亮底色，否则拖卡片透明度时标题会被刷成内容色
+            boolean isHeader = Boolean.TRUE.equals(v.getTag(CARD_TAG_HDR_KEY));
+            v.setBackground(cardSurface(isHeader ? 8 : -1, isHeader));
         }
         // 递归走所有 ViewGroup，而不是只认 LinearLayout / ScrollView：
         // 设置页里有 FrameLayout 包裹的分组，只认两类会在那里断掉，
@@ -5422,6 +5455,24 @@ public class FileManagerModule extends HyVqModule {
             UiKit.toast(ctx, "没有可用的图片选择器，改用文件列表");
             showBgFileBrowser();
         }
+    }
+
+    /**
+     * 按当前 navPanelAlpha 重刷侧边栏面板背景。
+     *
+     * <p>只换颜色，不重建视图——滑块拖动时每帧都调，
+     * 重建会把面板里的滚动位置和列表状态一起丢掉。</p>
+     */
+    private void applyNavPanelAlpha() {
+        if (navPanel == null || navPanelFill == 0) return;
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        int pa = Math.round(255f * navPanelAlpha / 100f);
+        g.setColor((navPanelFill & 0x00FFFFFF) | (pa << 24));
+        g.setCornerRadii(new float[]{0, 0, dp(20), dp(20), 0, 0, dp(20), dp(20)});
+        g.setStroke(dp(1), UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOutlineVariant));
+        navPanel.setBackground(g);
     }
 
     /**
@@ -5911,6 +5962,22 @@ public class FileManagerModule extends HyVqModule {
         // 改成「左标题 + 右当前值 ▾」，点整行弹出列表选择，
         // 与压缩格式选择弹窗同一套交互。
         addDensityPickerRow(box);
+
+        // ── 侧边栏不透明度 ──
+        final TextView navVal = addSliderRow(box, "侧边栏不透明度",
+                navPanelAlpha + "%", navPanelAlpha, 0, 100, 10, null);
+        lastSlider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean u) {
+                navVal.setText(p + "%");
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar sb) {
+                navPanelAlpha = sb.getProgress();
+                savePrefInt(PREF_NAV_PANEL_ALPHA, navPanelAlpha);
+                persistState();
+                applyNavPanelAlpha();
+            }
+        });
 
         // ── 文件管理主题：独立定制文件列表页 ──
         addInfoRow(box, "文件管理主题",
