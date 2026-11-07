@@ -4040,11 +4040,11 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout card = new LinearLayout(ctx);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(dp(14), dp(14), dp(14), dp(14));
-        // 圆角 6dp：10dp 在这个高度上仍偏「圆润」。设置页整体是偏方的
-        // 工具型观感，6dp 与输入框、分段控件的圆角更接近。
-        card.setBackground(UiKit.rounded(ctx, dp(6),
-                UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow),
-                UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
+        // 走 cardSurface，跟其它卡片同一个不透明度旋钮。
+        // 原来这里硬编码 colorSurfaceContainerLow + 6dp 圆角，
+        // 调卡片透明度时它不会跟着变，会是一块实心板。
+        card.setBackground(cardSurface(10));
+        card.setTag(CARD_TAG_KEY, Boolean.TRUE);
 
         TextView tvCur = new TextView(ctx);
         tvCur.setText("当前版本\n" + cur + "  （versionCode " + curCode + "）");
@@ -4364,8 +4364,20 @@ public class FileManagerModule extends HyVqModule {
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         title.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
-        title.setPadding(dp(4), dp(8), dp(4), dp(2));
-        box.addView(title);
+        title.setPadding(dp(4), 0, dp(4), 0);
+        // 有背景图时才套卡片；纯色背景下裸标题更清爽
+        if (bgImageFile != null && bgImageFile.isFile()) {
+            LinearLayout titleCard = new LinearLayout(ctx);
+            titleCard.setOrientation(LinearLayout.VERTICAL);
+            titleCard.setGravity(Gravity.CENTER_VERTICAL);
+            titleCard.setPadding(dp(12), dp(12), dp(12), dp(12));
+            titleCard.setBackground(cardSurface(-1));
+            titleCard.addView(title);
+            box.addView(titleCard);
+        } else {
+            title.setPadding(dp(4), dp(8), dp(4), dp(2));
+            box.addView(title);
+        }
 
         addInfoRow(box, "版本", appVersionName() + "（" + appVersionCode() + "）", true, null);
         addInfoRow(box, "包名", ctx.getPackageName(), true, null);
@@ -4391,9 +4403,23 @@ public class FileManagerModule extends HyVqModule {
         desc.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         desc.setLineSpacing(dp(3), 1f);
-        desc.setPadding(dp(8), dp(8), dp(8), dp(8));
         desc.setTextIsSelectable(true);
-        box.addView(desc);
+        // 多行正文同样不能裸压在背景图上：套一层卡片，
+        // 可读性交给「卡片不透明度」这一个旋钮统一控制。
+        if (bgImageFile != null && bgImageFile.isFile()) {
+            LinearLayout descCard = new LinearLayout(ctx);
+            descCard.setOrientation(LinearLayout.VERTICAL);
+            descCard.setPadding(dp(12), dp(12), dp(12), dp(12));
+            descCard.setBackground(cardSurface(-1));
+            descCard.addView(desc);
+            LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            dlp.topMargin = dp(6);
+            box.addView(descCard, dlp);
+        } else {
+            desc.setPadding(dp(8), dp(8), dp(8), dp(8));
+            box.addView(desc);
+        }
 
         return box;
     }
