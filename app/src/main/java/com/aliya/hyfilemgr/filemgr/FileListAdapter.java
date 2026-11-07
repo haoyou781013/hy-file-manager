@@ -77,6 +77,17 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
     private boolean multiMode;
     /** 列表密度：1=紧凑 2=标准 3=宽松（影响行内边距与图标尺寸） */
     private int density = 2;
+
+    /** 文件行卡片不透明度 0-100，与设置页「卡片不透明度」共用同一个值 */
+    private int rowAlpha = 100;
+
+    /** 设置文件行卡片不透明度（0-100），调用后需 notifyDataSetChanged 重绘 */
+    public void setRowAlpha(int alpha) {
+        int a = Math.max(0, Math.min(100, alpha));
+        if (a == rowAlpha) return;
+        rowAlpha = a;
+        notifyDataSetChanged();
+    }
     private final Listener listener;
 
     public FileListAdapter(Context context, List<FileEntry> entries,
@@ -350,7 +361,10 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
     private GradientDrawable makeBg(int fill, boolean checked) {
         GradientDrawable gd = new GradientDrawable();
         gd.setCornerRadius(dp(14));
-        gd.setColor(fill);
+        // 按 rowAlpha 压不透明度：fill 原本是实心色（alpha=FF），
+        // 直接用它会把背景图完全挡住，文件行就成了一块块实心板。
+        int a = Math.round(255f * rowAlpha / 100f);
+        gd.setColor((fill & 0x00FFFFFF) | (a << 24));
         if (checked) {
             gd.setStroke(dp(2), UiKit.color(context,
                     com.google.android.material.R.attr.colorPrimary));

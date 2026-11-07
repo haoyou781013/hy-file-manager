@@ -238,6 +238,19 @@ public class FileManagerModule extends HyVqModule {
     private static final String PREF_BG_ALPHA = "bg_alpha";
     /** 背景图模糊度 0-25（0 = 不模糊） */
     private static final String PREF_BG_BLUR = "bg_blur";
+    // ── 文件管理主题（独立于全局主题）──
+    /** 文件列表页是否启用独立主题 */
+    private static final String PREF_FM_THEME_ON = "fm_theme_on";
+    /** 文件列表页专用背景图文件名 */
+    private static final String PREF_FM_BG_FILE = "fm_bg_file";
+    /** 文件列表页背景不透明度 0-100 */
+    private static final String PREF_FM_BG_ALPHA = "fm_bg_alpha";
+    /** 文件列表页背景模糊度 0-25 */
+    private static final String PREF_FM_BG_BLUR = "fm_bg_blur";
+    /** 文件列表行卡片不透明度 0-100 */
+    private static final String PREF_FM_ROW_ALPHA = "fm_row_alpha";
+    /** 列表密度 0标准 1紧凑 3宽松（沿用 listDensity 语义） */
+    private static final String PREF_FM_DENSITY = "fm_density";
     /** 卡片不透明度 0-100（透出背景的程度） */
     private static final String PREF_CARD_ALPHA = "card_alpha";
     /** 明暗模式：0=跟随系统，1=亮色，2=暗色（工业风格下隐藏） */
@@ -259,6 +272,14 @@ public class FileManagerModule extends HyVqModule {
     // ── 背景图状态（全局背景）──
     /** 背景层 ImageView（铺在 rootContainer 最底） */
     private android.widget.ImageView bgImageView;
+    /** 共享顶栏，卡片透明度变化时需要重刷它的背景 */
+    private LinearLayout topBar;
+    /** 标记「这个 View 已经是卡片」，供 applyCardAlphaRecursive 识别不可点击的卡片（如滑块行） */
+    private static final int CARD_TAG_KEY = 0x7C4D0001;
+    /** 选图目标：true = 设为文件管理主题背景，false = 设为全局背景 */
+    private boolean pickForFmTheme = false;
+    /** 背景图渲染序号：拖滑块连发时只让最后一次的结果落地 */
+    private int bgLoadSeq = 0;
     /** 背景图来源文件（私有目录内），null = 未设置 */
     private File bgImageFile;
     /** 背景不透明度 0-100 */
@@ -267,6 +288,20 @@ public class FileManagerModule extends HyVqModule {
     private static int bgBlur = 0;
     /** 卡片不透明度 0-100（越低背景越透出来） */
     private static int cardAlpha = 100;
+
+    // ── 文件管理主题（独立开关，不启用时全部回落到全局值）──
+    /** 文件列表页是否启用独立主题 */
+    private static boolean fmThemeOn = false;
+    /** 文件列表页专用背景图，null = 用全局背景图 */
+    private File fmBgFile;
+    /** 文件列表页背景不透明度 */
+    private static int fmBgAlpha = 100;
+    /** 文件列表页背景模糊度 */
+    private static int fmBgBlur = 0;
+    /** 文件列表行卡片不透明度 */
+    private static int fmRowAlpha = 100;
+    /** 文件列表页密度：0标准 1紧凑 3宽松 */
+    private static int fmDensity = 0;
     /** 明暗模式：0=跟随系统，1=亮色，2=暗色 */
     private static int uiMode = 0;
 
@@ -580,6 +615,13 @@ public class FileManagerModule extends HyVqModule {
         // 不清 handler：它是本模块唯一 UI 回调通道，25 处 post 都在用，
         // 清空会丢弃排队中的解压/粘贴/搜索完成回调
         if (dpiHandler != null) dpiHandler.removeCallbacksAndMessages(null);
+        // 释放背景图位图。全屏 ARGB_8888 约 10MB，模糊时还有一份同尺寸中间图；
+        // Android 8+ 像素在 native 堆，不主动解引用就要等 GC finalizer，
+        // 旋转几次屏幕能累积几十 MB。这里主动断掉引用。
+        if (bgImageView != null) {
+            bgImageView.setImageDrawable(null);
+            bgImageView = null;
+        }
     }
 
     /**
@@ -633,6 +675,13 @@ public class FileManagerModule extends HyVqModule {
         bgAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_BG_ALPHA, 100)));
         bgBlur = Math.max(0, Math.min(25, sp.getInt(PREF_BG_BLUR, 0)));
         cardAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_CARD_ALPHA, 100)));
+        fmThemeOn = sp.getBoolean(PREF_FM_THEME_ON, false);
+        fmBgAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_FM_BG_ALPHA, 100)));
+        fmBgBlur = Math.max(0, Math.min(25, sp.getInt(PREF_FM_BG_BLUR, 0)));
+        fmRowAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_FM_ROW_ALPHA, 100)));
+        fmDensity = sp.getInt(PREF_FM_DENSITY, 0);
+        String fmName = sp.getString(PREF_FM_BG_FILE, "");
+        fmBgFile = fmName.isEmpty() ? null : new File(bgDir(), fmName);
         String bgName = sp.getString(PREF_BG_FILE, "");
         bgImageFile = bgName.isEmpty() ? null : new File(bgDir(), bgName);
         uiMode = Math.max(0, Math.min(2, sp.getInt(PREF_UI_MODE, 0)));
@@ -693,6 +742,13 @@ public class FileManagerModule extends HyVqModule {
                         .putInt(PREF_BG_ALPHA, bgAlpha)
                         .putInt(PREF_BG_BLUR, bgBlur)
                         .putInt(PREF_CARD_ALPHA, cardAlpha)
+                        .putBoolean(PREF_FM_THEME_ON, fmThemeOn)
+                        .putInt(PREF_FM_BG_ALPHA, fmBgAlpha)
+                        .putInt(PREF_FM_BG_BLUR, fmBgBlur)
+                        .putInt(PREF_FM_ROW_ALPHA, fmRowAlpha)
+                        .putInt(PREF_FM_DENSITY, fmDensity)
+                        .putString(PREF_FM_BG_FILE,
+                                fmBgFile == null ? "" : fmBgFile.getName())
                         .putString(PREF_BG_FILE,
                                 bgImageFile == null ? "" : bgImageFile.getName())
                         .putInt(PREF_UI_MODE, fMode)
@@ -792,6 +848,13 @@ public class FileManagerModule extends HyVqModule {
         buildFab();
         buildNavOverlay();
 
+        // 背景透明度补一次同步。
+        // attachBackgroundLayer() 在 body 之前调用，那时 opBar / bottomNav 还是 null，
+        // syncContentTransparency 里对它们的半透明处理全部落空，
+        // 表现为冷启动后底栏与工具栏不透明、把背景图盖住。
+        // 这里等两者建好后再跑一遍。
+        syncContentTransparency(bgImageFile != null && bgImageFile.isFile());
+
         // 启动时清理过期回收站文件（对比记录时间）
         try {
             purgeExpiredTrash();
@@ -862,8 +925,8 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout bar = new LinearLayout(ctx);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        int bg = UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainer);
-        bar.setBackground(UiKit.rounded(ctx, 14, bg, 0));
+        topBar = bar;
+        bar.setBackground(topBarSurface());
         int pad = dp(3);
         bar.setPadding(pad, pad, pad, pad);
 
@@ -1362,7 +1425,8 @@ public class FileManagerModule extends HyVqModule {
         p.list = rv;
         p.adapter = new FileListAdapter(ctx, p.entries, p.selected, makeListener(p));
         p.adapter.setThumbsEnabled(thumbsEnabled);
-        p.adapter.setDensity(listDensity);
+        p.adapter.setDensity(fmActiveDensity());
+        p.adapter.setRowAlpha(fmActiveRowAlpha());
         rv.setAdapter(p.adapter);
         // 列表项动画：淡入淡出 + 位移，比默认更柔和
         // 时长取自 Material 3 duration token（不用 180/160 这类散值）：
@@ -3839,7 +3903,7 @@ public class FileManagerModule extends HyVqModule {
         // 不在这里再放一行「返回文件列表」：
         // 共享顶栏的返回键已经能回文件列表，两者功能完全相同。
         // 保留共享顶栏那个（所有设置子页都靠它），删掉这个页内重复的。
-        box.addView(UiKit.sectionHeader(ctx, "设置"));
+        box.addView(sectionHeaderInCard("设置"));
 
 
         // ── 权限管理 ──
@@ -4307,11 +4371,11 @@ public class FileManagerModule extends HyVqModule {
         addInfoRow(box, "包名", ctx.getPackageName(), true, null);
         addInfoRow(box, "最低系统", "Android 6.0（API 23）", true, null);
 
-        box.addView(UiKit.sectionHeader(ctx, "开源仓库"));
+        box.addView(sectionHeaderInCard("开源仓库"));
         addInfoRow(box, "GitHub", REPO_GITHUB, true, v -> openUrl(REPO_GITHUB));
         addInfoRow(box, "Gitee", REPO_GITEE, true, v -> openUrl(REPO_GITEE));
 
-        box.addView(UiKit.sectionHeader(ctx, "关于本项目"));
+        box.addView(sectionHeaderInCard("关于本项目"));
         TextView desc = new TextView(ctx);
         desc.setText(
                 "HY文件管理是一个 Android 双窗格文件管理器，"
@@ -4425,6 +4489,10 @@ public class FileManagerModule extends HyVqModule {
             android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
             sv.setFillViewport(true);
             settingsEmbedContent = new LinearLayout(ctx);
+            // 卡片外侧留白：设置行自身是 cardSurface 卡片，
+            // 容器不给内边距的话卡片会顶到屏幕边缘，看不出「卡片」这个层次。
+            settingsEmbedContent.setOrientation(LinearLayout.VERTICAL);
+            settingsEmbedContent.setPadding(dp(8), dp(4), dp(8), dp(12));
             settingsEmbedContent.setOrientation(LinearLayout.VERTICAL);
             int pad = dp(14);
             settingsEmbedContent.setPadding(pad, dp(8), pad, pad);
@@ -4573,7 +4641,7 @@ public class FileManagerModule extends HyVqModule {
     private View buildPermissionManager() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(UiKit.sectionHeader(ctx, "权限管理"));
+        box.addView(sectionHeaderInCard("权限管理"));
 
         // ① 所有文件访问
         boolean allFiles = Environment.isExternalStorageManager();
@@ -4848,25 +4916,48 @@ public class FileManagerModule extends HyVqModule {
     /** 按当前 bgImageFile / bgAlpha / bgBlur 重新渲染背景层。 */
     private void applyBackground() {
         if (bgImageView == null) return;
-        if (bgImageFile == null || !bgImageFile.isFile()) {
+        // 背景层是文件列表页的底，取文件管理主题的值（关闭时自动回落到全局）
+        final File bgFile = fmActiveBgFile();
+        final int bgA = fmActiveBgAlpha();
+        final int bgB = fmActiveBgBlur();
+        if (bgFile == null || !bgFile.isFile()) {
             bgImageView.setImageDrawable(null);
             bgImageView.setVisibility(View.GONE);
             syncContentTransparency(false);
             return;
         }
         bgImageView.setVisibility(View.VISIBLE);
-        bgImageView.setAlpha(bgAlpha / 100f);
-
-        // 解码：按屏幕尺寸采样，避免 4K 图直接 OOM
-        android.graphics.Bitmap bmp = decodeScaled(bgImageFile);
-        if (bmp == null) {
-            bgImageView.setImageDrawable(null);
-            bgImageView.setVisibility(View.GONE);
-            return;
-        }
-        if (bgBlur > 0) bmp = blurBitmap(bmp, bgBlur);
-        bgImageView.setImageBitmap(bmp);
+        bgImageView.setAlpha(bgA / 100f);
         syncContentTransparency(true);
+
+        // 解码与模糊都放后台：模糊是纯 Java 双重循环，全屏尺寸下是秒级，
+        // 放在主线程会让「设背景图」和「拖模糊滑块」都卡住。
+        // 用序号丢弃过期结果——拖滑块会连发多次，只认最后一次。
+        final int seq = ++bgLoadSeq;
+        final File src = bgFile;
+        final int blur = bgB;
+        new Thread(() -> {
+            android.graphics.Bitmap bmp = decodeScaled(src);
+            if (bmp != null && blur > 0) bmp = blurBitmap(bmp, blur);
+            final android.graphics.Bitmap out = bmp;
+            handler.post(() -> {
+                if (detached || seq != bgLoadSeq) {
+                    // 过期或已销毁：直接丢掉，避免旧图盖掉新图
+                    if (out != null && !out.isRecycled()) out.recycle();
+                    return;
+                }
+                if (bgImageView == null) {
+                    if (out != null && !out.isRecycled()) out.recycle();
+                    return;
+                }
+                if (out == null) {
+                    bgImageView.setImageDrawable(null);
+                    bgImageView.setVisibility(View.GONE);
+                    return;
+                }
+                bgImageView.setImageBitmap(out);
+            });
+        }, "HyBgDecode").start();
     }
 
     /**
@@ -4893,6 +4984,7 @@ public class FileManagerModule extends HyVqModule {
                         com.google.android.material.R.attr.colorPrimary);
                 bottomNav.setBackground(UiKit.rounded(ctx, 16, translucent, stroke));
             }
+            if (topBar != null) topBar.setBackground(topBarSurface());
             if (opBar != null) {
                 opBar.setBackground(UiKit.rounded(ctx, 16, translucent,
                         UiKit.color(ctx,
@@ -4947,7 +5039,9 @@ public class FileManagerModule extends HyVqModule {
             int scale = 4;
             android.graphics.Bitmap small = android.graphics.Bitmap.createScaledBitmap(
                     src, Math.max(1, w / scale), Math.max(1, h / scale), true);
-            if (!small.equals(src)) src.recycle();
+            // 不能在这里回收 src：中途抛异常时 catch 分支会把 src 原样返回，
+            // 已回收的 Bitmap 交给 setImageBitmap 绘制时会崩。
+            // 统一放到所有步骤成功之后、且确认不返回 src 时再回收。
 
             int sw = small.getWidth();
             int sh = small.getHeight();
@@ -4969,6 +5063,8 @@ public class FileManagerModule extends HyVqModule {
             // 放大回原尺寸
             android.graphics.Bitmap out = android.graphics.Bitmap.createScaledBitmap(after, w, h, true);
             after.recycle();
+            // 到这里 out 已成型，src 确定不会再被返回，可以安全回收
+            if (out != src && !src.isRecycled()) src.recycle();
             return out;
         } catch (Throwable t) {
             android.util.Log.w("HYBg", "blur failed", t);
@@ -5023,20 +5119,23 @@ public class FileManagerModule extends HyVqModule {
                 android.graphics.BitmapFactory.decodeFile(tmp.getAbsolutePath(), o);
                 if (o.outWidth <= 0) throw new java.io.IOException("不是有效的图片");
 
-                final File dst = new File(dir, "bg_" + System.currentTimeMillis()
+                final File dst = new File(dir,
+                        (pickForFmTheme ? "fmbg_" : "bg_") + System.currentTimeMillis()
                         + (guessExt(o) ));
                 if (!tmp.renameTo(dst)) throw new java.io.IOException("保存失败");
 
-                final File old = bgImageFile;
+                final boolean forFm = pickForFmTheme;
+                final File old = forFm ? fmBgFile : bgImageFile;
                 handler.post(() -> {
                     if (detached) return;
-                    bgImageFile = dst;
+                    if (forFm) fmBgFile = dst; else bgImageFile = dst;
                     applyBackground();
                     if (old != null && !old.equals(dst)) {
                         //noinspection ResultOfMethodCallIgnored
                         old.delete();
                     }
-                    UiKit.toast(ctx, "背景图已更换");
+                    applyFmThemeToAdapters();
+                    UiKit.toast(ctx, forFm ? "文件管理背景图已更换" : "背景图已更换");
                     // 设置页里的预览也要刷新
                     refreshSettingsPage();
                 });
@@ -5106,13 +5205,108 @@ public class FileManagerModule extends HyVqModule {
                 com.google.android.material.R.attr.colorOutlineVariant);
         // 描边本身也留一点存在感，不随 cardAlpha 降到 0（否则边框就没了）
         int strokeColor = (stroke & 0x00FFFFFF) | 0x22000000;
-        return UiKit.rounded(ctx, cornerDp < 0 ? dp(10) : cornerDp, fill, strokeColor);
+        // UiKit.rounded 的参数语义是 dp（内部自己做 dp() 换算），
+        // 这里不能再传 dp(10)——那是 px，会被二次换算，3x 屏上圆角偏大 3 倍。
+        return UiKit.rounded(ctx, cornerDp < 0 ? 10 : cornerDp, fill, strokeColor);
+    }
+
+    /**
+     * 共享顶栏的底色：与卡片共用同一个不透明度。
+     *
+     * <p>顶栏不是 cardSurface（它没有描边，圆角也更大），
+     * 但透明度必须跟着「卡片不透明度」走，否则调低卡片透明度后
+     * 顶栏会是一块实心色块，把背景图挡出一条。</p>
+     */
+    // ══════ 文件管理主题取值器 ══════
+    // 开关关闭时全部回落到全局值，调用点不需要再判 fmThemeOn。
+
+    /** 文件列表页当前应使用的背景图 */
+    private File fmActiveBgFile() {
+        return (fmThemeOn && fmBgFile != null && fmBgFile.isFile()) ? fmBgFile : bgImageFile;
+    }
+
+    /** 文件列表页当前应使用的背景不透明度 */
+    private int fmActiveBgAlpha() {
+        return fmThemeOn ? fmBgAlpha : bgAlpha;
+    }
+
+    /** 文件列表页当前应使用的背景模糊度 */
+    private int fmActiveBgBlur() {
+        return fmThemeOn ? fmBgBlur : bgBlur;
+    }
+
+    /** 文件列表行当前应使用的卡片不透明度 */
+    private int fmActiveRowAlpha() {
+        return fmThemeOn ? fmRowAlpha : cardAlpha;
+    }
+
+    /** 文件列表页当前应使用的密度 */
+    private int fmActiveDensity() {
+        return fmThemeOn ? fmDensity : listDensity;
+    }
+
+    /** 把文件管理主题的当前取值推给所有窗格的 adapter */
+    private void applyFmThemeToAdapters() {
+        int rowA = fmActiveRowAlpha();
+        int dens = fmActiveDensity();
+        for (Pane pp : panes) {
+            if (pp == null || pp.adapter == null) continue;
+            pp.adapter.setRowAlpha(rowA);
+            pp.adapter.setDensity(dens);
+        }
+    }
+
+    private android.graphics.drawable.Drawable topBarSurface() {
+        int base = UiKit.color(ctx,
+                com.google.android.material.R.attr.colorSurfaceContainer);
+        int a = Math.round(255f * cardAlpha / 100f);
+        int fill = (base & 0x00FFFFFF) | (a << 24);
+        return UiKit.rounded(ctx, 14, fill, 0);
+    }
+
+    /**
+     * 分区标题，外面套一层卡片。
+     *
+     * <p>裸 {@link UiKit#sectionHeader} 是直接压在背景图上的文字，
+     * 背景图偏亮或偏暗时会看不清。把标题收进 cardSurface 卡片后，
+     * 可读性统一由「卡片不透明度」这一个旋钮控制，
+     * 不需要再额外维护一个遮罩强度。</p>
+     *
+     * <p>没有背景图时仍返回裸标题：纯色背景下套卡片只会多出一圈无意义的描边。</p>
+     */
+    private View sectionHeaderInCard(String text) {
+        TextView tv = UiKit.sectionHeader(ctx, text);
+        // 裸标题时保留 UiKit 的非对称 padding：上 12 下 6，
+        // 那是给「标题与下方内容之间留空」用的，本身没问题。
+        if (bgImageFile == null || !bgImageFile.isFile()) return tv;
+
+        // 套进卡片后必须把这组 padding 压平：
+        // 上 12 + 卡片 2 = 14，下 6 + 卡片 2 = 8，
+        // 文字会明显偏上，看着像卡片下半截空着。
+        // 卡片内部改用对称 padding，上下一致。
+        tv.setPadding(dp(4), 0, dp(4), 0);
+
+        LinearLayout card = new LinearLayout(ctx);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(10), dp(10), dp(10), dp(10));
+        card.setBackground(cardSurface(-1));
+        card.addView(tv);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(6);
+        card.setLayoutParams(lp);
+        return card;
     }
 
     /** 把当前 cardAlpha 应用到所有已存在的设置行/卡片并重绘。 */
     private void applyCardAlpha() {
         if (settingsEmbedContent == null) return;
         applyCardAlphaRecursive(settingsEmbedContent, 0);
+        // 顶栏不是设置页的子 View，要单独刷
+        if (topBar != null) topBar.setBackground(topBarSurface());
+        // 文件列表行同理：adapter 里的行是 RecyclerView 子项，不在 settingsEmbedContent 里
+        applyFmThemeToAdapters();
         UiKit.toast(ctx, "卡片不透明度 " + cardAlpha + "%");
     }
 
@@ -5123,21 +5317,24 @@ public class FileManagerModule extends HyVqModule {
      * 纯文字 TextView 不动，否则会变成一堆色块。</p>
      */
     private void applyCardAlphaRecursive(View v, int depth) {
-        if (v == null || depth > 6) return;
-        if (v instanceof LinearLayout) {
-            LinearLayout ll = (LinearLayout) v;
-            // 可点击行 = 设置项；或者有背景且不是最外层容器
-            boolean isRow = ll.isClickable();
-            if (isRow) {
-                ll.setBackground(cardSurface(-1));
-            }
-            int n = ll.getChildCount();
-            for (int i = 0; i < n; i++) applyCardAlphaRecursive(ll.getChildAt(i), depth + 1);
-        } else if (v instanceof android.widget.ScrollView) {
-            int n = ((android.widget.ScrollView) v).getChildCount();
-            for (int i = 0; i < n; i++) {
-                applyCardAlphaRecursive(((android.widget.ScrollView) v).getChildAt(i), depth + 1);
-            }
+        if (v == null || depth > 12) return;
+        // 认两类容器：
+        //   ① 可点击的（设置行、选图行）—— 它们本来就是卡片
+        //   ② 已带 cardSurface 卡片的（滑块行，不可点击但也是卡片）
+        // 只判 isClickable 会漏掉滑块行，拖卡片透明度时它们不跟着刷新。
+        boolean isCard = v instanceof ViewGroup
+                && !(v instanceof android.widget.AdapterView)
+                && (v.isClickable() || v.getTag(CARD_TAG_KEY) != null);
+        if (isCard) {
+            v.setBackground(cardSurface(-1));
+        }
+        // 递归走所有 ViewGroup，而不是只认 LinearLayout / ScrollView：
+        // 设置页里有 FrameLayout 包裹的分组，只认两类会在那里断掉，
+        // 导致整棵子树不刷新。
+        if (v instanceof ViewGroup) {
+            ViewGroup vg = (ViewGroup) v;
+            int n = vg.getChildCount();
+            for (int i = 0; i < n; i++) applyCardAlphaRecursive(vg.getChildAt(i), depth + 1);
         }
     }
 
@@ -5155,9 +5352,10 @@ public class FileManagerModule extends HyVqModule {
      *    相册扫不到，必须能自己 browse 到。</p>
      */
     private void pickBackground() {
+        pickForFmTheme = false;
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(UiKit.sectionHeader(ctx, "更换背景图"));
+        box.addView(sectionHeaderInCard("更换背景图"));
 
         final android.app.Dialog d = UiKit.glassDialog(ctx, box);
 
@@ -5200,6 +5398,46 @@ public class FileManagerModule extends HyVqModule {
         }
     }
 
+    /**
+     * 选文件管理主题的独立背景图。
+     *
+     * <p>与全局背景图共用一套选图入口（相册 / 文件列表），
+     * 只是落盘时用不同前缀区分，避免互相覆盖。</p>
+     */
+    private void pickFmBackground() {
+        pickForFmTheme = true;
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sectionHeaderInCard("更换文件管理背景图"));
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+
+        box.addView(buildSimpleRow("从相册选择", "打开系统图片选择器", v -> {
+            UiKit.dismissWithAnim(d);
+            launchImagePicker();
+        }));
+        box.addView(buildSimpleRow("从文件选择", "浏览所有目录挑一张图", v -> {
+            UiKit.dismissWithAnim(d);
+            showBgFileBrowser();
+        }));
+        if (fmBgFile != null) {
+            box.addView(buildSimpleRow("移除背景图", "改回使用全局背景图", v -> {
+                UiKit.dismissWithAnim(d);
+                File old = fmBgFile;
+                fmBgFile = null;
+                applyBackground();
+                if (old != null) {
+                    //noinspection ResultOfMethodCallIgnored
+                    old.delete();
+                }
+                hideSettingsDialog();
+                showInSettingsDialog("文件管理主题", this::buildFileManagerTheme);
+                UiKit.toast(ctx, "已移除，改用全局背景图");
+            }));
+        }
+        d.show();
+    }
+
     /** 接收图片选择器结果（由 MainActivity 转发） */
     public void onPickBackgroundResult(int requestCode, int resultCode, Intent data) {
         if (requestCode != REQ_PICK_BG) return;
@@ -5221,7 +5459,7 @@ public class FileManagerModule extends HyVqModule {
 
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(UiKit.sectionHeader(ctx, "选择图片"));
+        box.addView(sectionHeaderInCard("选择图片"));
 
         final TextView pathLabel = new TextView(ctx);
         pathLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
@@ -5315,7 +5553,7 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setPadding(dp(10), dp(10), dp(10), dp(10));
-        row.setBackgroundResource(R.drawable.bg_ripple_round);
+        row.setBackground(cardSurface(-1));
         row.setClickable(true);
 
         TextView t = new TextView(ctx);
@@ -5501,7 +5739,7 @@ public class FileManagerModule extends HyVqModule {
     private View buildAppearanceSettings() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(UiKit.sectionHeader(ctx, "主题设置"));
+        box.addView(sectionHeaderInCard("主题设置"));
 
         // ── 背景图 ──
         addInfoRow(box, "背景图",
@@ -5519,6 +5757,8 @@ public class FileManagerModule extends HyVqModule {
                 @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
                 @Override public void onStopTrackingTouch(android.widget.SeekBar sb) {
                     bgAlpha = sb.getProgress();
+                    savePrefInt(PREF_BG_ALPHA, bgAlpha);
+                    persistState();
                     if (bgImageView != null) bgImageView.setAlpha(bgAlpha / 100f);
                 }
             });
@@ -5533,6 +5773,8 @@ public class FileManagerModule extends HyVqModule {
                 @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
                 @Override public void onStopTrackingTouch(android.widget.SeekBar sb) {
                     bgBlur = sb.getProgress();
+                    savePrefInt(PREF_BG_BLUR, bgBlur);
+                    persistState();
                     applyBackground();   // 模糊要重渲染位图
                 }
             });
@@ -5548,6 +5790,8 @@ public class FileManagerModule extends HyVqModule {
             @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
             @Override public void onStopTrackingTouch(android.widget.SeekBar sb) {
                 cardAlpha = sb.getProgress();
+                savePrefInt(PREF_CARD_ALPHA, cardAlpha);
+                persistState();
                 // 立刻应用：把所有设置行/卡片的底色重刷一遍
                 applyCardAlpha();
             }
@@ -5641,6 +5885,133 @@ public class FileManagerModule extends HyVqModule {
         // 改成「左标题 + 右当前值 ▾」，点整行弹出列表选择，
         // 与压缩格式选择弹窗同一套交互。
         addDensityPickerRow(box);
+
+        // ── 文件管理主题：独立定制文件列表页 ──
+        addInfoRow(box, "文件管理主题",
+                fmThemeOn ? "已启用 · 独立背景与卡片透明度" : "未启用 · 跟随全局主题",
+                fmThemeOn, v ->
+                        showInSettingsDialog("文件管理主题", this::buildFileManagerTheme));
+
+        return box;
+    }
+
+    /**
+     * 「文件管理主题」页：只影响文件列表页，不动设置页。
+     *
+     * <p>关闭时所有取值回落到全局主题（见 fmActiveXxx 取值器），
+     * 所以这里的滑块即使调过也不会泄漏到别处。</p>
+     */
+    private View buildFileManagerTheme() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sectionHeaderInCard("文件管理主题"));
+
+        // ── 总开关 ──
+        addInfoRow(box, "启用独立主题",
+                fmThemeOn ? "文件列表页使用下面的设置" : "文件列表页跟随全局主题",
+                fmThemeOn, v -> {
+                    fmThemeOn = !fmThemeOn;
+                    savePrefBool(PREF_FM_THEME_ON, fmThemeOn);
+                    persistState();
+                    applyBackground();
+                    applyFmThemeToAdapters();
+                    hideSettingsDialog();
+                    showInSettingsDialog("文件管理主题", this::buildFileManagerTheme);
+                    UiKit.toast(ctx, fmThemeOn ? "文件管理主题已启用" : "已恢复跟随全局");
+                });
+
+        if (!fmThemeOn) {
+            addInfoRow(box, "背景图", "启用独立主题后可单独设置", false, v ->
+                    UiKit.toast(ctx, "请先启用独立主题"));
+            return box;
+        }
+
+        // ── 独立背景图 ──
+        addInfoRow(box, "背景图",
+                fmBgFile != null ? "已设置 · 点击更换" : "未设置 · 使用全局背景图",
+                fmBgFile != null, v -> pickFmBackground());
+
+        final TextView bgAlphaVal = addSliderRow(box, "背景不透明度",
+                fmBgAlpha + "%", fmBgAlpha, 0, 100, 10, null);
+        lastSlider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean u) {
+                bgAlphaVal.setText(p + "%");
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar sb) {
+                fmBgAlpha = sb.getProgress();
+                savePrefInt(PREF_FM_BG_ALPHA, fmBgAlpha);
+                persistState();
+                applyBackground();
+            }
+        });
+
+        final TextView bgBlurVal = addSliderRow(box, "背景模糊度",
+                fmBgBlur == 0 ? "不模糊" : String.valueOf(fmBgBlur),
+                fmBgBlur, 0, 25, 1, null);
+        lastSlider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean u) {
+                bgBlurVal.setText(p == 0 ? "不模糊" : String.valueOf(p));
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar sb) {
+                fmBgBlur = sb.getProgress();
+                savePrefInt(PREF_FM_BG_BLUR, fmBgBlur);
+                persistState();
+                applyBackground();
+            }
+        });
+
+        // ── 文件行卡片透明度 ──
+        final TextView rowVal = addSliderRow(box, "文件行卡片不透明度",
+                fmRowAlpha + "%", fmRowAlpha, 0, 100, 10, null);
+        lastSlider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean u) {
+                rowVal.setText(p + "%");
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar sb) {
+                fmRowAlpha = sb.getProgress();
+                savePrefInt(PREF_FM_ROW_ALPHA, fmRowAlpha);
+                persistState();
+                applyFmThemeToAdapters();
+            }
+        });
+
+        // ── 列表密度 ──
+        final String[] densNames = {"标准", "紧凑", "宽松"};
+        final int[] densVals = {0, 1, 3};
+        // 用 final 存「当前是第几档」，lambda 里要用；在循环里赋值的话不是 effectively final
+        final int curDens;
+        {
+            int found = 0;
+            for (int i = 0; i < densVals.length; i++) {
+                if (densVals[i] == fmDensity) { found = i; break; }
+            }
+            curDens = found;
+        }
+        addInfoRow(box, "列表密度", densNames[curDens], fmDensity != 0, v -> {
+            LinearLayout pbox = new LinearLayout(ctx);
+            pbox.setOrientation(LinearLayout.VERTICAL);
+            pbox.addView(UiKit.sectionHeader(ctx, "列表密度"));
+            // 先建 dialog 再建行：行回调里要用 d 关窗，声明必须在 lambda 之前
+            final android.app.Dialog d = UiKit.glassDialog(ctx, pbox);
+            for (int i = 0; i < densNames.length; i++) {
+                final int idx = i;
+                pbox.addView(buildSimpleRow(densNames[i],
+                        idx == curDens ? "当前" : null, vv -> {
+                            fmDensity = densVals[idx];
+                            savePrefInt(PREF_FM_DENSITY, fmDensity);
+                            persistState();
+                            applyFmThemeToAdapters();
+                            UiKit.dismissWithAnim(d);
+                            hideSettingsDialog();
+                            showInSettingsDialog("文件管理主题", this::buildFileManagerTheme);
+                        }));
+            }
+            d.show();
+        });
+
         return box;
     }
 
@@ -5756,7 +6127,7 @@ public class FileManagerModule extends HyVqModule {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(4), dp(12), dp(4), dp(12));
-        row.setBackgroundResource(R.drawable.bg_ripple_round);
+        row.setBackground(cardSurface(-1));
         row.setClickable(true);
         row.setFocusable(true);
         row.setOnClickListener(onClick);
@@ -5788,10 +6159,14 @@ public class FileManagerModule extends HyVqModule {
                                   String[] tickLabels) {
         LinearLayout wrap = new LinearLayout(ctx);
         wrap.setOrientation(LinearLayout.VERTICAL);
-        wrap.setPadding(dp(4), dp(10), dp(4), dp(6));
+        // 和设置行共用同一套卡片底色：滑块标题、数值、刻度都直接写在 wrap 里，
+        // wrap 不给背景的话它们就裸露在背景图上了。
+        wrap.setPadding(dp(12), dp(10), dp(12), dp(8));
+        wrap.setBackground(cardSurface(-1));
+        wrap.setTag(CARD_TAG_KEY, Boolean.TRUE);
         LinearLayout.LayoutParams wrapLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        wrapLp.topMargin = dp(4);
+        wrapLp.topMargin = dp(6);
         parent.addView(wrap, wrapLp);
 
         // 标题行：左标题，右当前值
@@ -5908,7 +6283,7 @@ public class FileManagerModule extends HyVqModule {
     private View buildFileSettings() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(UiKit.sectionHeader(ctx, "文件管理"));
+        box.addView(sectionHeaderInCard("文件管理"));
 
         addInfoRow(box, "隐藏 . 开头文件",
                 showHidden ? "正在显示" : "已隐藏",
@@ -5921,6 +6296,10 @@ public class FileManagerModule extends HyVqModule {
                         reloadAll();
                     } catch (Throwable ignored) {
                     }
+                    // 必须重建本页：addInfoRow 的状态文字与圆点是构建时写死的，
+                    // 不重建的话点了以后界面还显示旧状态，看着像没生效。
+                    hideSettingsDialog();
+                    showFileSettings();
                     UiKit.toast(ctx, showHidden ? "已显示隐藏文件" : "已隐藏 . 开头文件");
                 });
 
@@ -5935,6 +6314,8 @@ public class FileManagerModule extends HyVqModule {
                             pp.adapter.setThumbsEnabled(thumbsEnabled);
                         }
                     }
+                    hideSettingsDialog();
+                    showFileSettings();
                     UiKit.toast(ctx, thumbsEnabled ? "已开启缩略图" : "已关闭缩略图");
                 });
 
@@ -6030,7 +6411,7 @@ public class FileManagerModule extends HyVqModule {
         row.setOnClickListener(onClick);
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowLp.topMargin = dp(4);
+        rowLp.topMargin = dp(6);   // 卡片之间留呼吸，避免视觉上连成一整块
         parent.addView(row, rowLp);
 
         LinearLayout texts = new LinearLayout(ctx);
