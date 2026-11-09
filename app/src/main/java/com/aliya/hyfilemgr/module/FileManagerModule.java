@@ -278,6 +278,39 @@ public class FileManagerModule extends HyVqModule {
     private LinearLayout topBar;
     /** 标记「这个 View 已经是卡片」，供 applyCardAlphaRecursive 识别不可点击的卡片（如滑块行） */
     private static final int CARD_TAG_KEY = 0x7C4D0001;
+    /**
+     * 当前正在填充的「设置分组」卡片。
+     *
+     * <p>设置页从「每个标题一张卡片、每行再套一张卡片」改成
+     * 「每个标题一张卡片，标题下面直接列选项，选项之间用分割线隔开」。
+     * 这样一屏能少一半的圆角与描边，视觉更安静，也更省一次 draw。</p>
+     *
+     * <p>用法：{@code sectionHeaderInCard()} 建立新分组并把它记到
+     * {@link #settingsGroup}；紧接着的 {@code addInfoRow()} /
+     * {@code addSliderRow()} 判断「父容器是否就是这个分组」，
+     * 是的话走组内行（无背景、无间距、带分割线），否则走老的独立卡片。</p>
+     */
+    private LinearLayout settingsGroup;
+
+    /**
+     * 在组内加一条分割线。
+     *
+     * <p>组里第一个子 View 是标题，所以「每行之前都加线」正好形成
+     * 「标题 ├─ 选项1 ├─ 选项2」的层级：标题和第一项之间也有一条线，
+     * 组内所有行之间也都有线，不需要额外判断。</p>
+     */
+    private void addGroupDivider(LinearLayout group) {
+        View line = new View(ctx);
+        line.setBackgroundColor((UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOutlineVariant) & 0x00FFFFFF)
+                | 0x33000000);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1)));
+        lp.leftMargin = dp(14);
+        lp.rightMargin = dp(14);
+        group.addView(line, lp);
+    }
+
     /** 标记「这是分区标题卡片」，重刷时保留它的高亮底色 */
     private static final int CARD_TAG_HDR_KEY = 0x7C4D0002;
     /** 选图目标：true = 设为文件管理主题背景，false = 设为全局背景 */
@@ -3922,36 +3955,32 @@ public class FileManagerModule extends HyVqModule {
         // 不在这里再放一行「返回文件列表」：
         // 共享顶栏的返回键已经能回文件列表，两者功能完全相同。
         // 保留共享顶栏那个（所有设置子页都靠它），删掉这个页内重复的。
-        box.addView(sectionHeaderInCard("设置"));
-
-
-        // ── 权限管理 ──
-        addSettingsRow(box, "权限管理",
-                "所有文件访问 · 存储权限 · SAF 授权", R.drawable.ic_lock, v -> {
-                    showInSettingsDialog("权限管理", this::buildPermissionManager);
-                });
-
-        // ── 文件管理 ──
-        addSettingsRow(box, "文件管理",
-                "隐藏文件 · 缩略图 · 排序方式", R.drawable.ic_folder, v -> {
-                    showInSettingsDialog("文件管理", this::buildFileSettings);
-                });
-
-        // ── 主题设置 ──
+        // ── 基础设置 ──
+        box.addView(sectionHeaderInCard("基础设置"));
         addSettingsRow(box, "主题设置",
                 "背景图 · 卡片透明度 · 界面主题 · 显示密度",
                 R.drawable.ic_sliders, v -> {
                     showInSettingsDialog("主题设置", this::buildAppearanceSettings);
                 });
 
-        // ── 软件更新 ──
+        // ── 工具 ──
+        box.addView(sectionHeaderInCard("工具"));
+        addSettingsRow(box, "文件管理",
+                "隐藏文件 · 缩略图 · 排序方式", R.drawable.ic_folder, v -> {
+                    showInSettingsDialog("文件管理", this::buildFileSettings);
+                });
+
+        // ── 软件 ──
+        box.addView(sectionHeaderInCard("软件"));
+        addSettingsRow(box, "权限管理",
+                "所有文件访问 · 存储权限 · SAF 授权", R.drawable.ic_lock, v -> {
+                    showInSettingsDialog("权限管理", this::buildPermissionManager);
+                });
         addSettingsRow(box, "软件更新",
                 "当前 " + appVersionName() + " · 检查是否有新版本",
                 R.drawable.ic_refresh, v -> {
                     showInSettingsDialog("软件更新", this::showUpdatePageBody);
                 });
-
-        // ── 关于 ──
         addSettingsRow(box, "关于",
                 "版本信息 · 开源仓库 · 开发说明", R.drawable.ic_info, v -> {
                     showInSettingsDialog("关于", this::showAboutPageBody);
@@ -4511,8 +4540,13 @@ public class FileManagerModule extends HyVqModule {
     private void showInSettingsDialog(String title,
                                       java.util.function.Supplier<View> contentSupplier) {
         if (contentWrapRef == null) return;
+        // 每次进设置页先清空分组引用：settingsGroup 是实例字段，
+        // 上一页留下的值会让「先加行、后加标题」的页面（如关于页）
+        // 把行误塞进上一个页面的卡片里。
+        settingsGroup = null;
         View v = contentSupplier.get();
         if (v == null) return;
+        settingsGroup = null;   // 建完也清掉，避免跨页残留
         // 进任何设置页都必须处于 SETTINGS 模式。
         // 从文件页 / 侧边栏直接调进来时 contentMode 还是 FILES，
         // 之前只切了内容 View，顶栏却停在文件态（面包屑 + 文件操作按钮），
@@ -4641,15 +4675,23 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
+        // 有分组时改投到分组卡片里，而不是调用方传进来的 box。
+        // 调用点统一写 addSettingsRow(box, ...)，但视觉上这些行应该
+        // 躺在 sectionHeaderInCard 返回的那张卡片内部；不去比 parent == settingsGroup
+        // （那样永远为 false，因为 parent 一直是 box）。
+        final LinearLayout host = settingsGroup != null ? settingsGroup : parent;
+        final boolean inGroup = host == settingsGroup;
+        if (inGroup) addGroupDivider(host);
+
         row.setPadding(dp(12), dp(14), dp(12), dp(14));
         row.setClickable(true);
         row.setFocusable(true);
-        row.setBackground(cardSurface(-1));
+        if (!inGroup) row.setBackground(cardSurface(-1));
         row.setOnClickListener(onClick);
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowLp.topMargin = dp(6);
-        parent.addView(row, rowLp);
+        if (!inGroup) rowLp.topMargin = dp(6);
+        host.addView(row, rowLp);
 
         ImageView icon = new ImageView(ctx);
         icon.setImageResource(iconRes);
@@ -5336,30 +5378,36 @@ public class FileManagerModule extends HyVqModule {
      *
      * <p>没有背景图时仍返回裸标题：纯色背景下套卡片只会多出一圈无意义的描边。</p>
      */
+    /**
+     * 分区标题。返回的卡片同时作为**该分组的容器**：
+     * 标题在最上面，后续 {@code addInfoRow}/{@code addSliderRow}
+     * 直接往这张卡片里加行，行与行之间由 {@link #addGroupDivider} 加分割线。
+     *
+     * <p>这样一屏只有一个大卡片，而不是「标题一张卡 + 每个选项一张卡」，
+     * 圆角和描边数量直接减半，设置页看着安静很多。</p>
+     */
     private View sectionHeaderInCard(String text) {
+        // 标题始终是「分组头」，不再区分有没有背景图。
+        // 之前这里在无背景图时返回裸 TextView（settingsGroup=null），
+        // 结果分组逻辑整个失效，设置页还是老的「每行一张卡」。
+        // 视觉上：分组头用更亮的一级底色、圆角收窄，和内部的白底行区分开。
         TextView tv = UiKit.sectionHeader(ctx, text);
-        // 裸标题时保留 UiKit 的非对称 padding：上 12 下 6，
-        // 那是给「标题与下方内容之间留空」用的，本身没问题。
-        if (bgImageFile == null || !bgImageFile.isFile()) return tv;
-
-        // 套进卡片后必须把这组 padding 压平：
-        // 上 12 + 卡片 2 = 14，下 6 + 卡片 2 = 8，
-        // 文字会明显偏上，看着像卡片下半截空着。
-        // 卡片内部改用对称 padding，上下一致。
-        tv.setPadding(dp(4), 0, dp(4), 0);
+        tv.setPadding(dp(14), dp(12), dp(14), dp(10));
 
         LinearLayout card = new LinearLayout(ctx);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(10), dp(10), dp(10), dp(10));
-        card.setBackground(cardSurface(8, true));
+        card.setPadding(0, 0, 0, 0);
+        card.setBackground(cardSurface(12, true));
         card.setTag(CARD_TAG_KEY, Boolean.TRUE);
         card.setTag(CARD_TAG_HDR_KEY, Boolean.TRUE);
         card.addView(tv);
+
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(6);
+        lp.topMargin = dp(10);
         card.setLayoutParams(lp);
+
+        settingsGroup = card;   // 后续行加到这里
         return card;
     }
 
@@ -6283,17 +6331,24 @@ public class FileManagerModule extends HyVqModule {
     private TextView addSliderRow(LinearLayout parent, String title, String initValue,
                                   int progress, int min, int max, int step,
                                   String[] tickLabels) {
+        // 有分组时改投到分组卡片（见 addSettingsRow 的说明）
+        final LinearLayout host = settingsGroup != null ? settingsGroup : parent;
+        final boolean inGroup = host == settingsGroup;
+        if (inGroup) addGroupDivider(host);
+
         LinearLayout wrap = new LinearLayout(ctx);
         wrap.setOrientation(LinearLayout.VERTICAL);
-        // 和设置行共用同一套卡片底色：滑块标题、数值、刻度都直接写在 wrap 里，
-        // wrap 不给背景的话它们就裸露在背景图上了。
+        // 滑块标题、数值、刻度都直接写在 wrap 里，
+        // 分组外时 wrap 必须自己给背景，否则裸露在背景图上。
         wrap.setPadding(dp(12), dp(10), dp(12), dp(8));
-        wrap.setBackground(cardSurface(-1));
-        wrap.setTag(CARD_TAG_KEY, Boolean.TRUE);
+        if (!inGroup) {
+            wrap.setBackground(cardSurface(-1));
+            wrap.setTag(CARD_TAG_KEY, Boolean.TRUE);
+        }
         LinearLayout.LayoutParams wrapLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        wrapLp.topMargin = dp(6);
-        parent.addView(wrap, wrapLp);
+        if (!inGroup) wrapLp.topMargin = dp(6);
+        host.addView(wrap, wrapLp);
 
         // 标题行：左标题，右当前值
         LinearLayout titleRow = new LinearLayout(ctx);
@@ -6534,18 +6589,25 @@ public class FileManagerModule extends HyVqModule {
     /** 状态行：图标 + 标题 + 状态描述 + 勾选标记 */
     private void addInfoRow(LinearLayout parent, String title, String status,
                             boolean ok, View.OnClickListener onClick) {
+        // 有分组时改投到分组卡片（见 addSettingsRow 的说明）
+        final LinearLayout host = settingsGroup != null ? settingsGroup : parent;
+        final boolean inGroup = host == settingsGroup;
+        if (inGroup) addGroupDivider(host);
+
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(12), dp(12), dp(12), dp(12));
         row.setClickable(true);
         row.setFocusable(true);
-        row.setBackground(cardSurface(-1));
+        if (!inGroup) {
+            row.setBackground(cardSurface(-1));
+        }
         row.setOnClickListener(onClick);
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowLp.topMargin = dp(6);   // 卡片之间留呼吸，避免视觉上连成一整块
-        parent.addView(row, rowLp);
+        if (!inGroup) rowLp.topMargin = dp(6);   // 卡片之间留呼吸
+        host.addView(row, rowLp);
 
         LinearLayout texts = new LinearLayout(ctx);
         texts.setOrientation(LinearLayout.VERTICAL);
@@ -7956,9 +8018,9 @@ public class FileManagerModule extends HyVqModule {
                 final List<String> fFailed = failed;
                 handler.post(() -> {
                     if (fFailed.isEmpty()) {
-                        UiKit.toast(ctx, fTrash
-                                ? "已移入回收站 " + fOk + " 项（可在侧边栏回收站恢复）"
-                                : "已彻底删除 " + fOk + " 项");
+                        // 成功不弹 toast：删除是高频操作，底部闪一条只会打断浏览。
+                        // 列表里条目立即消失本身就是反馈。
+                        // 失败仍然弹（下面是 alert），那种情况必须让用户知道。
                     } else {
                         StringBuilder failMsg = new StringBuilder();
                         failMsg.append("成功 ").append(fOk).append(" 项，失败 ")
