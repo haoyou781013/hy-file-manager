@@ -3,7 +3,7 @@
 Android 双窗格文件管理器。支持 11 种压缩格式的创建与解压、内置文本编辑器、媒体播放器。
 
 - **仓库**：[GitHub](https://github.com/haoyou781013/hy-file-manager) · [Gitee](https://gitee.com/haoyou781/hy-file-manager)
-- **当前版本**：1.0.2（versionCode 7）
+- **当前版本**：1.0.3（versionCode 8）
 - **包名**：`com.aliya.hyfilemgr`
 - **最低系统**：Android 6.0（API 23）
 
@@ -18,6 +18,15 @@ Android 双窗格文件管理器。支持 11 种压缩格式的创建与解压�
 - 多选、复制、剪切、粘贴、重命名、删除
 - 回收站：删除可恢复，`.trashmeta` 记录原始路径，按天自动清理
 - 书签、最近文件
+- **`Android/data` / `obb` / `media` 可读可写**（见下方「Android/data 访问」）
+- 包名文件夹右下角叠加对应应用图标（可在设置里关闭）
+
+### 主题与外观
+- 背景图（全局 + 文件列表页独立两套），支持不透明度、模糊度
+- 卡片不透明度、侧边栏不透明度、状态栏不透明度，均为实时生效
+- 状态栏透明，背景图可一直铺到状态栏后面
+- 界面主题（默认 / 工业风格）、明暗模式（跟随系统 / 亮 / 暗）
+- 存储管理页：内部存储总量 + 应用占用明细，各项可单独清理
 
 ### 压缩
 | 操作 | 支持的格式 |
@@ -76,12 +85,33 @@ export ANDROID_HOME=/path/to/android-sdk
 
 ---
 
+## Android/data 访问
+
+Android 11 起，`/sdcard/Android/data`、`obb`、`media` 由 FUSE 层做**路径字符串**
+拦截。即使应用拿到 `MANAGE_EXTERNAL_STORAGE`，`listFiles()` 对这些目录仍返回 null，
+官方文档也明确写着「仍不能访问其他应用的 app-specific 目录」。
+
+本项目的做法是：路径里 `Android` 与 `data` 之间插入一个零宽空格（U+200B）。
+FUSE 的拦截规则按字符串匹配认不出这是 `Android/data`，而 Linux VFS 在解析
+目录项时会忽略这个字符，最终落到同一个 inode —— 该 inode 的权限是
+`drwxrws--x`，从未收紧，于是读、写、删全部通行。
+
+- 实现见 `app/src/main/java/com/aliya/hyfilemgr/access/PathAlias.java`
+- 零宽字符只存在于内部 IO 路径，`FileEntry.path` 始终是真实路径，
+  **不会出现在界面、复制出来的文本或任何持久化数据里**
+- 非受限路径（`/sdcard/DCIM` 之类）不经过该逻辑，零额外开销
+
+**这是利用一个未修复的系统行为，不是官方支持的能力。** Google 修复字符处理后
+该功能即失效，届时会回退到原来的「无权限」空列表。本项目同时实现了官方的
+`getManageSpaceActivityIntent`（Android 12+）作为替代路径。
+
 ## 已知限制
 
 - **RAR 不能创建**：UnRAR 许可证禁止开发 RAR 兼容的压缩器，只能解压
 - **zstd 压缩依赖 JNI 原生库**，需真机运行（x86 模拟器/容器可能加载失败）
 - 大 `tar.gz` 首次列目录需完整扫一遍，几十 MB 的包会有可感知等待
 - 加密 rar 未接口令输入
+- **`Android/data` 访问依赖系统路径校验缺陷**：见上方专节，Google 修复后失效
 - `dirCache` 指纹基于父目录 mtime + 直接子项数，**外部 App 在子目录内增删文件**后
   父目录缓存不会失效（应用内操作会正确刷新）
 
