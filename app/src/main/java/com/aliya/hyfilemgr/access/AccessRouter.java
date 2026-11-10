@@ -42,8 +42,12 @@ public final class AccessRouter {
         if (p.equals(StorageStrategy.STORAGE_DIR + "/emulated")) return StorageStrategy.listEmulated(ctx);
 
         // ── 默认真实策略：listFiles 成功 → 真实条目（含符号链接标记） ──
-        File f = new File(p);
-        File[] real = f.listFiles();
+        //
+        // Android 11+ 的 Android/data、obb、media 被 FUSE 按**路径字符串**拦截，
+        // 即使有 MANAGE_EXTERNAL_STORAGE 也 listFiles()==null。
+        // 这里先按原路径试，失败再换零宽别名路径重试（见 PathAlias 的说明）。
+        // 条目里的 path 一律用真实路径，零宽字符不泄漏到 UI。
+        File[] real = new File(p).listFiles();
         if (real != null) {
             List<FileEntry> out = new ArrayList<>(real.length);
             for (File c : real) {
@@ -51,8 +55,64 @@ public final class AccessRouter {
             }
             return AccessResult.ok(out, "Real");
         }
+        if (PathAlias.isGuarded(p)) {
+            String aliased = PathAlias.io(p);
+            if (!aliased.equals(p)) {
+                File[] viaAlias = new File(aliased).listFiles();
+                if (viaAlias != null) {
+                    List<FileEntry> out = new ArrayList<>(viaAlias.length);
+                    for (File c : viaAlias) {
+                        // c.getAbsolutePath() 含零宽字符，必须先还原
+                        out.add(toEntryAt(c, PathAlias.real(p)));
+                    }
+                    return AccessResult.ok(out, "Real");
+                }
+            }
+        }
         // 无权限且无虚拟信息 → 静默空（对齐 MT 空列表行为，不报错）
         return AccessResult.denied("Real");
+    }
+
+    /**
+     * 别名目录里的 File → FileEntry，path 用**真实父路径**拼回来。
+     *
+     * <p>{@code c.getAbsolutePath()} 会带上零宽字符。直接用会让
+     * UI 显示错位、复制粘贴失效、比较异常。这里改成
+     * 「真实父路径 + 文件名」重新拼，从源头杜绝泄漏。</p>
+     */
+    private static FileEntry toEntryAt(File c, String realParent) {
+        String realPath = realParent.endsWith("/")
+                ? realParent + c.getName()
+                : realParent + "/" + c.getName();
+        if (c.isDirectory()) return FileEntry.dir(realPath, c.lastModified());
+        return FileEntry.file(realPath, c.length(), c.lastModified());
+    }
+
+    /**
+     * 由 FileEntry 取可用于 IO 的 File。
+     *
+     * <p><b>为什么必须走这个入口</b>：{@code FileEntry.path} 一律是**真实路径**
+     * （零宽字符绝不写入其中，否则 UI 会错位、复制粘贴失效）。
+     * 但受限目录（Android/data 等）的真实路径会被 FUSE 拦住，
+     * 直接 {@code new File(e.path).isFile()} 恒为 false —— 表现就是
+     * 「目录能进、点文件说文件不存在」。</p>
+     *
+     * <p>这里统一过一次 {@link PathAlias#io}：受限路径换成别名，
+     * 非受限路径原样返回。所有拿 FileEntry 做 IO 的地方都必须用它，
+     * 不要再写 {@code new File(e.path)}。</p>
+     */
+    public static File fileOf(FileEntry e) {
+        if (e == null || e.path == null) return null;
+        String p = e.path;
+        if (!PathAlias.isGuarded(p)) return new File(p);
+        return new File(PathAlias.io(p));
+    }
+
+    /** 由路径串取可用于 IO 的 File（受限目录自动换别名） */
+    public static File fileOf(String path) {
+        if (path == null) return null;
+        if (!PathAlias.isGuarded(path)) return new File(path);
+        return new File(PathAlias.io(path));
     }
 
     /** File → FileEntry（符号链接标记 LINK 并保留目标） */

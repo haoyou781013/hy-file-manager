@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -22,6 +23,12 @@
       只能看到很少的系统应用（实测仅 11 个），第三方应用（MT 管理器等）完全不可见。
       这里声明需要探测的应用类型，让「打开方式」能列出设备上真实的应用。
     -->
+    <!-- 应用图标角标：Android/data 等目录下要显示包名对应的应用图标。
+         Android 11+ 包可见性默认只暴露声明过的包，系统应用多数查不到。
+         文件管理器需要完整包列表（MT 等同类型应用都声明此项）。 -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
     <queries>
         <!-- 能查看文件的应用池 -->
         <intent>

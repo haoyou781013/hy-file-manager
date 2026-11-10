@@ -1,5 +1,7 @@
 package com.aliya.hyfilemgr.filemgr;
 
+import com.aliya.hyfilemgr.access.PathAlias;
+
 import android.os.Handler;
 import android.os.Looper;
 
@@ -107,27 +109,45 @@ public final class FileOps {
 
     /** 同步复制（文件或目录递归；已在后台线程时使用，失败抛 IOException） */
     public static void copy(File src, File dest) throws IOException {
-        copyRecursive(src, dest);
+        copyRecursive(alias(src), alias(dest));
+    }
+
+    /**
+     * 进入受限目录时换成零宽别名路径。
+     *
+     * <p>Android 11+ 的 Android/data、obb、media 被 FUSE 按路径字符串拦截，
+     * 直接 delete/rename 会失败；换成别名路径后底层 inode 权限是通的。
+     * 见 {@link PathAlias} 的完整说明。</p>
+     *
+     * <p>非受限路径原样返回，零开销。</p>
+     */
+    private static File alias(File f) {
+        if (f == null) return null;
+        String p = f.getAbsolutePath();
+        if (!PathAlias.isGuarded(p)) return f;
+        String a = PathAlias.io(p);
+        return a.equals(p) ? f : new File(a);
     }
 
     /** 后台移动：同分区 rename 原子完成，跨分区复制+删除 */
     public static void moveAsync(File src, File destDir, Callback cb) {
         runAsync(() -> {
             try {
-                File dest = new File(destDir, src.getName());
+                final File s2 = alias(src);
+                File dest = new File(alias(destDir), src.getName());
                 // 目标已存在时不能直接 renameTo：部分文件系统会静默覆盖，
                 // 用户以为"移动"实则丢了原文件。交给上层重命名去。
                 if (dest.exists()) {
                     return new Object[]{false, "目标已存在同名项：" + src.getName()};
                 }
-                if (src.renameTo(dest)) {
+                if (s2.renameTo(dest)) {
                     return new Object[]{true, "已移动：" + src.getName()};
                 }
                 // 跨分区：copyRecursive 现在保证「不完整就抛异常」
                 // （listFiles()==null 已改为抛 IOException），
                 // 因此能走到下一行就说明复制完整，删源是安全的。
-                copyRecursive(src, dest);
-                deleteRecursive(src);
+                copyRecursive(s2, dest);
+                deleteRecursive(s2);
                 return new Object[]{true, "已移动（跨分区）：" + src.getName()};
             } catch (Throwable t) {
                 return new Object[]{false, "移动失败：" + t.getMessage()};
@@ -139,7 +159,7 @@ public final class FileOps {
     public static void deleteAsync(File src, Callback cb) {
         runAsync(() -> {
             try {
-                int n = deleteRecursive(src);
+                int n = deleteRecursive(alias(src));
                 return new Object[]{true, "已删除 " + n + " 项"};
             } catch (Throwable t) {
                 return new Object[]{false, "删除失败：" + t.getMessage()};
@@ -151,7 +171,7 @@ public final class FileOps {
     public static void mkdirAsync(File parent, String name, Callback cb) {
         runAsync(() -> {
             try {
-                File dir = new File(parent, sanitize(name));
+                File dir = new File(alias(parent), sanitize(name));
                 if (dir.exists()) return new Object[]{false, "已存在同名文件/文件夹"};
                 if (!dir.mkdirs()) return new Object[]{false, "创建失败（无写入权限？）"};
                 return new Object[]{true, "已创建文件夹：" + dir.getName()};
@@ -167,7 +187,7 @@ public final class FileOps {
             try {
                 String n = sanitize(name);
                 if (n.isEmpty()) return new Object[]{false, "文件名不能为空"};
-                File f = new File(parent, n);
+                File f = new File(alias(parent), n);
                 if (f.exists()) return new Object[]{false, "已存在同名文件/文件夹"};
                 if (!f.createNewFile()) return new Object[]{false, "创建失败（无写入权限？）"};
                 return new Object[]{true, "已创建文件：" + f.getName()};
@@ -183,9 +203,10 @@ public final class FileOps {
             try {
                 String n = sanitize(newName);
                 if (n.isEmpty()) return new Object[]{false, "名称不能为空"};
-                File dest = new File(src.getParentFile(), n);
+                final File s2 = alias(src);
+                File dest = new File(alias(src.getParentFile()), n);
                 if (dest.exists()) return new Object[]{false, "已存在同名文件/文件夹"};
-                if (!src.renameTo(dest)) return new Object[]{false, "重命名失败"};
+                if (!s2.renameTo(dest)) return new Object[]{false, "重命名失败"};
                 return new Object[]{true, "已重命名为：" + n};
             } catch (Throwable t) {
                 return new Object[]{false, "重命名失败：" + t.getMessage()};

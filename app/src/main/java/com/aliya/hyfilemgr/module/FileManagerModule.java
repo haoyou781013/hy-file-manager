@@ -969,6 +969,9 @@ public class FileManagerModule extends HyVqModule {
         // 恒按有背景图处理（见 syncContentTransparency 说明）
         syncContentTransparency(true);
 
+        // 首帧后按底部导航栏实际高度设一次列表底部预留
+        if (bottomNav != null) bottomNav.post(this::updateListBottomReserve);
+
         // 启动时按保存的 statusBarAlpha 应用一次状态栏底色
         // （MainActivity 那边只设了 TRANSPARENT 作为初值，真正值在这里覆盖）
         applyStatusBarAlpha();
@@ -2271,7 +2274,7 @@ public class FileManagerModule extends HyVqModule {
                         }
                         break;
                     default:
-                        File tf = new File(e.path);
+                        File tf = AccessRouter.fileOf(e);
                         // ⚠️ 安装包必须排在压缩包之前判断。
                         // .apk 本质是 zip，isZip() 对它返回 true；
                         // 先判压缩包会直接进内部浏览，用户点安装包看到的却是目录树。
@@ -2499,7 +2502,7 @@ public class FileManagerModule extends HyVqModule {
 
     private void openLink(Pane p, FileEntry e) {
         recordRecent(e.path);
-        File f = new File(e.path);
+        File f = AccessRouter.fileOf(e);
         if (f.isDirectory()) {
             p.path = e.path;
             reload(p);
@@ -3062,6 +3065,11 @@ public class FileManagerModule extends HyVqModule {
 
         if (opBar == null) return;
         opBar.setVisibility(multiMode ? View.VISIBLE : View.GONE);
+        // 两栏高度差很大（opBar 约 100dp、bottomNav 56dp），
+        // 切换后要按新可见栏的实际高度重算列表底部预留，
+        // 否则多选时最后几行被 opBar 盖住。post 一帧等布局完成。
+        if (opBar != null) opBar.post(this::updateListBottomReserve);
+        if (bottomNav != null) bottomNav.post(this::updateListBottomReserve);
     }
 
     // ── 长按菜单（MT 风格固定菜单：所有功能可见，当前场景不可用的置灰禁用） ──
@@ -3218,7 +3226,7 @@ public class FileManagerModule extends HyVqModule {
                 }
                 break;
             case "编辑":
-                if (real && isTextFile(e.name)) openTextEditor(new File(e.path));
+                if (real && isTextFile(e.name)) openTextEditor(AccessRouter.fileOf(e));
                 break;
             case "复制":
                 if (!e.virtual || saf) putClipboard(Collections.singletonList(e), false);
@@ -3906,7 +3914,7 @@ public class FileManagerModule extends HyVqModule {
         }
 
         for (final String path : set) {
-            final File f = new File(path);
+            final File f = AccessRouter.fileOf(path);
             LinearLayout row = new LinearLayout(ctx);
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
@@ -8491,7 +8499,7 @@ public class FileManagerModule extends HyVqModule {
                     });
                 }, "HyVqSafRename").start();
             } else {
-                FileOps.renameAsync(new File(e.path), newName, (ok, msg) -> {
+                FileOps.renameAsync(AccessRouter.fileOf(e), newName, (ok, msg) -> {
                     UiKit.toast(ctx, msg);
                     reload(active);
                 });
@@ -8583,7 +8591,7 @@ public class FileManagerModule extends HyVqModule {
         // 目录大小后台计算后回填（仅真实目录；虚拟目录无真实大小，SAF 目录显示 "-"）
         if (e.isDir() && !e.virtual && !SafStrategy.isSafUri(e.path)) {
             new Thread(() -> {
-                long size = FileOps.dirSize(new File(e.path));
+                long size = FileOps.dirSize(AccessRouter.fileOf(e));
                 final String sizeStr = size < 0 ? "计算失败" : FileOps.formatSize(size);
                 handler.post(() -> {
                     tv.setText(tv.getText().toString().replace("计算中…", sizeStr));
@@ -8686,7 +8694,7 @@ public class FileManagerModule extends HyVqModule {
                         }
                         continue;
                     }
-                    File f = new File(e.path);
+                    File f = AccessRouter.fileOf(e);
                     if (!f.exists()) {
                         failed.add(nm + "：文件已不存在");
                         continue;
@@ -10277,7 +10285,7 @@ public class FileManagerModule extends HyVqModule {
                 UiKit.alert(ctx, "路径不能为空");
                 return;
             }
-            File target = new File(path);
+            File target = AccessRouter.fileOf(path);
             if (!target.isAbsolute()) target = new File(dir, path);
             d.dismiss();
             doSaveAs(target);
@@ -11042,7 +11050,7 @@ public class FileManagerModule extends HyVqModule {
      */
     private String tryOpenImageViewer(String pathOrUri, String name, boolean isUri) {
         if (!isUri) {
-            File f = new File(pathOrUri);
+            File f = AccessRouter.fileOf(pathOrUri);
             if (!f.exists()) return "文件不存在或无法访问";
             if (!f.canRead()) return "没有读取该文件的权限";
         }
@@ -11053,7 +11061,7 @@ public class FileManagerModule extends HyVqModule {
     /** 尝试用内置播放器打开。 */
     private String tryOpenWithBuiltInPlayer(String pathOrUri, String name, boolean isUri) {
         if (!isUri) {
-            File f = new File(pathOrUri);
+            File f = AccessRouter.fileOf(pathOrUri);
             if (!f.exists()) return "文件不存在或无法访问";
             if (!f.canRead()) return "没有读取该文件的权限";
         }
@@ -11064,7 +11072,7 @@ public class FileManagerModule extends HyVqModule {
     /** 尝试用内置文本编辑器打开。 */
     private String tryOpenInEditor(String pathOrUri, String name, boolean isUri) {
         if (isUri) return "SAF 文件（content://）暂不支持内置编辑器";
-        File f = new File(pathOrUri);
+        File f = AccessRouter.fileOf(pathOrUri);
         if (!f.exists()) return "文件不存在或无法访问";
         if (!f.canRead()) return "没有读取该文件的权限";
         if (f.isDirectory()) return "这是一个文件夹，不能作为文本编辑";
@@ -11081,7 +11089,7 @@ public class FileManagerModule extends HyVqModule {
     /** 尝试解压（仅 zip 有效）。 */
     private String tryUnzip(String pathOrUri, String name, boolean isUri) {
         if (isUri) return "SAF 文件（content://）暂不支持直接解压，请先复制到本地";
-        File f = new File(pathOrUri);
+        File f = AccessRouter.fileOf(pathOrUri);
         if (!f.exists()) return "文件不存在或无法访问";
         if (!f.canRead()) return "没有读取该文件的权限";
         String ext = extOf(name);
@@ -11141,7 +11149,7 @@ public class FileManagerModule extends HyVqModule {
             return "这不是 APK 安装包（扩展名 ." + extOf(name) + "）";
         }
         if (!isUri) {
-            File f = new File(pathOrUri);
+            File f = AccessRouter.fileOf(pathOrUri);
             if (!f.exists()) return "文件不存在或无法访问";
             if (!f.canRead()) return "没有读取该文件的权限";
         }
@@ -11171,7 +11179,7 @@ public class FileManagerModule extends HyVqModule {
                     + "），字体预览支持 ttf / otf / ttc / woff";
         }
         if (!isUri) {
-            File f = new File(pathOrUri);
+            File f = AccessRouter.fileOf(pathOrUri);
             if (!f.exists()) return "文件不存在或无法访问";
             if (!f.canRead()) return "没有读取该文件的权限";
             if (f.length() == 0) return "文件为空（0 字节），可能未下载完整";
@@ -11267,7 +11275,7 @@ public class FileManagerModule extends HyVqModule {
         try {
             final Uri uri = isUri ? Uri.parse(pathOrUri)
                     : FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider",
-                    new File(pathOrUri));
+                    AccessRouter.fileOf(pathOrUri));
             final String mime = mimeOf(extOf(name));
             // ── 列出设备上**所有已安装应用**（不限系统/第三方、不限 MIME）──
             // 每个应用标注是否能处理此文件类型：
@@ -11592,7 +11600,7 @@ public class FileManagerModule extends HyVqModule {
                 }));
                 act.addView(textButton("用内置方式打开", v -> {
                     dialog.dismiss();
-                    openFile(new File(pathOrUri));
+                    openFile(AccessRouter.fileOf(pathOrUri));
                 }));
             }
         }
@@ -12000,7 +12008,7 @@ public class FileManagerModule extends HyVqModule {
     /** 用内置编辑器打开指定文件（先进入其所在目录再打开） */
     private void openInEditorByName(String pathOrUri, String name, boolean isUri) {
         try {
-            File f = isUri ? null : new File(pathOrUri);
+            File f = isUri ? null : AccessRouter.fileOf(pathOrUri);
             if (f == null || !f.exists()) {
                 UiKit.toast(ctx, "SAF 文件暂不支持内置编辑器，请改用系统打开方式");
                 return;
@@ -12014,7 +12022,7 @@ public class FileManagerModule extends HyVqModule {
     /** 解压指定压缩包（复用既有解压流程） */
     private void unzipByName(String pathOrUri, String name, boolean isUri) {
         try {
-            File f = isUri ? null : new File(pathOrUri);
+            File f = isUri ? null : AccessRouter.fileOf(pathOrUri);
             if (f == null || !f.exists()) {
                 UiKit.toast(ctx, "SAF 文件暂不支持直接解压，请先复制到本地");
                 return;
@@ -12051,7 +12059,7 @@ public class FileManagerModule extends HyVqModule {
         try {
             Uri uri = isUri ? Uri.parse(pathOrUri)
                     : FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider",
-                    new File(pathOrUri));
+                    AccessRouter.fileOf(pathOrUri));
             Intent i = new Intent(Intent.ACTION_VIEW);
             i.setDataAndType(uri, "application/vnd.android.package-archive");
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -12549,7 +12557,7 @@ public class FileManagerModule extends HyVqModule {
                 active.path = e.path;
                 reload(active);
             } else {
-                openFile(new File(e.path));
+                openFile(AccessRouter.fileOf(e));
             }
         });
         dialog.show();
@@ -12620,7 +12628,7 @@ public class FileManagerModule extends HyVqModule {
      */
     private void compressToZip(final FileEntry e) {
         if (e == null || e.path == null) return;
-        final File src = new File(e.path);
+        final File src = AccessRouter.fileOf(e);
         if (!src.exists()) {
             UiKit.alert(ctx, "文件不存在");
             return;
@@ -13241,7 +13249,7 @@ public class FileManagerModule extends HyVqModule {
 
     /** 解压 zip 到同目录 <zip名>/：处理 Windows GBK 文件名乱码、路径穿越防护 */
     private void extractZip(final FileEntry e) {
-        final File archive = new File(e.path);
+        final File archive = AccessRouter.fileOf(e);
         final File parent = archive.getParentFile();
         if (parent == null || !parent.canWrite()) {
             UiKit.alert(ctx, "目录不可写，无法解压");
@@ -14259,7 +14267,7 @@ public class FileManagerModule extends HyVqModule {
 
     /** 从回收站恢复：trash 路径去掉 TRASH_DIR 前缀即原绝对路径；父目录重建；重名自动 (1) */
     private void restoreFromTrash(final FileEntry e) {
-        final File f = new File(e.path);
+        final File f = AccessRouter.fileOf(e);
         if (!e.path.startsWith(TRASH_DIR)) {
             UiKit.toast(ctx, "仅回收站内条目可恢复");
             return;
@@ -14610,7 +14618,7 @@ public class FileManagerModule extends HyVqModule {
 
     private int countChildren(FileEntry e) {
         if (SafStrategy.isSafUri(e.path)) return SafStrategy.childCount(ctx, e.path);
-        File[] list = new File(e.path).listFiles();
+        File[] list = AccessRouter.fileOf(e).listFiles();
         return list == null ? 0 : list.length;
     }
 
@@ -14823,6 +14831,45 @@ public class FileManagerModule extends HyVqModule {
                 android.util.Log.i("HYInset", "body paddingTop -> " + (baseTop + sb));
             }
         } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 按**当前可见的**底部栏实际高度，更新列表底部预留。
+     *
+     * <p><b>为什么不能写死</b>：底部有两种栏，高度差很大——
+     * 底部导航栏固定 48dp（+8dp 边距 = 56dp），
+     * 多选栏 opBar 是内容撑的：「已选 N 项」一行 + 动作按钮格
+     * （图标 22 + 文字 ≈ 44dp）+ 上下 padding 16dp，约 100dp。
+     * 原先两者共用 BOTTOM_NAV_RESERVE = 62dp，多选时必然遮住最后几行。</p>
+     *
+     * <p>这里直接量可见栏的 {@code getHeight()}（布局完成后才有值），
+     * 没布局完就退回常量估算。两栏互斥显示，所以取「可见的那个」即可。</p>
+     */
+    private void updateListBottomReserve() {
+        int reserve = dp(BOTTOM_NAV_RESERVE);   // 兜底
+        try {
+            View visible = null;
+            if (opBar != null && opBar.getVisibility() == View.VISIBLE) {
+                visible = opBar;
+            } else if (bottomNav != null && bottomNav.getVisibility() == View.VISIBLE) {
+                visible = bottomNav;
+            }
+            if (visible != null && visible.getHeight() > 0) {
+                // 栏本体高度 + 底部边距 8dp + 呼吸 8dp
+                reserve = visible.getHeight() + dp(8) + dp(8);
+            } else if (visible == opBar) {
+                reserve = dp(110);   // opBar 还没布局：按典型高度估
+            }
+        } catch (Throwable ignored) {
+        }
+        final int r = reserve;
+        for (Pane pp : panes) {
+            if (pp == null || pp.list == null) continue;
+            if (pp.list.getPaddingBottom() != r) {
+                pp.list.setPadding(pp.list.getPaddingLeft(), pp.list.getPaddingTop(),
+                        pp.list.getPaddingRight(), r);
+            }
         }
     }
 
