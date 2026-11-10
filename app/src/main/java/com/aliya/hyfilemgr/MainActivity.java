@@ -151,32 +151,34 @@ public class MainActivity extends AppCompatActivity {
 
         setContentView(root);
 
-        // 状态栏与标题栏同色：标题栏用的是 colorSurfaceContainer，
-        // 这里同步状态栏，避免顶部出现一条不同色的横条。
+        // ── 状态栏透明 + 内容延伸到状态栏后面 ──
+        //
+        // 目标：背景图铺到状态栏区域，不再有那条与标题栏不同色的横条。
+        //
+        // 关键点（前几轮踩过的坑，这里写清楚）：
+        //   · setStatusBarColor(TRANSPARENT) 只让颜色透明，**内容仍然从状态栏
+        //     下方开始**，于是状态栏区域露出的是 window 背景 —— 看着还是纯色。
+        //   · 必须同时 setDecorFitsSystemWindows(false)，让根 View 铺满到
+        //     状态栏后面；此时内容会被状态栏盖住，需要各页面自己加 inset。
+        //   · inset **不能加在 root / rootContainer 上**：那会把背景图一起
+        //     推下去，状态栏区域反而露白。要加在 body 和 navOverlay 上
+        //     （见 FileManagerModule.createMainView / buildNavOverlay）。
         try {
             android.view.Window win = getWindow();
-            int barColor = com.aliya.hyfilemgr.ui.UiKit.color(this,
-                    com.google.android.material.R.attr.colorSurfaceContainer);
-            win.setStatusBarColor(barColor);
-            // 图标明暗：SYSTEM_UI_FLAG_LIGHT_STATUS_BAR 表示
-            // 「状态栏背景是浅色，请用深色图标」——名字指的是背景，不是图标。
-            // 旧代码把 dark 分支设成「清除该 flag」，等于深色底配浅色图标，
-            // 方向是对的；但浅色底分支又设了 flag，两者都对——
-            // 真正的问题是没判断实际背景亮度，Night 模式判断与实际 barColor 无关。
-            // 改为按 barColor 的感知亮度决定，与主题无关，永远正确。
-            int r = android.graphics.Color.red(barColor);
-            int g2 = android.graphics.Color.green(barColor);
-            int b2 = android.graphics.Color.blue(barColor);
-            double luma = 0.299 * r + 0.587 * g2 + 0.114 * b2;
-            boolean lightBackground = luma > 140;
-            android.view.View decor = win.getDecorView();
-            int flags = decor.getSystemUiVisibility();
-            if (lightBackground) {
-                flags |= android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-            } else {
-                flags &= ~android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            // 系统栏颜色设为透明，让底下的背景层透出来
+            win.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+            win.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+            // API 30+ 用 WindowInsetsController，以下用兼容库
+            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(win, false);
+            // ⚠ 图标明暗**不在这里**定：状态栏底色由模块的 statusBarAlpha 控制，
+            // 模块那边 applyStatusBarAlpha() 会按实际 alpha 重新决定图标明暗。
+            // 这里只设一个安全初值（透明底 → 浅色图标），避免首帧闪一下深色图标。
+            androidx.core.view.WindowInsetsControllerCompat ctl =
+                    androidx.core.view.WindowCompat.getInsetsController(win, win.getDecorView());
+            if (ctl != null) {
+                ctl.setAppearanceLightStatusBars(false);
+                ctl.setAppearanceLightNavigationBars(false);
             }
-            decor.setSystemUiVisibility(flags);
         } catch (Throwable ignored) {
         }
     }

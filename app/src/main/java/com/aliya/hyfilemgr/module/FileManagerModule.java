@@ -254,6 +254,8 @@ public class FileManagerModule extends HyVqModule {
     private static final String PREF_FM_DENSITY = "fm_density";
     /** 卡片不透明度 0-100（透出背景的程度） */
     private static final String PREF_CARD_ALPHA = "card_alpha";
+    /** 状态栏底色的不透明度：0 = 完全透明（露出背景图），100 = 实心主题色 */
+    private static final String PREF_STATUS_BAR_ALPHA = "status_bar_alpha";
     /** 明暗模式：0=跟随系统，1=亮色，2=暗色（工业风格下隐藏） */
     private static final String PREF_UI_MODE = "ui_mode";
     /** 侧边栏「本地」分组是否展开 */
@@ -377,6 +379,8 @@ public class FileManagerModule extends HyVqModule {
     private static int bgBlur = 0;
     /** 卡片不透明度 0-100（越低背景越透出来） */
     private static int cardAlpha = 100;
+    /** 状态栏底色不透明度，默认 0（透明，露出背景图） */
+    private static int statusBarAlpha = 0;
 
     // ── 文件管理主题（独立开关，不启用时全部回落到全局值）──
     /** 文件列表页是否启用独立主题 */
@@ -768,6 +772,7 @@ public class FileManagerModule extends HyVqModule {
         bgAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_BG_ALPHA, 100)));
         bgBlur = Math.max(0, Math.min(25, sp.getInt(PREF_BG_BLUR, 0)));
         cardAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_CARD_ALPHA, 100)));
+        statusBarAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_STATUS_BAR_ALPHA, 0)));
         fmThemeOn = sp.getBoolean(PREF_FM_THEME_ON, false);
         fmBgAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_FM_BG_ALPHA, 100)));
         fmBgBlur = Math.max(0, Math.min(25, sp.getInt(PREF_FM_BG_BLUR, 0)));
@@ -837,6 +842,7 @@ public class FileManagerModule extends HyVqModule {
                         .putInt(PREF_BG_ALPHA, bgAlpha)
                         .putInt(PREF_BG_BLUR, bgBlur)
                         .putInt(PREF_CARD_ALPHA, cardAlpha)
+                        .putInt(PREF_STATUS_BAR_ALPHA, statusBarAlpha)
                         .putBoolean(PREF_FM_THEME_ON, fmThemeOn)
                         .putInt(PREF_FM_BG_ALPHA, fmBgAlpha)
                         .putInt(PREF_FM_BG_BLUR, fmBgBlur)
@@ -881,7 +887,12 @@ public class FileManagerModule extends HyVqModule {
 
         LinearLayout body = new LinearLayout(ctx);
         body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(8), dp(4), dp(8), dp(4)); // 紧凑化：原 dp(10)/dp(8)
+        // 状态栏透明 + edge-to-edge 后，body 从屏幕最顶端开始布局，
+        // 必须自己让出状态栏高度，否则顶栏会被状态栏盖住。
+        // ⚠️ inset 只能加在 body 上，绝不能加在 rootContainer 上——
+        // 那会把 bgImageView 一起推下去，状态栏区域反而露白。
+        final int sbHeight = statusBarHeight();
+        body.setPadding(dp(8), dp(4) + sbHeight, dp(8), dp(4)); // 紧凑化：原 dp(10)/dp(8)
         body.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -952,6 +963,10 @@ public class FileManagerModule extends HyVqModule {
         // 恒按有背景图处理（见 syncContentTransparency 说明）
         syncContentTransparency(true);
 
+        // 启动时按保存的 statusBarAlpha 应用一次状态栏底色
+        // （MainActivity 那边只设了 TRANSPARENT 作为初值，真正值在这里覆盖）
+        applyStatusBarAlpha();
+
         // 启动时清理过期回收站文件（对比记录时间）
         try {
             purgeExpiredTrash();
@@ -977,6 +992,9 @@ public class FileManagerModule extends HyVqModule {
 
     private void buildNavOverlay() {
         navOverlay = new FrameLayout(ctx);
+        // 与 body 同样的状态栏 inset：侧边栏是 rootContainer 的兄弟，
+        // 不单独加会被状态栏盖住顶部（前几轮「侧边栏冲到状态栏上」就是这么来的）
+        navOverlay.setPadding(0, statusBarHeight(), 0, 0);
         navOverlay.setVisibility(View.GONE);
         // ⭐ 防点击穿透：侧边栏展开时它必须是**唯一的触摸目标**，
         // 否则点在遮罩/面板空白处的事件会落到底层文件列表上（表现为"误操作列表"）。
@@ -2230,6 +2248,23 @@ public class FileManagerModule extends HyVqModule {
                         break;
                     default:
                         File tf = new File(e.path);
+                        // ⚠️ 安装包必须排在压缩包之前判断。
+                        // .apk 本质是 zip，isZip() 对它返回 true；
+                        // 先判压缩包会直接进内部浏览，用户点安装包看到的却是目录树。
+                        // 安装包默认走「打开方式 → 安装」，想看内部结构可以长按或
+                        // 在打开方式弹窗里选「解压」。
+                        if (isInstallerExt(e.name)) {
+                            // apk / xapk 交给内置安装流程（含 APK 信息预检）
+                            String low = e.name.toLowerCase(java.util.Locale.ROOT);
+                            if (low.endsWith(".apk") || low.endsWith(".xapk")) {
+                                installApkByName(e.path, e.name, false);
+                            } else {
+                                // aab / apks / apkm / zipx：系统安装器不认，
+                                // 用打开方式弹窗让用户自行选择
+                                showOpenWithDialog(e.path, e.name, false);
+                            }
+                            break;
+                        }
                         // 压缩包：直接进入内部浏览（beta.8），不再走解压或外部打开
                         if (isZip(e)) {
                             // 现在所有归档格式都能内部浏览（listArchiveItems 统一枚举）：
@@ -6566,6 +6601,22 @@ public class FileManagerModule extends HyVqModule {
                 persistState();
                 // 立刻应用：把所有设置行/卡片的底色重刷一遍
                 applyCardAlpha();
+            }
+        });
+
+        // ── 状态栏不透明度：0 = 透明露出背景图，100 = 实心主题色 ──
+        final TextView sbVal = addSliderRow(box, "状态栏不透明度",
+                statusBarAlpha + "%", statusBarAlpha, 0, 100, 10, null);
+        lastSlider.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar sb, int p, boolean u) {
+                sbVal.setText(p + "%");
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb) { }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar sb) {
+                statusBarAlpha = sb.getProgress();
+                savePrefInt(PREF_STATUS_BAR_ALPHA, statusBarAlpha);
+                persistState();
+                applyStatusBarAlpha();
             }
         });
 
@@ -12465,6 +12516,24 @@ public class FileManagerModule extends HyVqModule {
     // ── 压缩 / 解压（长按菜单入口；参考 Fossify ItemsAdapter；java.util.zip 零依赖） ──
 
     /**
+     * 是否为「安装包」类文件。
+     *
+     * <p><b>为什么需要单独判断</b>：{@code .apk} 同时出现在「压缩包」扩展名
+     * 列表里（它本质是 zip），所以 {@link #isZip} 对它是 true。
+     * 旧逻辑先判 isZip 就进入内部浏览，用户点 APK 看到的是 zip 目录树，
+     * 而不是安装界面。安装包必须在压缩包分支之前拦截。</p>
+     *
+     * <p>覆盖安装包家族：apk / aab / xapk / apks / apkm / zipx。
+     * 其中只有 apk / xapk 是系统安装器认得的，其余交给 openWith 让用户选。</p>
+     */
+    private static boolean isInstallerExt(String name) {
+        if (name == null) return false;
+        String n = name.toLowerCase(java.util.Locale.ROOT);
+        return n.endsWith(".apk") || n.endsWith(".aab") || n.endsWith(".xapk")
+                || n.endsWith(".apks") || n.endsWith(".apkm") || n.endsWith(".zipx");
+    }
+
+    /**
      * 该压缩包能否被**内部浏览**（java.util.zip 只认得 zip/jar/apk）。
      * isZip 已扩为 canExtract（16 种格式），两者语义必须分开。
      */
@@ -14603,6 +14672,76 @@ public class FileManagerModule extends HyVqModule {
         tv.setPadding(pad, pad, pad, pad);
         tv.setOnClickListener(onClick);
         return tv;
+    }
+
+    /**
+     * 按当前 statusBarAlpha 重设系统状态栏底色。
+     *
+     * <p>0% = 完全透明，背景图直接铺到状态栏后面；
+     * 100% = 实心 colorSurfaceContainer。</p>
+     *
+     * <p><b>为什么用带 alpha 的主题色而不是直接改 View</b>：
+     * 状态栏是系统窗口的一部分，应用只能通过 {@code setStatusBarColor}
+     * 提交一个 ARGB 值。alpha 分量由系统负责与底下的内容混合。</p>
+     *
+     * <p>图标明暗也跟着底色亮度走：底色越不透明越接近主题色，
+     * 此时按主题亮度决定；底色透明时底下的背景图通常偏暗，
+     * 用浅色图标（不设 LIGHT_STATUS_BAR）更稳。</p>
+     */
+    private void applyStatusBarAlpha() {
+        try {
+            if (hostActivity == null) return;
+            android.view.Window win = hostActivity.getWindow();
+            if (win == null) return;
+
+            int base = UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorSurfaceContainer);
+            int a = Math.round(255f * statusBarAlpha / 100f);
+            win.setStatusBarColor((base & 0x00FFFFFF) | (a << 24));
+
+            androidx.core.view.WindowInsetsControllerCompat ctl =
+                    androidx.core.view.WindowCompat.getInsetsController(
+                            win, win.getDecorView());
+            if (ctl != null) {
+                boolean nightMode = (ctx.getResources().getConfiguration().uiMode
+                        & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                        == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+                boolean lightBars = !nightMode;
+                // 底色几乎透明时，底图多为照片，浅色图标（lightBars=false）对比度更好
+                if (statusBarAlpha < 30) lightBars = false;
+                ctl.setAppearanceLightStatusBars(lightBars);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 系统状态栏高度（像素）。
+     *
+     * <p>用 {@code WindowInsets} 拿不到时回退到资源尺寸。两条路都要试：
+     * 部分 ROM 的 {@code status_bar_height} 在深色/刘海屏下与实际不符，
+     * 而 insets 又不总能从非 attach 状态的 View 取到。</p>
+     */
+    private int statusBarHeight() {
+        try {
+            if (hostActivity != null) {
+                androidx.core.view.WindowInsetsCompat ins =
+                        androidx.core.view.ViewCompat.getRootWindowInsets(
+                                hostActivity.getWindow().getDecorView());
+                if (ins != null) {
+                    int h = ins.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top;
+                    if (h > 0) return h;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            int id = ctx.getResources().getIdentifier(
+                    "status_bar_height", "dimen", "android");
+            if (id > 0) return ctx.getResources().getDimensionPixelSize(id);
+        } catch (Throwable ignored) {
+        }
+        return dp(24);   // 兜底：常见 24dp
     }
 
     private int dp(int v) {
