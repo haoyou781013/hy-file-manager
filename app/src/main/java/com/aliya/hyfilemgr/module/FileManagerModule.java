@@ -723,9 +723,33 @@ public class FileManagerModule extends HyVqModule {
         fmDensity = sp.getInt(PREF_FM_DENSITY, 0);
         navPanelAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_NAV_PANEL_ALPHA, 92)));
         String fmName = sp.getString(PREF_FM_BG_FILE, "");
-        fmBgFile = fmName.isEmpty() ? null : new File(bgDir(), fmName);
+        File bgDirNow = bgDir();
+        fmBgFile = fmName.isEmpty() ? null : new File(bgDirNow, fmName);
         String bgName = sp.getString(PREF_BG_FILE, "");
-        bgImageFile = bgName.isEmpty() ? null : new File(bgDir(), bgName);
+        bgImageFile = bgName.isEmpty() ? null : new File(bgDirNow, bgName);
+        // —— 诊断日志（临时，定位「背景图重启后变纯色」用，定位完删除）——
+        // 一次打印出「存了什么 / 解析到哪 / 文件在不在 / 目录里还有什么」，
+        // 用来区分三种成因：pref 里名字是空的、文件名解析到错位置、文件被删。
+        try {
+            StringBuilder lsb = new StringBuilder();
+            String[] names = bgDirNow == null ? null : bgDirNow.list();
+            if (names != null) {
+                for (String n : names) lsb.append(n).append(',');
+            }
+            android.util.Log.i("HYBgDiag", "RESTORE"
+                    + " bg_file='" + bgName + "'"
+                    + " bgImageFile=" + bgImageFile
+                    + " bgExists=" + (bgImageFile != null && bgImageFile.isFile())
+                    + " | fm_bg_file='" + fmName + "'"
+                    + " fmBgFile=" + fmBgFile
+                    + " fmExists=" + (fmBgFile != null && fmBgFile.isFile())
+                    + " | bgDir=" + bgDirNow
+                    + " bgDirList=[" + lsb + "]"
+                    + " | fmThemeOn=" + fmThemeOn
+                    + " bgAlpha=" + bgAlpha
+                    + " fmBgAlpha=" + fmBgAlpha);
+        } catch (Throwable ignored) {
+        }
         uiMode = Math.max(0, Math.min(2, sp.getInt(PREF_UI_MODE, 0)));
         // 本地：默认展开（这是主入口，一进来就要能点目录）
         // 工具：默认收起（低频功能，收起来减少视觉噪声）
@@ -896,7 +920,8 @@ public class FileManagerModule extends HyVqModule {
         // syncContentTransparency 里对它们的半透明处理全部落空，
         // 表现为冷启动后底栏与工具栏不透明、把背景图盖住。
         // 这里等两者建好后再跑一遍。
-        syncContentTransparency(bgImageFile != null && bgImageFile.isFile());
+        // 恒按有背景图处理（见 syncContentTransparency 说明）
+        syncContentTransparency(true);
 
         // 启动时清理过期回收站文件（对比记录时间）
         try {
@@ -3962,6 +3987,11 @@ public class FileManagerModule extends HyVqModule {
                 R.drawable.ic_sliders, v -> {
                     showInSettingsDialog("主题设置", this::buildAppearanceSettings);
                 });
+        addSettingsRow(box, "存储管理",
+                "存储占用明细 · 缓存与回收站清理",
+                R.drawable.ic_pie_chart, v -> {
+                    showInSettingsDialog("存储管理", this::buildStorageManager);
+                });
 
         // ── 工具 ──
         box.addView(sectionHeaderInCard("工具"));
@@ -3987,6 +4017,419 @@ public class FileManagerModule extends HyVqModule {
                 });
         return box;
     }
+
+    // ══════════ 存储管理 ══════════
+
+    /**
+     * 存储管理页：容量总览 + 应用各项占用明细 + 一键清理。
+     *
+     * <p>先给总量条，再逐项列出可清的目录并各自带清理入口，最后给一个
+     * 「全部清理」。用户既能看到全局占满程度，也能只清自己在意的那一项。</p>
+     *
+     * <p><b>为什么统计必须异步</b>：{@link FileOps#dirSize} 是递归遍历，
+     * 回收站可能有上万文件，草稿目录也可能很大。主线程做会卡。</p>
+     *
+     * <p><b>为什么先建行再回填</b>：统计要几秒，先 show 再刷新，
+     * 用户不会盯着一个白屏等。每项先显示「统计中…」，回调里 setText。</p>
+     */
+    private View buildStorageManager() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sectionHeaderInCard("存储管理"));
+
+        final String storePath = Environment.getExternalStorageDirectory().getAbsolutePath();
+
+        // ── 一、内部存储总量 ──
+        //
+        // ⚠ 容量数字、百分比、进度条必须全部躺在分组卡片里面。
+        // 之前它们直接 addView 到 box，落在卡片外面——一旦设了背景图，
+        // 这行字就是白字压白墙，整段「内部存储」只剩标题能看见。
+        // 现在整段包进 sectionHeaderInCard 返回的卡片，与「应用占用」
+        // 同一种结构，背景图和卡片透明度都能正确作用于它。
+        box.addView(sectionHeaderInCard("内部存储"));
+
+        final TextView tvTotal = new TextView(ctx);
+        tvTotal.setText("统计中…");
+        tvTotal.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        tvTotal.setTypeface(null, android.graphics.Typeface.BOLD);
+        tvTotal.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        tvTotal.setPadding(dp(14), dp(12), dp(14), dp(4));
+        addToSettingsGroup(box, tvTotal);
+
+        final TextView tvDetail = new TextView(ctx);
+        tvDetail.setText("");
+        tvDetail.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tvDetail.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tvDetail.setPadding(dp(14), 0, dp(14), dp(10));
+        addToSettingsGroup(box, tvDetail);
+
+        final android.widget.ProgressBar bar = new android.widget.ProgressBar(
+                ctx, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(1000);
+        bar.setProgress(0);
+        LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(8));
+        barLp.leftMargin = dp(14);
+        barLp.rightMargin = dp(14);
+        barLp.bottomMargin = dp(14);
+        addToSettingsGroup(box, bar, barLp);
+
+        // ── 二、应用占用明细 ──
+        box.addView(sectionHeaderInCard("应用占用"));
+
+        final TextView tvThumb = addStorageItem(box, "缩略图缓存", "统计中…", true,
+                () -> {
+                    clearCacheSub("thumbs");
+                    UiKit.toast(ctx, "已清理缩略图缓存");
+                    refreshStoragePage();
+                });
+        final TextView tvZip = addStorageItem(box, "ZIP 浏览缓存", "统计中…", true,
+                () -> {
+                    clearCacheSub("zipview");
+                    clearCacheSub("zipnested");
+                    UiKit.toast(ctx, "已清理 ZIP 缓存");
+                    refreshStoragePage();
+                });
+        final TextView tvUpd = addStorageItem(box, "更新包缓存", "统计中…", true,
+                () -> {
+                    clearUpdateApks();
+                    UiKit.toast(ctx, "已清理更新包");
+                    refreshStoragePage();
+                });
+        final TextView tvDraft = addStorageItem(box, "编辑器草稿", "统计中…", true,
+                () -> confirmThen("清理编辑器草稿", "未保存的编辑内容会丢失，确定继续？", () -> {
+                    File d = draftDir();
+                    if (d != null) deleteChildren(d);
+                    UiKit.toast(ctx, "已清理编辑器草稿");
+                    refreshStoragePage();
+                }));
+        final TextView tvBg = addStorageItem(box, "背景图", "统计中…", true,
+                () -> confirmThen("清理旧背景图", "只删除当前未使用的旧背景图，正在用的那张会保留。", () -> {
+                    int n = purgeOrphanWallpapers();
+                    UiKit.toast(ctx, n > 0 ? "已清理 " + n + " 张旧背景图" : "没有可清理的旧背景图");
+                    refreshStoragePage();
+                }));
+        final TextView tvTrash = addStorageItem(box, "回收站", "统计中…", true,
+                () -> confirmThen("清空回收站", "回收站内所有文件将被彻底删除，无法恢复。", () -> {
+                    runTask(() -> {
+                        int cnt = deleteChildren(new File(TRASH_DIR));
+                        handler.post(() -> {
+                            UiKit.toast(ctx, cnt > 0 ? "已清空回收站" : "回收站已经是空的");
+                            refreshStoragePage();
+                        });
+                    });
+                }));
+        final TextView tvApp = addStorageItem(box, "应用私有数据合计", "统计中…", false, null);
+
+        // ── 三、一键清理 ──
+        box.addView(sectionHeaderInCard("一键清理"));
+        final TextView tvAllClearable = new TextView(ctx);
+        tvAllClearable.setText("统计中…");
+        tvAllClearable.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tvAllClearable.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tvAllClearable.setPadding(dp(14), dp(12), dp(14), dp(4));
+        box.addView(tvAllClearable);
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setOrientation(LinearLayout.HORIZONTAL);
+        btns.setPadding(dp(8), 0, dp(8), dp(8));
+        box.addView(btns, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        btns.addView(textButton("全部清理", v -> confirmThen(
+                "清理全部缓存",
+                "缩略图、ZIP 缓存、更新包会被清除。草稿、背景图、回收站不受影响。", () -> {
+                    clearCacheSub("thumbs");
+                    clearCacheSub("zipview");
+                    clearCacheSub("zipnested");
+                    clearUpdateApks();
+                    UiKit.toast(ctx, "缓存已全部清理");
+                    refreshStoragePage();
+                })));
+        btns.addView(textButton("刷新", v -> refreshStoragePage()));
+
+        loadStorageStats(storePath, tvTotal, tvDetail, bar,
+                tvThumb, tvZip, tvUpd, tvDraft, tvBg, tvTrash, tvApp, tvAllClearable);
+
+        return box;
+    }
+
+    /**
+     * 把任意视图塞进当前设置分组卡片（没有分组时退回 parent）。
+     *
+     * <p><b>为什么需要这个</b>：分组机制只有 addSettingsRow / addInfoRow /
+     * addSliderRow 三个工厂在遵守，而存储管理页要放「大字容量数字 + 进度条」
+     * 这种现有工厂造不出来的东西。直接 box.addView 会落到卡片外面——
+     * 设了背景图后白字压白墙，整段看不见。</p>
+     */
+    private void addToSettingsGroup(LinearLayout parent, View v,
+                                    LinearLayout.LayoutParams lp) {
+        final LinearLayout host = settingsGroup != null ? settingsGroup : parent;
+        if (lp == null) {
+            lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        host.addView(v, lp);
+    }
+
+    private void addToSettingsGroup(LinearLayout parent, View v) {
+        addToSettingsGroup(parent, v, null);
+    }
+
+    /** 存储管理页里的一行：标题 + 大小 + 可选「清理」按钮 */
+    private TextView addStorageItem(LinearLayout parent, String title, String initSize,
+                                    boolean clearable, Runnable onClear) {
+        final LinearLayout host = settingsGroup != null ? settingsGroup : parent;
+        final boolean inGroup = host == settingsGroup;
+        if (inGroup) addGroupDivider(host);
+
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(12), dp(14), dp(12));
+
+        LinearLayout texts = new LinearLayout(ctx);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        row.addView(texts, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView tvTitle = new TextView(ctx);
+        tvTitle.setText(title);
+        tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tvTitle.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        texts.addView(tvTitle);
+
+        TextView tvSize = new TextView(ctx);
+        tvSize.setText(initSize);
+        tvSize.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        tvSize.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tvSize.setAlpha(0.8f);
+        texts.addView(tvSize);
+
+        if (clearable && onClear != null) {
+            TextView btn = textButton("清理", v -> onClear.run());
+            btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            btn.setPadding(dp(10), dp(6), dp(10), dp(6));
+            row.addView(btn);
+        }
+
+        host.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return tvSize;
+    }
+
+    /** 二次确认后执行（清理类操作统一走这里，避免误触） */
+    private void confirmThen(String title, String message, Runnable onConfirm) {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(UiKit.sectionHeader(ctx, "⚠ " + title));
+
+        TextView msg = new TextView(ctx);
+        msg.setText(message);
+        msg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        msg.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        msg.setLineSpacing(0, 1.3f);
+        msg.setPadding(dp(6), dp(8), dp(6), dp(12));
+        box.addView(msg);
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setOrientation(LinearLayout.HORIZONTAL);
+        btns.setPadding(dp(4), 0, dp(4), dp(4));
+        box.addView(btns);
+
+        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim(d)),
+                new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        btns.addView(textButton("确认清理", v -> {
+            UiKit.dismissWithAnim(d);
+            onConfirm.run();
+        }), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        d.show();
+    }
+
+    /** 删掉 cacheDir 下的某个子目录内容（不删目录本身，避免后续 mkdir 失败） */
+    private void clearCacheSub(String name) {
+        try {
+            File d = new File(ctx.getCacheDir(), name);
+            if (d.exists()) deleteChildren(d);
+        } catch (Throwable t) {
+            android.util.Log.w("HYStorage", "clearCacheSub " + name + " failed", t);
+        }
+    }
+
+    /** 删掉 cacheDir 里的更新包（update_*.apk） */
+    private void clearUpdateApks() {
+        try {
+            File[] list = ctx.getCacheDir().listFiles();
+            if (list == null) return;
+            for (File f : list) {
+                if (f.isFile() && f.getName().startsWith("update_")
+                        && f.getName().endsWith(".apk")) {
+                    //noinspection ResultOfMethodCallIgnored
+                    f.delete();
+                }
+            }
+        } catch (Throwable t) {
+            android.util.Log.w("HYStorage", "clearUpdateApks failed", t);
+        }
+    }
+
+    /** 删除目录下所有子项，返回删掉的子项个数；目录本身保留 */
+    private int deleteChildren(File dir) {
+        if (dir == null || !dir.isDirectory()) return 0;
+        File[] list = dir.listFiles();
+        if (list == null) return 0;
+        int n = 0;
+        for (File c : list) {
+            deleteTree(c);
+            n++;
+        }
+        return n;
+    }
+
+    /**
+     * 清理「孤儿」背景图：删掉 wallpaper 目录里除当前在用之外的所有图。
+     *
+     * <p>目录里积压旧图是历史遗留（早期「设完图不立即落盘」导致
+     * {@code old.delete()} 拿不到 old 而跳过），三张 17MB 就是 51MB。
+     * 这里只删不在用的，绝不动 {@link #bgImageFile} / {@link #fmBgFile}
+     * 指向的那两个文件。</p>
+     *
+     * @return 删掉的文件数
+     */
+    private int purgeOrphanWallpapers() {
+        File dir = bgDir();
+        if (dir == null) return 0;
+        File[] list = dir.listFiles();
+        if (list == null) return 0;
+        int n = 0;
+        for (File f : list) {
+            if (!f.isFile()) continue;
+            boolean inUse = (bgImageFile != null && f.getName().equals(bgImageFile.getName()))
+                    || (fmBgFile != null && f.getName().equals(fmBgFile.getName()));
+            if (inUse) continue;
+            if (!f.getName().startsWith("bg_") && !f.getName().startsWith("fmbg_")) continue;
+            //noinspection ResultOfMethodCallIgnored
+            if (f.delete()) n++;
+        }
+        return n;
+    }
+
+    /** 重建存储管理页（清理完刷新用） */
+    private void refreshStoragePage() {
+        hideSettingsDialog();
+        showInSettingsDialog("存储管理", this::buildStorageManager);
+    }
+
+    /** 异步统计并回填所有大小。全部求和跑在一个后台线程里依次做。 */
+    private void loadStorageStats(String storePath,
+                                  TextView tvTotal, TextView tvDetail,
+                                  android.widget.ProgressBar bar,
+                                  TextView tvThumb, TextView tvZip, TextView tvUpd,
+                                  TextView tvDraft, TextView tvBg, TextView tvTrash,
+                                  TextView tvApp, TextView tvAllClearable) {
+        new Thread(() -> {
+            long total = 0, avail = 0;
+            try {
+                android.os.StatFs sf = new android.os.StatFs(storePath);
+                total = sf.getTotalBytes();
+                avail = sf.getAvailableBytes();
+            } catch (Throwable t) {
+                try {
+                    android.os.StatFs sf2 = new android.os.StatFs("/data");
+                    total = sf2.getTotalBytes();
+                    avail = sf2.getAvailableBytes();
+                } catch (Throwable ignored) {
+                }
+            }
+            final long fTotal = total, fAvail = avail;
+
+            final long thumb = FileOps.dirSize(new File(ctx.getCacheDir(), "thumbs"));
+            final long zip = FileOps.dirSize(new File(ctx.getCacheDir(), "zipview"))
+                    + FileOps.dirSize(new File(ctx.getCacheDir(), "zipnested"));
+            final long upd = updateApkSize();
+            final long draft = FileOps.dirSize(draftDir());
+            final long bg = FileOps.dirSize(bgDir());
+            final long trash = FileOps.dirSize(new File(TRASH_DIR));
+            final long appAll = FileOps.dirSize(ctx.getFilesDir())
+                    + FileOps.dirSize(ctx.getCacheDir());
+
+            handler.post(() -> {
+                if (detached) return;
+                if (fTotal > 0) {
+                    long used = Math.max(0, fTotal - fAvail);
+                    int pct = (int) Math.round(used * 100.0 / fTotal);
+                    tvTotal.setText("已用 " + fmtStorageSize(used)
+                            + " / " + fmtStorageSize(fTotal));
+                    tvDetail.setText(pct + "% 已用 · 可用 " + fmtStorageSize(fAvail));
+                    bar.setProgress(Math.max(0, Math.min(1000, pct * 10)));
+                } else {
+                    tvTotal.setText("存储空间不可用");
+                    tvDetail.setText("无法读取容量信息（可能权限不足）");
+                }
+                tvThumb.setText(fmtStorageSize(thumb));
+                tvZip.setText(fmtStorageSize(zip));
+                tvUpd.setText(fmtStorageSize(upd));
+                tvDraft.setText(fmtStorageSize(draft));
+                tvBg.setText(fmtStorageSize(bg));
+                tvTrash.setText(fmtStorageSize(trash));
+                tvApp.setText(fmtStorageSize(appAll));
+                tvAllClearable.setText("可一键清理的缓存合计 "
+                        + fmtStorageSize(thumb + zip + upd));
+            });
+        }, "HyStorageStats").start();
+    }
+
+    /** cacheDir 里 update_*.apk 的总大小 */
+    private long updateApkSize() {
+        long n = 0;
+        try {
+            File[] list = ctx.getCacheDir().listFiles();
+            if (list == null) return 0;
+            for (File f : list) {
+                if (f.isFile() && f.getName().startsWith("update_")
+                        && f.getName().endsWith(".apk")) {
+                    n += f.length();
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return n;
+    }
+
+    /**
+     * 存储页专用的大小格式化。
+     *
+     * <p>与 {@link AccessUtil#formatSize} 的差别只有两点，都是这个页面
+     * 特有的需求：</p>
+     * <ul>
+     *   <li>统计失败（负值）显示「—」而不是「-」——一列数据里一个横杠
+     *       看着像排版错误，「—」才像「没有数据」。</li>
+     *   <li>补 TB 档。现在 1TB 存储很常见，{@code 1234.56 GB}
+     *       既不直观也撑破行宽。</li>
+     * </ul>
+     * <p>其余刻度与 formatSize 保持一致，避免同一屏里两种单位口径。</p>
+     */
+    private static String fmtStorageSize(long bytes) {
+        if (bytes < 0) return "—";
+        if (bytes < 1024) return bytes + " B";
+        double kb = bytes / 1024.0;
+        if (kb < 1024) return String.format(Locale.US, "%.1f KB", kb);
+        double mb = kb / 1024.0;
+        if (mb < 1024) return String.format(Locale.US, "%.1f MB", mb);
+        double gb = mb / 1024.0;
+        if (gb < 1024) return String.format(Locale.US, "%.2f GB", gb);
+        return String.format(Locale.US, "%.2f TB", gb / 1024.0);
+    }
+
 
 
     // ══════════ 软件更新 + 关于 ══════════
@@ -4413,19 +4856,18 @@ public class FileManagerModule extends HyVqModule {
         title.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
         title.setPadding(dp(4), 0, dp(4), 0);
-        // 有背景图时才套卡片；纯色背景下裸标题更清爽
-        if (bgImageFile != null && bgImageFile.isFile()) {
-            LinearLayout titleCard = new LinearLayout(ctx);
-            titleCard.setOrientation(LinearLayout.VERTICAL);
-            titleCard.setGravity(Gravity.CENTER_VERTICAL);
-            titleCard.setPadding(dp(12), dp(12), dp(12), dp(12));
-            titleCard.setBackground(cardSurface(8, true));
-            titleCard.addView(title);
-            box.addView(titleCard);
-        } else {
-            title.setPadding(dp(4), dp(8), dp(4), dp(2));
-            box.addView(title);
-        }
+        // 标题恒套卡片：不再按「有没有背景图」二分。
+        // 二分会让卡片不透明度滑块在有/无背景图两种状态下表现不同，
+        // 属于行为漂移（这个项目已经因此踩过三处）。
+        LinearLayout titleCard = new LinearLayout(ctx);
+        titleCard.setOrientation(LinearLayout.VERTICAL);
+        titleCard.setGravity(Gravity.CENTER_VERTICAL);
+        titleCard.setPadding(dp(12), dp(12), dp(12), dp(12));
+        titleCard.setBackground(cardSurface(8, true));
+        titleCard.setTag(CARD_TAG_KEY, Boolean.TRUE);
+        titleCard.setTag(CARD_TAG_HDR_KEY, Boolean.TRUE);
+        titleCard.addView(title);
+        box.addView(titleCard);
 
         addInfoRow(box, "版本", appVersionName() + "（" + appVersionCode() + "）", true, null);
         addInfoRow(box, "包名", ctx.getPackageName(), true, null);
@@ -4452,22 +4894,24 @@ public class FileManagerModule extends HyVqModule {
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         desc.setLineSpacing(dp(3), 1f);
         desc.setTextIsSelectable(true);
-        // 多行正文同样不能裸压在背景图上：套一层卡片，
+        // 多行正文不能裸压在背景图上：套一层卡片，
         // 可读性交给「卡片不透明度」这一个旋钮统一控制。
-        if (bgImageFile != null && bgImageFile.isFile()) {
-            LinearLayout descCard = new LinearLayout(ctx);
-            descCard.setOrientation(LinearLayout.VERTICAL);
-            descCard.setPadding(dp(12), dp(12), dp(12), dp(12));
-            descCard.setBackground(cardSurface(-1));
-            descCard.addView(desc);
-            LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            dlp.topMargin = dp(6);
-            box.addView(descCard, dlp);
-        } else {
-            desc.setPadding(dp(8), dp(8), dp(8), dp(8));
-            box.addView(desc);
-        }
+        //
+        // ⚠ 这里原本是「有背景图才套卡、没有就裸放」，两种模式下
+        // 卡片不透明度滑块一个有作用一个没作用，属于行为漂移。
+        // 统一成无条件套卡：无论有没有背景图，页面上的字都在卡片里，
+        // 都由 cardAlpha 一个旋钮控制。
+        LinearLayout descCard = new LinearLayout(ctx);
+        descCard.setOrientation(LinearLayout.VERTICAL);
+        descCard.setPadding(dp(12), dp(12), dp(12), dp(12));
+        descCard.setBackground(cardSurface(-1));
+        descCard.setTag(CARD_TAG_KEY, Boolean.TRUE);
+        desc.setPadding(0, 0, 0, 0);
+        descCard.addView(desc);
+        LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        dlp.topMargin = dp(6);
+        box.addView(descCard, dlp);
 
         return box;
     }
@@ -4561,10 +5005,9 @@ public class FileManagerModule extends HyVqModule {
         if (settingsEmbedView == null) {
             settingsEmbedView = new LinearLayout(ctx);
             settingsEmbedView.setOrientation(LinearLayout.VERTICAL);
-            // 有背景图时这里必须透明，否则整块不透明会把背景图挡住
-            settingsEmbedView.setBackgroundColor(
-                    bgImageFile != null ? android.graphics.Color.TRANSPARENT
-                            : UiKit.color(ctx, com.google.android.material.R.attr.colorSurface));
+            // 容器恒透明：上面的卡片自己带 cardSurface 底色，
+            // 容器再铺一层不透明色会把卡片的层级盖平（见 syncContentTransparency 的说明）
+            settingsEmbedView.setBackgroundColor(android.graphics.Color.TRANSPARENT);
             android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
             sv.setFillViewport(true);
             settingsEmbedContent = new LinearLayout(ctx);
@@ -5008,11 +5451,18 @@ public class FileManagerModule extends HyVqModule {
         final int bgA = fmActiveBgAlpha();
         final int bgB = fmActiveBgBlur();
         if (bgFile == null || !bgFile.isFile()) {
+            // —— 诊断日志（临时）——
+            android.util.Log.w("HYBgDiag", "APPLY skip: bgFile=" + bgFile
+                    + " isFile=" + (bgFile != null && bgFile.isFile())
+                    + " bgImageFile=" + bgImageFile
+                    + " fmBgFile=" + fmBgFile
+                    + " fmThemeOn=" + fmThemeOn);
             bgImageView.setImageDrawable(null);
             bgImageView.setVisibility(View.GONE);
             syncContentTransparency(false);
             return;
         }
+        android.util.Log.i("HYBgDiag", "APPLY ok: " + bgFile + " alpha=" + bgA + " blur=" + bgB);
         bgImageView.setVisibility(View.VISIBLE);
         bgImageView.setAlpha(bgA / 100f);
         syncContentTransparency(true);
@@ -5025,23 +5475,32 @@ public class FileManagerModule extends HyVqModule {
         final int blur = bgB;
         new Thread(() -> {
             android.graphics.Bitmap bmp = decodeScaled(src);
+            android.util.Log.i("HYBgDiag", "DECODE " + src + " -> "
+                    + (bmp == null ? "null" : bmp.getWidth() + "x" + bmp.getHeight()));
             if (bmp != null && blur > 0) bmp = blurBitmap(bmp, blur);
             final android.graphics.Bitmap out = bmp;
             handler.post(() -> {
                 if (detached || seq != bgLoadSeq) {
                     // 过期或已销毁：直接丢掉，避免旧图盖掉新图
+                    android.util.Log.w("HYBgDiag", "SHOW dropped seq=" + seq
+                            + " cur=" + bgLoadSeq + " detached=" + detached);
                     if (out != null && !out.isRecycled()) out.recycle();
                     return;
                 }
                 if (bgImageView == null) {
+                    android.util.Log.w("HYBgDiag", "SHOW dropped: bgImageView==null");
                     if (out != null && !out.isRecycled()) out.recycle();
                     return;
                 }
                 if (out == null) {
+                    android.util.Log.w("HYBgDiag", "SHOW hidden: decode null");
                     bgImageView.setImageDrawable(null);
                     bgImageView.setVisibility(View.GONE);
                     return;
                 }
+                android.util.Log.i("HYBgDiag", "SHOW set " + out.getWidth() + "x" + out.getHeight()
+                        + " viewAlpha=" + bgImageView.getAlpha()
+                        + " viewVisibility=" + bgImageView.getVisibility());
                 bgImageView.setImageBitmap(out);
             });
         }, "HyBgDecode").start();
@@ -5056,16 +5515,22 @@ public class FileManagerModule extends HyVqModule {
      */
     private void syncContentTransparency(boolean hasBg) {
         try {
+            // ⚠ 参数 hasBg 已不再参与任何判断：现在**恒按「有背景图」处理**。
+            //
+            // 原先按 hasBg 二分会造成两种模式下完全不同的观感：
+            // 没设背景图时设置页容器不透明、顶栏底栏实心，
+            // 设了之后全部变透明——用户设/删一张图，整个界面的层次就变了。
+            // 改成恒透明后，界面层次不随「有没有背景图」漂移，
+            // 可读性统一由卡片自己的 cardAlpha 负责。
+            //
+            // 参数保留是为了不动 20 多个调用点，语义上已是「刷新内容层」。
             if (settingsEmbedView != null) {
-                settingsEmbedView.setBackgroundColor(hasBg
-                        ? android.graphics.Color.TRANSPARENT
-                        : UiKit.color(ctx,
-                          com.google.android.material.R.attr.colorSurface));
+                settingsEmbedView.setBackgroundColor(android.graphics.Color.TRANSPARENT);
             }
             // 顶部栏 / 底部功能栏 / 多选栏：半透明化，保留一点底色保证可读
             int navBg = UiKit.color(ctx,
                     com.google.android.material.R.attr.colorSurfaceContainerLow);
-            int translucent = (navBg & 0x00FFFFFF) | (hasBg ? 0xD0000000 : 0xFF000000);
+            int translucent = (navBg & 0x00FFFFFF) | 0xD0000000;
             if (bottomNav != null) {
                 int stroke = UiKit.color(ctx,
                         com.google.android.material.R.attr.colorPrimary);
@@ -5216,10 +5681,24 @@ public class FileManagerModule extends HyVqModule {
                 handler.post(() -> {
                     if (detached) return;
                     if (forFm) fmBgFile = dst; else bgImageFile = dst;
+                    // —— 诊断日志（临时）——
+                    android.util.Log.i("HYBgDiag", "SET forFm=" + forFm
+                            + " dst=" + dst + " dstExists=" + dst.isFile()
+                            + " dstLen=" + dst.length()
+                            + " old=" + old
+                            + " oldExistsAfter=" + (old != null && old.isFile()));
+                    // 立刻落盘：不等 onDetach。
+                    // 设完图马上被后台杀掉时 onDetach 不会执行，
+                    // 之前只有滑块回调才 persistState，边界场景会丢。
+                    persistState();
                     applyBackground();
                     if (old != null && !old.equals(dst)) {
                         //noinspection ResultOfMethodCallIgnored
                         old.delete();
+                        android.util.Log.i("HYBgDiag", "DELETE old=" + old
+                                + " stillExists=" + old.isFile()
+                                + " | bgImageFile=" + bgImageFile
+                                + " fmBgFile=" + fmBgFile);
                     }
                     applyFmThemeToAdapters();
                     UiKit.toast(ctx, forFm ? "文件管理背景图已更换" : "背景图已更换");
@@ -5413,13 +5892,100 @@ public class FileManagerModule extends HyVqModule {
 
     /** 把当前 cardAlpha 应用到所有已存在的设置行/卡片并重绘。 */
     private void applyCardAlpha() {
-        if (settingsEmbedContent == null) return;
-        applyCardAlphaRecursive(settingsEmbedContent, 0);
-        // 顶栏不是设置页的子 View，要单独刷
+        // ⚠ 这里必须刷**整个窗口**，不能只刷 settingsEmbedContent。
+        //
+        // 旧实现只递归 settingsEmbedContent 一棵子树，于是：
+        //   · 被设置页遮住的文件列表 / 分类 / 回收站——不在那棵树里，不刷
+        //   · 所有 Dialog——独立 Window，不在任何 View 树里，不刷
+        //   · bottomNav / opBar——只由 syncContentTransparency 更新，而那个
+        //     只在设/删背景图时调，拖滑块完全不碰
+        // 结果就是「拖滑块只有设置页那几行变色，其它地方要重启才生效」——
+        // 因为重启后所有 View 都是按新 cardAlpha 新建的。
+        //
+        // 现在改为从 Activity 的 DecorView 起递归，一次覆盖所有可见树。
+        // 弹窗若在拖动期间开着，由 applyCardAlphaAllWindows() 单独兜住。
+        View windowRoot = activityRootView();
+        if (windowRoot != null) {
+            applyCardAlphaRecursive(windowRoot, 0);
+        } else if (settingsEmbedContent != null) {
+            // 拿不到窗口（模块未附着）时退回旧路径，至少设置页能刷新
+            applyCardAlphaRecursive(settingsEmbedContent, 0);
+        }
+
+        // 顶栏 / 底栏 / 多选栏：它们是 rounded() 现算的，标签识别不到，
+        // 必须显式重设。三者都跟 cardAlpha 走。
         if (topBar != null) topBar.setBackground(topBarSurface());
-        // 文件列表行同理：adapter 里的行是 RecyclerView 子项，不在 settingsEmbedContent 里
+        refreshBarSurfaces();
+
+        // 文件列表行是 RecyclerView 子项（由 adapter 自己 makeBg），不在递归里
         applyFmThemeToAdapters();
+
+        // 侧边栏**不动**：它由独立的「侧边栏不透明度」旋钮（navPanelAlpha）
+        // 控制，不跟 cardAlpha 走。这里刻意不调 applyNavPanelAlpha()。
+
+        // 当前开着的弹窗也要刷（Dialog 是独立 Window，上面那棵 DecorView 覆盖不到）
+        applyCardAlphaToOpenDialogs();
+
         UiKit.toast(ctx, "卡片不透明度 " + cardAlpha + "%");
+    }
+
+    /** 取 Activity 的窗口根 View（DecorView），拿不到返回 null */
+    private View activityRootView() {
+        try {
+            if (hostActivity == null) return null;
+            android.view.Window w = hostActivity.getWindow();
+            if (w == null) return null;
+            return w.getDecorView();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * 重设底栏 / 多选栏的底色，让它们跟 cardAlpha 同步。
+     *
+     * <p>这两处的背景是 {@code UiKit.rounded(...)} 现算的渐变，
+     * 没有 CARD_TAG_KEY 标记，也不是「可点击的卡片容器」，
+     * 递归识别不到，只能显式重算一遍。</p>
+     */
+    private void refreshBarSurfaces() {
+        try {
+            int baseColor = UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorSurfaceContainerLow);
+            int a = Math.round(255f * cardAlpha / 100f);
+            int fill = (baseColor & 0x00FFFFFF) | (a << 24);
+            if (bottomNav != null) {
+                bottomNav.setBackground(UiKit.rounded(ctx, 16, fill,
+                        UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary)));
+            }
+            if (opBar != null) {
+                opBar.setBackground(UiKit.rounded(ctx, 16, fill,
+                        UiKit.color(ctx,
+                                com.google.android.material.R.attr.colorOutlineVariant)));
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 给当前所有开着的弹窗重刷卡片透明度。
+     *
+     * <p>Dialog 的 View 树挂在 WindowManager 上，和 Activity 的 DecorView 是
+     * 两棵互不相干的树。模块里没有集中管理弹窗引用的注册表，所以这里
+     * 通过 {@link UiKit} 登记过的活动弹窗列表遍历。</p>
+     */
+    private void applyCardAlphaToOpenDialogs() {
+        try {
+            java.util.List<android.app.Dialog> ds = UiKit.liveDialogs();
+            for (android.app.Dialog d : ds) {
+                if (d == null || !d.isShowing()) continue;
+                android.view.Window dw = d.getWindow();
+                if (dw == null) continue;
+                View root = dw.getDecorView();
+                if (root != null) applyCardAlphaRecursive(root, 0);
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     /**

@@ -47,90 +47,129 @@ UiKit.dismissWithAnim((Dialog) ((View) v.getParent()).getTag())
 
 ## 未发布
 
-### 主题设置：背景图 + 卡片透明度 + 浅边框
+> 目标版本 1.0.3 / versionCode 8（尚未发布，未 bump）。
 
-「个性化」改名为「主题设置」，并加入背景图能力。
+### 新增：设置页改为分组卡片布局
 
-**背景图**
-- 全局背景层：ImageView 铺满 rootContainer 底层（index 0），
-  上面所有页面半透明叠着。逐页设背景会在切页时跳一下，
-  一层铺满则背景完全稳定。
-- 点击穿透：背景层 setClickable(false)，不挡列表点击
-- 存储：复制到 filesDir/wallpaper/，原图删了也不影响；
-  换图时删旧文件
-- 解码：先读边界算 inSampleSize 再真解码。4000×3000 的图
-  全尺寸在堆里是 48MB，低端机直接 OOM
+设置主页从「每个标题一张卡 + 每行再一张卡」改成
+**每个标题一张卡，标题下直接列选项，选项之间用分割线隔开**。
+一屏少一半圆角与描边，视觉更安静。
 
-**两个选图入口**
-1. 系统图片选择器：ACTION_OPEN_DOCUMENT + image/*，
-   系统自带相册入口，一步到位
-2. 自建文件列表（单列）：复用 AccessRouter，
-   能进 SAF 授权目录 / root / 外部存储 —— 有些壁纸存在
-   隐藏目录或相册扫不到的地方，必须能自己 browse
-   仅显示目录 + 图片扩展名，避免在一堆 txt 里找图
+- `settingsGroup` 记住当前正在填的分组卡，
+  `sectionHeaderInCard()` 无条件建卡并赋值（不再区分有没有背景图——
+  本机 `bgImageFile` 为 null，加条件会静默失效）
+- `addSettingsRow` / `addInfoRow` / `addSliderRow` **三处同步改**：
+  `host = settingsGroup != null ? settingsGroup : parent`，
+  行 `addView` 到 host 而不是调用方传进来的 box。
+  只改其中一两个会出现「分组卡有了但行还在卡外」
+- `addGroupDivider()` 在每行之前画 1px `colorOutlineVariant@0x33`，
+  左右 margin 14dp。**不能因 `childCount<=1` 提前 return**——
+  标题是第 0 个孩子，提前 return 会让标题与首行之间少一条线
+- `showInSettingsDialog()` 前后置空 `settingsGroup`，
+  否则「先加行、后加标题」的页面（关于页）会继承上一页的分组
+- 设置主页重组为三组：**基础设置**（主题设置、存储管理）/
+  **工具**（文件管理）/ **软件**（权限管理、软件更新、关于），
+  权限管理从原先的最前移到软件组首位
 
-**三个滑块**
-- 背景不透明度 0-100%（直接改 ImageView alpha，无需重渲染）
-- 背景模糊度 0-25（stack blur：先 1/4 缩小再做 box blur 再放大，
-  速度提升一个数量级，视觉几乎一致）
-- 卡片不透明度 0-100%
+### 新增：存储管理页
 
-**浅边框**
-- 新增 cardSurface()：运行时生成半透明底 + 1px colorOutlineVariant@0x22
-  （约 13% 不透明）描边
-- 不用静态 drawable：透明度是可调状态，写死 alpha 就跟不上滑块
-- 应用于 addInfoRow / buildSimpleRow（设置项行、选图弹层行）
-- 用户要求「不需要太明显」，所以描边压到很淡
+设置 → 基础设置 → 存储管理。参考 NeriPlayer 的分区式存储展示。
 
-**内容层透明化**
-有背景图时，设置页容器 / 底部功能栏 / 多选栏 都要半透明，
-否则整块不透明会把背景全挡住。syncContentTransparency() 统一处理；
-删掉背景图时恢复不透明。
+- **内部存储**：`StatFs` 取 total/available，大字显示「已用 X / 总量 Y」，
+  下附百分比与可用量，配一条自绘进度条
+- **应用占用明细**，逐项显示大小 + 独立「清理」按钮：
 
----
-### 修：打开侧边栏崩溃（ClassCastException）
+| 项 | 路径 | 清理策略 |
+|---|---|---|
+| 缩略图缓存 | `cacheDir/thumbs` | 直接清 |
+| ZIP 浏览缓存 | `cacheDir/zipview` + `zipnested` | 直接清 |
+| 更新包缓存 | `cacheDir/update_*.apk` | 直接清 |
+| 编辑器草稿 | `filesDir/editor_drafts` | 二次确认 |
+| 背景图 | `filesDir/wallpaper` | 二次确认，**只清孤儿旧图** |
+| 回收站 | `/sdcard/.HyVqTrash` | 二次确认 |
+| 应用私有数据合计 | `filesDir` + `cacheDir` | 只读 |
 
-崩溃：
-```
-java.lang.ClassCastException: android.widget.ImageView
-  cannot be cast to android.view.ViewGroup
-  at showNavSidebar(FileManagerModule:3756)
-  at 汉堡图标 onClick
-```
+- **一键清理**：只清三项缓存，不碰草稿/背景图/回收站
+- 统计全部跑在 `HyStorageStats` 后台线程，`FileOps.dirSize` 是递归遍历，
+  回收站上万文件时主线程做会卡；统计完一次性 post 回填
 
-**根因**：是上一版加背景层引入的连锁反应。
+**新方法**
 
-`showNavSidebar()` 要找 `rootContainer` 里除 `navOverlay` 外的第一个子节点，
-当作毛玻璃模糊目标：
+| 方法 | 作用 |
+|---|---|
+| `addToSettingsGroup(parent, v, lp)` | 把任意 View 塞进当前分组卡片。分组机制只有三个行工厂在遵守，容量大字和进度条造不出来，直接 `box.addView` 会落到卡外 |
+| `addStorageItem(...)` | 存储页专用行：标题 + 大小 + 可选清理按钮 |
+| `confirmThen(title, msg, runnable)` | 清理类操作统一二次确认 |
+| `deleteChildren(dir)` | 删目录下所有子项，目录本身保留 |
+| `purgeOrphanWallpapers()` | 删掉 wallpaper 里除当前在用外的 `bg_*` / `fmbg_*` |
+| `fmtStorageSize(bytes)` | 存储页专用格式化（见下） |
+| `updateApkSize()` | `update_*.apk` 总大小 |
+
+### 单位：新增 `fmtStorageSize()`
+
+与 `AccessUtil.formatSize` / `FileOps.formatSize` 的差别只有两点，
+其余刻度完全一致，避免同一屏出现两种单位口径：
+
+- **统计失败（负值）显示 `—`** 而不是 `-`。一列数据里一个横杠
+  看着像排版错误，「—」才像「没有数据」
+- **补 TB 档**。`1234.56 GB` 既不直观也撑破行宽
+
+### 修：内部存储段只剩标题（背景图下看不见）
+
+**症状**：设了背景图后，存储管理页的「内部存储」只显示标题，
+下面的容量数字、百分比、进度条全不见。
+
+**根因**：这三者直接 `box.addView`，`box` 是外层容器而非分组卡片。
+`sectionHeaderInCard("内部存储")` 已经把 `settingsGroup` 指向卡片，
+但裸 View 加到了 box 上，视觉上落在卡片**外面、直接贴背景图**。
+白字压白墙。
+
+**修法**：全部改走 `addToSettingsGroup()`。
+
+### 修：关于页正文「有背景图才套卡」
+
+`showAboutPageBody()` 里原本：
 
 ```java
-for (int i = 0; i < rootContainer.getChildCount(); i++) {
-    View c = rootContainer.getChildAt(i);
-    if (c != navOverlay) {
-        blurTarget = (ViewGroup) c;   // ← 崩
-        break;
-    }
+if (bgImageFile != null && bgImageFile.isFile()) {
+    // 套卡片
+} else {
+    box.addView(desc);   // ← 无背景图时裸放
 }
 ```
 
-原来 `rootContainer` 的子节点是 `[body, navOverlay]`，第一个非 navOverlay 的就是
-`body`（LinearLayout，能转 ViewGroup）。
+两种模式下**卡片不透明度滑块一个有作用一个没有**，属于行为漂移。
+改为无条件套卡 + 打 `CARD_TAG_KEY`，无论有没有背景图，
+页面上的字都在卡片里，都由 `cardAlpha` 一个旋钮控制。
 
-`attachBackgroundLayer()` 用 `addView(bgImageView, 0, lp)` 把背景图插到了 index 0，
-于是变成 `[bgImageView, body, navOverlay]`，循环第一个命中的就是 `bgImageView`
-（ImageView），强转直接崩。
+### 修：设完背景图不立即落盘
 
-**修法**：判断条件加上 `instanceof ViewGroup`，跳过非容器节点。
+`setBackgroundFromUri()` 成功分支补 `persistState()`。
+原先只有 `onDetach` 和滑块回调会落盘，设完图马上被后台杀掉时
+`onDetach` 不执行，文件名就丢了。
 
-**同一处隐患还有第二处**（关闭侧边栏时清 renderEffect，原 `FileManagerModule:6620`）：
-那里有 try-catch，`ClassCastException` 被吞掉不崩溃，但**模糊永远清不掉**。
-症状是关掉侧边栏后，文件列表一直糊着。一并改成 `instanceof` 判断。
+### 移除：删除成功的 toast
 
-**核查**：全仓只有这两处遍历 `rootContainer`，没有其他按索引取子节点的代码；
-`navOverlay` 靠添加顺序置顶，未用 `bringToFront`，背景层插 index 0 不影响其 z-order。
+`confirmDelete` 里成功分支的「已移入回收站 N 项」/「已彻底删除 N 项」删掉。
+删除是高频操作，底部闪一条只会打断浏览，列表条目立即消失本身就是反馈。
+**失败仍然弹**（那种情况必须让用户知道）。
 
-**验证**：assembleRelease 通过，装机启动无 FATAL。
-侧边栏开关的实际毛玻璃效果**未实测**。
+### 诊断代码（临时，待撤）
+
+`FileManagerModule` 里有 10 处 `Log.i("HYBgDiag", ...)`：
+`restoreState` / `applyBackground` / 解码回调 / `setBackgroundFromUri`。
+用于定位「背景图重启后变纯色」，**定位完成后删除**。
+同一轮修好的 `persistState()` 提前落盘是正式改动，保留。
+
+### 验证
+
+- `compileReleaseJavaWithJavac` / `assembleRelease` 通过
+- 装机启动无 FATAL EXCEPTION
+- 设置页三张分组卡显示正常（用户确认）
+- 背景图重启后正常显示：`HYBgDiag` 日志确认
+  `bgExists=true` → `APPLY ok` → `DECODE 2160x4367` → `SHOW set`
+- **未实测**：存储管理页各清理项的实际效果（清单已构建并安装，
+  用户尚未逐项试用）
 
 ## 设备侧工作（2026-11-06，非本项目代码）
 

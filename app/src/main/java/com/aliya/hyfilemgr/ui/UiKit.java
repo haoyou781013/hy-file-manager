@@ -34,6 +34,34 @@ public final class UiKit {
 
     private UiKit() {}
 
+    /**
+     * 当前开着的玻璃弹窗。
+     *
+     * <p><b>为什么需要这份登记</b>：Dialog 的 View 树挂在 WindowManager 上，
+     * 和 Activity 的 DecorView 是两棵互不相干的树。模块要「拖动卡片不透明度
+     * 时把开着的弹窗也刷一遍」就必须拿得到 Dialog 引用，而模块里没有集中
+     * 管理弹窗的地方（各处都是局部变量 + 直接 show）。</p>
+     *
+     * <p>用弱引用避免弹窗泄漏：忘记 dismiss 的弹窗不会因为这张表被永久钉住。</p>
+     */
+    private static final java.util.List<java.lang.ref.WeakReference<Dialog>> LIVE_DIALOGS =
+            new java.util.ArrayList<>();
+
+    /** 当前仍在显示的弹窗快照（已清理被回收的引用） */
+    public static java.util.List<Dialog> liveDialogs() {
+        java.util.List<Dialog> out = new java.util.ArrayList<>();
+        java.util.Iterator<java.lang.ref.WeakReference<Dialog>> it = LIVE_DIALOGS.iterator();
+        while (it.hasNext()) {
+            Dialog d = it.next().get();
+            if (d == null) {
+                it.remove();
+            } else if (d.isShowing()) {
+                out.add(d);
+            }
+        }
+        return out;
+    }
+
     // ── 主题工具 ──
 
     /** 解析当前主题下某个 attr 的颜色值（模块 UI 与主框架配色保持一致的关键） */
@@ -351,6 +379,7 @@ public final class UiKit {
         if (scrimView != null) scrimView.setAlpha(0f);
 
         dialog.setOnShowListener(d -> {
+            LIVE_DIALOGS.add(new java.lang.ref.WeakReference<>(dialog));
             android.view.animation.Interpolator ease =
                     new android.view.animation.DecelerateInterpolator(1.6f);
             panel.animate()
@@ -366,7 +395,14 @@ public final class UiKit {
         }
 
         // 弹窗关闭后恢复状态栏颜色（applyBlur 曾把它设为透明）
-        dialog.setOnDismissListener(d -> restoreStatusBarColor(dialog.getWindow(), context));
+        dialog.setOnDismissListener(d -> {
+            restoreStatusBarColor(dialog.getWindow(), context);
+            for (java.util.Iterator<java.lang.ref.WeakReference<Dialog>> it =
+                    LIVE_DIALOGS.iterator(); it.hasNext(); ) {
+                Dialog x = it.next().get();
+                if (x == null || x == dialog) it.remove();
+            }
+        });
         return dialog;
     }
 
