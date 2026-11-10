@@ -278,6 +278,59 @@ public class FileManagerModule extends HyVqModule {
     private LinearLayout topBar;
     /** 标记「这个 View 已经是卡片」，供 applyCardAlphaRecursive 识别不可点击的卡片（如滑块行） */
     private static final int CARD_TAG_KEY = 0x7C4D0001;
+
+    /**
+     * 所有「用 cardSurface 做背景」的 View 登记表。
+     *
+     * <p><b>为什么需要登记而不能靠遍历识别</b>：旧实现靠
+     * {@code isClickable() || CARD_TAG_KEY} 在整棵 View 树里猜哪些是卡片。
+     * 猜漏一处（漏打 tag、或行本身不可点击）那块就不跟透明度走，
+     * 表现就是「拖滑块只有一部分变色、重启才全对」——
+     * 因为重启后所有 View 都是按新 cardAlpha 新建的。
+     *
+     * <p>改成登记后，<b>只要背景出自 {@link #applyCardSurface} 就一定会被刷新</b>，
+     * 不再依赖「记得打 tag」这种人工约定。新增卡片样式时用统一入口即可。</p>
+     *
+     * <p>弱引用：View 被回收后自动出队，不会因为这张表钉住整棵旧 View 树。</p>
+     */
+    private final java.util.List<java.lang.ref.WeakReference<View>> cardViewRefs =
+            new java.util.ArrayList<>();
+
+    /** 卡片圆角 / 是否标题卡的登记信息（重建背景时要原样还原） */
+    private final java.util.Map<View, int[]> cardStyleMap =
+            new java.util.IdentityHashMap<>();
+
+    /**
+     * 「设置卡片背景」的唯一入口。
+     *
+     * <p>所有需要跟随「卡片不透明度」的 View 都必须走这里，
+     * 不要直接 {@code v.setBackground(cardSurface(...))}——
+     * 那样不会进登记表，拖滑块时不会被刷新。</p>
+     *
+     * @param cornerDp 圆角 dp，-1 = 行默认（10dp）
+     * @param isHeader true = 分区标题卡（更亮一级底色 + 8dp 圆角）
+     */
+    private void applyCardSurface(View v, int cornerDp, boolean isHeader) {
+        if (v == null) return;
+        v.setBackground(cardSurface(cornerDp, isHeader));
+        // 相同 View 重复设置时不要重复登记（IdentityHashMap 天然去重）
+        cardStyleMap.put(v, new int[]{cornerDp, isHeader ? 1 : 0});
+        boolean registered = false;
+        for (java.util.Iterator<java.lang.ref.WeakReference<View>> it = cardViewRefs.iterator();
+             it.hasNext(); ) {
+            View x = it.next().get();
+            if (x == null) {
+                it.remove();
+            } else if (x == v) {
+                registered = true;
+            }
+        }
+        if (!registered) cardViewRefs.add(new java.lang.ref.WeakReference<>(v));
+    }
+
+    private void applyCardSurface(View v) {
+        applyCardSurface(v, -1, false);
+    }
     /**
      * 当前正在填充的「设置分组」卡片。
      *
@@ -4474,9 +4527,8 @@ public class FileManagerModule extends HyVqModule {
         card.setOrientation(LinearLayout.HORIZONTAL);
         card.setGravity(Gravity.CENTER_VERTICAL);
         card.setPadding(dp(14), dp(12), dp(10), dp(12));
-        card.setBackground(UiKit.rounded(ctx, dp(6),
-                UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow),
-                UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
+        // 走统一入口：这块原本是硬编码 rounded，卡片不透明度滑块对它是无效的
+        applyCardSurface(card, 6, false);
         LinearLayout.LayoutParams clp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -4534,7 +4586,7 @@ public class FileManagerModule extends HyVqModule {
         // 走 cardSurface，跟其它卡片同一个不透明度旋钮。
         // 原来这里硬编码 colorSurfaceContainerLow + 6dp 圆角，
         // 调卡片透明度时它不会跟着变，会是一块实心板。
-        card.setBackground(cardSurface(10));
+        applyCardSurface(card, 10, false);
         card.setTag(CARD_TAG_KEY, Boolean.TRUE);
 
         TextView tvCur = new TextView(ctx);
@@ -4863,7 +4915,7 @@ public class FileManagerModule extends HyVqModule {
         titleCard.setOrientation(LinearLayout.VERTICAL);
         titleCard.setGravity(Gravity.CENTER_VERTICAL);
         titleCard.setPadding(dp(12), dp(12), dp(12), dp(12));
-        titleCard.setBackground(cardSurface(8, true));
+        applyCardSurface(titleCard, 8, true);
         titleCard.setTag(CARD_TAG_KEY, Boolean.TRUE);
         titleCard.setTag(CARD_TAG_HDR_KEY, Boolean.TRUE);
         titleCard.addView(title);
@@ -4904,7 +4956,7 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout descCard = new LinearLayout(ctx);
         descCard.setOrientation(LinearLayout.VERTICAL);
         descCard.setPadding(dp(12), dp(12), dp(12), dp(12));
-        descCard.setBackground(cardSurface(-1));
+        applyCardSurface(descCard, -1, false);
         descCard.setTag(CARD_TAG_KEY, Boolean.TRUE);
         desc.setPadding(0, 0, 0, 0);
         descCard.addView(desc);
@@ -5129,7 +5181,7 @@ public class FileManagerModule extends HyVqModule {
         row.setPadding(dp(12), dp(14), dp(12), dp(14));
         row.setClickable(true);
         row.setFocusable(true);
-        if (!inGroup) row.setBackground(cardSurface(-1));
+        if (!inGroup) applyCardSurface(row, -1, false);
         row.setOnClickListener(onClick);
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -5876,7 +5928,7 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout card = new LinearLayout(ctx);
         card.setOrientation(LinearLayout.VERTICAL);
         card.setPadding(0, 0, 0, 0);
-        card.setBackground(cardSurface(12, true));
+        applyCardSurface(card, 12, true);
         card.setTag(CARD_TAG_KEY, Boolean.TRUE);
         card.setTag(CARD_TAG_HDR_KEY, Boolean.TRUE);
         card.addView(tv);
@@ -5902,14 +5954,19 @@ public class FileManagerModule extends HyVqModule {
         // 结果就是「拖滑块只有设置页那几行变色，其它地方要重启才生效」——
         // 因为重启后所有 View 都是按新 cardAlpha 新建的。
         //
-        // 现在改为从 Activity 的 DecorView 起递归，一次覆盖所有可见树。
-        // 弹窗若在拖动期间开着，由 applyCardAlphaAllWindows() 单独兜住。
+        // ⚠ 现在改为刷**登记表**，不再遍历 View 树。
+        //
+        // 遍历的问题是「猜」：靠 isClickable() || CARD_TAG_KEY 识别卡片，
+        // 漏打 tag 或行本身不可点击就会漏刷，表现是「拖滑块只有一部分变色」。
+        // 登记表是「确定性」的：只要背景出自 applyCardSurface 就必然在里面。
+        //
+        // 副作用：如果将来有人绕过 applyCardSurface 直接 setBackground，
+        // 那块就不跟随——这是有意的，入口唯一才不会漏。
+        refreshRegisteredCards();
+        // 兜底：某些 View 可能在登记表清理后仍有 tag 标记（老路径遗留）
         View windowRoot = activityRootView();
         if (windowRoot != null) {
             applyCardAlphaRecursive(windowRoot, 0);
-        } else if (settingsEmbedContent != null) {
-            // 拿不到窗口（模块未附着）时退回旧路径，至少设置页能刷新
-            applyCardAlphaRecursive(settingsEmbedContent, 0);
         }
 
         // 顶栏 / 底栏 / 多选栏：它们是 rounded() 现算的，标签识别不到，
@@ -5927,6 +5984,47 @@ public class FileManagerModule extends HyVqModule {
         applyCardAlphaToOpenDialogs();
 
         UiKit.toast(ctx, "卡片不透明度 " + cardAlpha + "%");
+    }
+
+    /**
+     * 按登记表重刷所有卡片背景。
+     *
+     * <p>同时清理两类失效项：View 已被回收（弱引用空）、View 已脱离窗口
+     * （{@code isAttachedToWindow()} 为 false 且已 destroy）。后者能被重新
+     * attach，所以只在明显失效时才剔除；否则宁可留着多刷一次。</p>
+     */
+    private void refreshRegisteredCards() {
+        int refreshed = 0;
+        java.util.Iterator<java.lang.ref.WeakReference<View>> it = cardViewRefs.iterator();
+        while (it.hasNext()) {
+            View v = it.next().get();
+            if (v == null) {
+                it.remove();
+                continue;
+            }
+            int[] style = cardStyleMap.get(v);
+            if (style == null) {
+                it.remove();
+                continue;
+            }
+            v.setBackground(cardSurface(style[0], style[1] == 1));
+            refreshed++;
+        }
+        // 反向清理：cardStyleMap 里已没有强引用的 Key 会随 View 回收消失，
+        // 这里只清掉本次遍历中已确认失效的项，避免 map 无限增长
+        if (cardStyleMap.size() > cardViewRefs.size() * 2 + 32) {
+            java.util.Map<View, int[]> alive = new java.util.IdentityHashMap<>();
+            for (java.util.Iterator<java.lang.ref.WeakReference<View>> it2 = cardViewRefs.iterator();
+                 it2.hasNext(); ) {
+                View v = it2.next().get();
+                if (v != null && cardStyleMap.containsKey(v)) {
+                    alive.put(v, cardStyleMap.get(v));
+                }
+            }
+            cardStyleMap.clear();
+            cardStyleMap.putAll(alive);
+        }
+        android.util.Log.i("HYCardAlpha", "refreshed " + refreshed + " cards @ " + cardAlpha + "%");
     }
 
     /** 取 Activity 的窗口根 View（DecorView），拿不到返回 null */
@@ -6277,7 +6375,7 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setPadding(dp(10), dp(10), dp(10), dp(10));
-        row.setBackground(cardSurface(-1));
+        applyCardSurface(row, -1, false);
         row.setClickable(true);
 
         TextView t = new TextView(ctx);
@@ -6867,7 +6965,7 @@ public class FileManagerModule extends HyVqModule {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(4), dp(12), dp(4), dp(12));
-        row.setBackground(cardSurface(-1));
+        applyCardSurface(row, -1, false);
         row.setClickable(true);
         row.setFocusable(true);
         row.setOnClickListener(onClick);
@@ -6908,7 +7006,7 @@ public class FileManagerModule extends HyVqModule {
         // 分组外时 wrap 必须自己给背景，否则裸露在背景图上。
         wrap.setPadding(dp(12), dp(10), dp(12), dp(8));
         if (!inGroup) {
-            wrap.setBackground(cardSurface(-1));
+            applyCardSurface(wrap, -1, false);
             wrap.setTag(CARD_TAG_KEY, Boolean.TRUE);
         }
         LinearLayout.LayoutParams wrapLp = new LinearLayout.LayoutParams(
@@ -7114,7 +7212,7 @@ public class FileManagerModule extends HyVqModule {
         trashHeader.setPadding(dp(12), dp(12), dp(12), dp(12));
         // 与其它卡片共用同一套底色与描边；原来用静态 bg_ripple_round，
         // 既跟不上卡片透明度，也没有那层浅描边，看着像裸露的一行
-        trashHeader.setBackground(cardSurface(-1));
+        applyCardSurface(trashHeader, -1, false);
         trashHeader.setTag(CARD_TAG_KEY, Boolean.TRUE);
         trashHeader.setClickable(true);
         ImageView trashArrow = new ImageView(ctx);
@@ -7167,7 +7265,7 @@ public class FileManagerModule extends HyVqModule {
         row.setClickable(true);
         row.setFocusable(true);
         if (!inGroup) {
-            row.setBackground(cardSurface(-1));
+            applyCardSurface(row, -1, false);
         }
         row.setOnClickListener(onClick);
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
