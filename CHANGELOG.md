@@ -1,7 +1,5 @@
-## 未发布
+## 1.0.3 — 2026-11-10
 
-> 目标 1.0.3 / versionCode 8。发布时把本节整体改成 `## 1.0.3 — YYYY-MM-DD`，
-> 并把面向用户的说明追加进 versions.json。
 
 ### 新增：存储管理页
 
@@ -25,6 +23,69 @@
 
 新增 `fmtStorageSize()`：统计失败显示 `—` 而非 `-`，并补 TB 档。
 其余刻度与 `formatSize` 一致，避免同一屏两种单位口径。
+
+### 新增：Android/data 访问（零宽字符路径别名）
+
+Android 11+ 把 `/sdcard/Android/{data,obb,media}` 交给 FUSE 做**路径字符串**拦截，
+即使有 `MANAGE_EXTERNAL_STORAGE`，`listFiles()` 对这些目录仍返回 null。
+但目录真实权限是 `drwxrws--x`（有 x 位），inode 权限从未收紧 ——
+在 `Android` 与 `data` 之间插入 U+200B 后，FUSE 匹配不上而 VFS 能解析到同一 inode。
+
+本机 Android 16 实测：列目录 / 读 / 写 / 删 **全部通过**。
+
+- 新增 `access/PathAlias.java`：`io()` / `real()` / `isGuarded()`，幂等
+- `AccessRouter.list()` 失败后换别名重试；条目 path 用**真实父路径**拼回
+- `AccessRouter.fileOf(FileEntry)` / `fileOf(String)` 作为唯一 IO 入口
+- `FileOps` 的 copy / move / delete / mkdir / createFile / rename 全部先转别名
+- `FileManagerModule` 里 24 处 `new File(e.path)` / `new File(pathOrUri)` 改走 `fileOf`
+
+**零宽字符绝不泄漏到 UI**：`FileEntry.path` 始终是真实路径。
+
+**风险**：这是利用未修复的系统行为，不是官方支持能力。
+`PathAlias.java` 顶部有完整注释说明。Google 一旦修复即失效，回退到「无权限」空列表。
+
+### 新增：状态栏透明 + 可调不透明度
+
+- `setDecorFitsSystemWindows(false)` + `setStatusBarColor(TRANSPARENT)`，背景图铺到状态栏后面
+- `body` 与 `navOverlay` **各自**加状态栏 inset（`root` / `rootContainer` / `bgImageView` 不加，
+  否则背景图会被一起推下去，状态栏区域反而露白）
+- 新增 `PREF_STATUS_BAR_ALPHA` + 「状态栏不透明度」滑块（0 = 透明，100 = 实色）
+- 图标明暗按 alpha 决定：alpha < 30 强制浅色图标（透明底是照片，偏暗）
+- 图标控制权从 `MainActivity` 移交给模块，避免两处打架
+
+**踩坑记录**：`createMainView` 阶段 DecorView 还没 attach，
+`getRootWindowInsets()` 返回 null → 回退 `status_bar_height` 资源值。
+ColorOS 上该值是 119px 而真实值 141px，差 22px 就是「顶栏与状态栏有一点重叠」。
+修法：`body.addOnAttachStateChangeListener` 里 attach 后重算一次，再 `post` 一帧确认。
+
+### 新增：包名文件夹应用图标角标
+
+`Android/data`、`obb`、`media` 的直接子目录若名字像包名，
+文件夹图标右下角叠该应用图标。仅视觉标记，不改变点击行为。
+设置 → 文件管理 可关闭，默认开。
+
+- 图标**必须缓存**：`onBindViewHolder` 滚动时整屏重绑，包名解析走
+  `PackageManager` IPC，几十行就是几十次跨进程调用，直接掉帧
+- 查不到（未安装 / 不可见）静默跳过，不报错不重试
+- manifest 加 `QUERY_ALL_PACKAGES`，否则系统应用图标拿不到
+
+### 修复：底部功能栏遮挡
+
+`BOTTOM_NAV_RESERVE` 固定 62dp 不够：`opBar`（多选栏，内容撑高约 100dp）
+与 `bottomNav`（固定 48dp + 8 边距）共用同一个值，多选时必然遮住最后几行。
+
+改为 `updateListBottomReserve()` 量当前可见栏的 `getHeight()`，
+三处触发（启动 / 多选切换 / 栏可见性变化），`post` 一帧等布局完成。
+
+### 修复：.apk 点击被当成压缩包
+
+`.apk` 本质是 zip，`isZip()` 对它返回 true，点击先命中压缩包分支直接进内部浏览，
+用户看到的 是 zip 目录树而不是安装界面。
+
+- 新增 `isInstallerExt()`：apk / aab / xapk / apks / apkm / zipx
+- 点击分发里排在压缩包分支**之前**
+- apk / xapk → `installApkByName`（含 APK 信息预检）
+- aab / apks / apkm / zipx → 打开方式弹窗（系统安装器不认）
 
 ### 新增：设置页分组卡片布局
 

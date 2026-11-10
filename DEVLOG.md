@@ -243,6 +243,25 @@ sys.oem_unlock_allowed = 1  ← 仅 Android 侧开关，bootloader 不读
 
 ---
 
+## 下个版本计划（1.0.4）
+
+### Android/data 空目录提示
+
+**现象**：`/sdcard/Android/data` 下某些子目录在部分设备/Android 版本上
+零宽别名也读不到时，列表只剩 `..`，用户不知道是「真的空」还是「被系统拦了」。
+
+**要做的**：区分两种情况，给明确提示。
+
+- 真为空 → 正常显示空目录
+- 读不到（`listFiles()` 两次都返回 null）→ 列表里插入一行说明：
+  「Android 11+ 限制：此目录需要 root 或由该应用自身提供访问」
+
+**实现线索**：`AccessRouter.list()` 现在的回退链是
+`真实路径 → 零宽别名 → denied()`，在 denied 分支返回的 `AccessResult`
+里带一个 `reason` 字段，UI 层据此渲染提示行。
+
+---
+
 ## 待发布
 
 （待汇总）
