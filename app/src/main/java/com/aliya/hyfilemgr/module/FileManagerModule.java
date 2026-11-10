@@ -425,7 +425,11 @@ public class FileManagerModule extends HyVqModule {
     }
     private static final String PREF_GRID_MODE = "grid_mode";
     private static final String PREF_THUMBS = "thumbs_enabled";
+    /** 包名文件夹（Android/data 等）右下角显示应用图标 */
+    private static final String PREF_APP_BADGE = "app_badge_enabled";
     private boolean thumbsEnabled = true;
+    /** 包名文件夹右下角应用图标开关 */
+    private boolean appBadgeEnabled = true;
     private static final String PREF_RECENT_FILES = "recent_files";
     // 注：历史上有 last_path_l / last_path_r / active_pane 三项（用于恢复上次目录），
     // 按用户要求「重启回到存储根」已停用，偏好文件中的旧键值忽略即可。
@@ -767,6 +771,7 @@ public class FileManagerModule extends HyVqModule {
         showHidden = sp.getBoolean(PREF_SHOW_HIDDEN, false);
         gridMode = sp.getBoolean(PREF_GRID_MODE, false);
         thumbsEnabled = sp.getBoolean(PREF_THUMBS, true);
+        appBadgeEnabled = sp.getBoolean(PREF_APP_BADGE, true);
         listDensity = Math.max(1, Math.min(3, sp.getInt(PREF_DENSITY, 2)));
         uiTheme = Math.max(0, Math.min(1, sp.getInt(PREF_UI_THEME, 0)));
         bgAlpha = Math.max(0, Math.min(100, sp.getInt(PREF_BG_ALPHA, 100)));
@@ -835,6 +840,7 @@ public class FileManagerModule extends HyVqModule {
                 boolean ok = fmPrefs().edit()
                         .putBoolean(PREF_SHOW_HIDDEN, fHidden)
                         .putBoolean(PREF_THUMBS, fThumbs)
+                        .putBoolean(PREF_APP_BADGE, appBadgeEnabled)
                         .putBoolean(PREF_GRID_MODE, fGrid)
                         .putInt(PREF_SORT_MODE, fSort)
                         .putInt(PREF_DENSITY, fDensity)
@@ -967,6 +973,21 @@ public class FileManagerModule extends HyVqModule {
         // （MainActivity 那边只设了 TRANSPARENT 作为初值，真正值在这里覆盖）
         applyStatusBarAlpha();
 
+        // 状态栏 inset 修正：createMainView 阶段 DecorView 还没 attach，
+        // getRootWindowInsets() 拿不到，只能退回 ColorOS 上偏小的资源值 24dp。
+        // attach 之后再算一次，把真实高度（约 47dp）补上。
+        bodyRef = body;
+        body.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override public void onViewAttachedToWindow(View v) {
+                // 立即一次
+                applyStatusBarInset();
+                // 再补一次：部分 ROM 的 insets 在 attach 的下一帧才稳定
+                v.post(FileManagerModule.this::applyStatusBarInset);
+            }
+            @Override public void onViewDetachedFromWindow(View v) { }
+        });
+        if (body.isAttachedToWindow()) applyStatusBarInset();
+
         // 启动时清理过期回收站文件（对比记录时间）
         try {
             purgeExpiredTrash();
@@ -981,6 +1002,8 @@ public class FileManagerModule extends HyVqModule {
 
     /** 模块根容器（FrameLayout：body + 侧边栏叠加层） */
     private FrameLayout rootContainer;
+    /** body 的引用：attach 后要重算状态栏 inset（见 applyStatusBarInset） */
+    private LinearLayout bodyRef;
     /** 侧边栏叠加层（GONE 初始，点击三条杠后显示） */
     private FrameLayout navOverlay;
     /** 侧边栏遮罩（点击关闭） */
@@ -1542,6 +1565,7 @@ public class FileManagerModule extends HyVqModule {
         p.list = rv;
         p.adapter = new FileListAdapter(ctx, p.entries, p.selected, makeListener(p));
         p.adapter.setThumbsEnabled(thumbsEnabled);
+        p.adapter.setAppBadgeEnabled(appBadgeEnabled);
         p.adapter.setDensity(fmActiveDensity());
         p.adapter.setRowAlpha(fmActiveRowAlpha());
         rv.setAdapter(p.adapter);
@@ -7163,6 +7187,24 @@ public class FileManagerModule extends HyVqModule {
                     hideSettingsDialog();
                     showFileSettings();
                     UiKit.toast(ctx, thumbsEnabled ? "已开启缩略图" : "已关闭缩略图");
+                });
+
+        addInfoRow(box, "应用图标角标",
+                appBadgeEnabled
+                        ? "Android/data 等目录下显示应用图标"
+                        : "已关闭（只显示文件夹图标）",
+                appBadgeEnabled, v -> {
+                    appBadgeEnabled = !appBadgeEnabled;
+                    savePrefBool(PREF_APP_BADGE, appBadgeEnabled);
+                    persistState();
+                    for (Pane pp : panes) {
+                        if (pp != null && pp.adapter != null) {
+                            pp.adapter.setAppBadgeEnabled(appBadgeEnabled);
+                        }
+                    }
+                    hideSettingsDialog();
+                    showFileSettings();
+                    UiKit.toast(ctx, appBadgeEnabled ? "已显示应用图标" : "已关闭应用图标");
                 });
 
         // ── 回收站（展开项）──
@@ -14723,6 +14765,7 @@ public class FileManagerModule extends HyVqModule {
      * 而 insets 又不总能从非 attach 状态的 View 取到。</p>
      */
     private int statusBarHeight() {
+        // ① 首选 WindowInsets（最准，含刘海/挖孔的真实高度）
         try {
             if (hostActivity != null) {
                 androidx.core.view.WindowInsetsCompat ins =
@@ -14730,18 +14773,57 @@ public class FileManagerModule extends HyVqModule {
                                 hostActivity.getWindow().getDecorView());
                 if (ins != null) {
                     int h = ins.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top;
-                    if (h > 0) return h;
+                    if (h > 0) {
+                        android.util.Log.i("HYInset", "statusBar from insets = " + h);
+                        return h;
+                    }
                 }
             }
         } catch (Throwable ignored) {
         }
+        // ② 回退资源值。⚠️ 这个值在 ColorOS / 挖孔屏上经常偏小
+        //    （Android 框架默认 24dp，而实际状态栏可能是 47dp），
+        //    所以它不是「正确答案」，只是「没有 insets 时的最接近猜测」。
+        //    真正的高度会在 onAttachedToWindow 后由 applyStatusBarInset() 修正。
         try {
             int id = ctx.getResources().getIdentifier(
                     "status_bar_height", "dimen", "android");
-            if (id > 0) return ctx.getResources().getDimensionPixelSize(id);
+            if (id > 0) {
+                int h = ctx.getResources().getDimensionPixelSize(id);
+                android.util.Log.w("HYInset", "statusBar from resource = " + h
+                        + " (unreliable on ColorOS)");
+                return h;
+            }
         } catch (Throwable ignored) {
         }
-        return dp(24);   // 兜底：常见 24dp
+        int h = dp(24);
+        android.util.Log.w("HYInset", "statusBar fallback dp(24) = " + h);
+        return h;
+    }
+
+    /**
+     * 重算并应用状态栏 inset（body + navOverlay）。
+     *
+     * <p><b>为什么需要二次调用</b>：{@link #createMainView} 里取
+     * {@link #statusBarHeight()} 时，DecorView 往往还没 attach 到窗口，
+     * {@code getRootWindowInsets()} 返回 null → 回退到资源值。
+     * ColorOS 的 {@code status_bar_height} 是框架默认的 24dp，
+     * 而实际状态栏约 47dp —— 差这 23dp 就是「顶栏与状态栏有一点重叠」。</p>
+     *
+     * <p>所以在 body attach 到窗口后再调一次，此时 insets 一定可用。</p>
+     */
+    private void applyStatusBarInset() {
+        try {
+            if (bodyRef == null || !bodyRef.isAttachedToWindow()) return;
+            int sb = statusBarHeight();
+            int baseTop = dp(4);
+            if (bodyRef.getPaddingTop() != baseTop + sb) {
+                bodyRef.setPadding(bodyRef.getPaddingLeft(), baseTop + sb,
+                        bodyRef.getPaddingRight(), bodyRef.getPaddingBottom());
+                android.util.Log.i("HYInset", "body paddingTop -> " + (baseTop + sb));
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private int dp(int v) {

@@ -90,6 +90,101 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
     }
     private final Listener listener;
 
+    // ── 包名文件夹应用图标叠加 ──
+
+    /** 是否在 Android/data、obb、media 的包名子目录上叠应用图标 */
+    private boolean appBadgeEnabled = true;
+
+    /**
+     * 包名 → 应用图标 Drawable 的缓存。
+     *
+     * <p><b>为什么必须缓存</b>：{@code onBindViewHolder} 每帧都可能被调用
+     * （滚动时整屏重绑）。包名解析要走 PackageManager IPC，几十行就是几十次
+     * 跨进程调用，滚动直接掉帧。这里按包名表缓存，滚动时零开销。</p>
+     *
+     * <p>value 允许为 null（表示「查过但没有」），避免对未安装应用反复查询。</p>
+     */
+    private final java.util.Map<String, android.graphics.drawable.Drawable> appIconCache =
+            new java.util.HashMap<>();
+
+    /** 记住哪些包名查过（含查出 null 的），避免重复查询 */
+    private final java.util.Set<String> appIconQueried = new java.util.HashSet<>();
+
+    /** 这些父目录下的直接子目录才当作包名文件夹 */
+    private static final String[] PANGO_PARENT_SUFFIXES = {
+            "/Android/data", "/Android/obb", "/Android/media",
+    };
+
+    public void setAppBadgeEnabled(boolean on) {
+        if (this.appBadgeEnabled == on) return;
+        this.appBadgeEnabled = on;
+        notifyDataSetChanged();
+    }
+
+    public boolean isAppBadgeEnabled() {
+        return appBadgeEnabled;
+    }
+
+    /**
+     * 该目录是否「本应叠加应用图标」——路径形如
+     * {@code /storage/emulated/0/Android/data/com.example.app}，
+     * 且末段像包名（至少两个点，全小写字母数字下划线点）。
+     */
+    private static boolean isPackageDir(FileEntry e) {
+        if (e == null || !e.isDir() || e.path == null) return false;
+        String p = e.path;
+        boolean underPkgParent = false;
+        for (String suffix : PANGO_PARENT_SUFFIXES) {
+            if (p.endsWith(suffix + "/" + e.name)) {
+                underPkgParent = true;
+                break;
+            }
+        }
+        if (!underPkgParent) return false;
+        return looksLikePackageName(e.name);
+    }
+
+    /** 粗判包名：含至少一个点、无空格、只含包名字符集 */
+    private static boolean looksLikePackageName(String name) {
+        if (name == null || name.isEmpty() || name.length() > 128) return false;
+        int dots = 0;
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (c == '.') {
+                dots++;
+            } else if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9') || c == '_')) {
+                return false;
+            }
+        }
+        return dots >= 1;
+    }
+
+    /**
+     * 取该包名对应的应用图标；未安装 / 不可见时返回 null。
+     *
+     * <p><b>包可见性</b>：Android 11+ 默认只能看到声明过的包。
+     * 本应用 manifest 里已有 {@code <queries>} 的 VIEW intent 声明，
+     * 能看到绝大多数应用，但**不是全部**。查不到就返回 null，
+     * 调用方据此不叠图标，不报错、不重试。</p>
+     */
+    private android.graphics.drawable.Drawable appIconFor(String pkg) {
+        if (pkg == null) return null;
+        if (appIconQueried.contains(pkg)) return appIconCache.get(pkg);
+        appIconQueried.add(pkg);
+        android.graphics.drawable.Drawable d = null;
+        try {
+            android.content.pm.PackageManager pm = context.getPackageManager();
+            android.content.pm.ApplicationInfo ai = pm.getApplicationInfo(
+                    pkg, 0);
+            if (ai != null) d = pm.getApplicationIcon(ai);
+        } catch (Throwable ignored) {
+            // 未安装 / 不可见：静默
+        }
+        appIconCache.put(pkg, d);
+        return d;
+    }
+
     public FileListAdapter(Context context, List<FileEntry> entries,
                            Set<FileEntry> selected, Listener listener) {
         this.context = context;
@@ -183,6 +278,26 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
             }
             h.icon.setColorFilter(iconColor);
         }
+        // ── 包名文件夹右下角应用图标角标 ──
+        // 只对 Android/data、obb、media 下的包名子目录生效，其余行一律 GONE。
+        // 注意：仅视觉标记，不改变点击行为（点击仍是进入文件夹）。
+        if (h.appBadge != null) {
+            if (appBadgeEnabled && isPackageDir(e)) {
+                android.graphics.drawable.Drawable d = appIconFor(e.name);
+                if (d != null) {
+                    h.appBadge.setImageDrawable(d);
+                    h.appBadge.setVisibility(View.VISIBLE);
+                } else {
+                    // 未安装 / 不可见：不叠图标，保持纯文件夹观感
+                    h.appBadge.setImageDrawable(null);
+                    h.appBadge.setVisibility(View.GONE);
+                }
+            } else {
+                h.appBadge.setImageDrawable(null);
+                h.appBadge.setVisibility(View.GONE);
+            }
+        }
+
         // 虚拟条目标记
         h.badge.setVisibility(e.virtual ? View.VISIBLE : View.GONE);
         h.itemView.setOnClickListener(v -> {
@@ -298,11 +413,26 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         LinearLayout.LayoutParams checkLp = new LinearLayout.LayoutParams(0, 0);
         row.addView(check, checkLp);
 
-        ImageView icon = new ImageView(context);
-        icon.setImageResource(R.drawable.ic_folder);
+        // 图标区：FrameLayout 容纳「类型图标 + 右下角应用图标角标」。
+        // 只有包名文件夹（Android/data 等）会显示角标，其余行把角标设为 GONE。
+        android.widget.FrameLayout iconWrap = new android.widget.FrameLayout(context);
         LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(iconSize, iconSize);
         iconLp.setMarginStart(dp(4));
-        row.addView(icon, iconLp);
+        row.addView(iconWrap, iconLp);
+
+        ImageView icon = new ImageView(context);
+        icon.setImageResource(R.drawable.ic_folder);
+        iconWrap.addView(icon, new android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        // 右下角应用图标角标：尺寸取图标区的 55%，压在右下角
+        ImageView appBadge = new ImageView(context);
+        appBadge.setVisibility(View.GONE);
+        appBadge.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        int badgeSize = Math.max(dp(10), Math.round(iconSize * 0.55f));
+        android.widget.FrameLayout.LayoutParams appBadgeLp = new android.widget.FrameLayout.LayoutParams(
+                badgeSize, badgeSize, Gravity.END | Gravity.BOTTOM);
+        iconWrap.addView(appBadge, appBadgeLp);
 
         LinearLayout textCol = new LinearLayout(context);
         textCol.setOrientation(LinearLayout.VERTICAL);
@@ -348,7 +478,7 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         subLp.topMargin = dp(2);
         textCol.addView(sub, subLp);
 
-        row.setTag(new Object[]{check, icon, name, sub, badge});
+        row.setTag(new Object[]{check, icon, name, sub, badge, appBadge});
         return row;
     }
 
@@ -379,6 +509,8 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
     static class VH extends RecyclerView.ViewHolder {
         final TextView name, sub, badge;
         final ImageView icon;
+        /** 右下角应用图标角标（仅包名文件夹显示） */
+        final ImageView appBadge;
         final CheckBox check;
 
         VH(View v) {
@@ -389,6 +521,7 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
             name = (TextView) tags[2];
             sub = (TextView) tags[3];
             badge = (TextView) tags[4];
+            appBadge = (ImageView) tags[5];
         }
     }
 }
