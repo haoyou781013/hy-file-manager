@@ -48,7 +48,6 @@ import com.aliya.hyfilemgr.module.ModuleServices;
 import com.aliya.hyfilemgr.ui.UiKit;
 
 import java.io.File;
-import java.net.Socket;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -780,29 +779,6 @@ public class FileManagerModule extends HyVqModule {
         fmBgFile = fmName.isEmpty() ? null : new File(bgDirNow, fmName);
         String bgName = sp.getString(PREF_BG_FILE, "");
         bgImageFile = bgName.isEmpty() ? null : new File(bgDirNow, bgName);
-        // —— 诊断日志（临时，定位「背景图重启后变纯色」用，定位完删除）——
-        // 一次打印出「存了什么 / 解析到哪 / 文件在不在 / 目录里还有什么」，
-        // 用来区分三种成因：pref 里名字是空的、文件名解析到错位置、文件被删。
-        try {
-            StringBuilder lsb = new StringBuilder();
-            String[] names = bgDirNow == null ? null : bgDirNow.list();
-            if (names != null) {
-                for (String n : names) lsb.append(n).append(',');
-            }
-            android.util.Log.i("HYBgDiag", "RESTORE"
-                    + " bg_file='" + bgName + "'"
-                    + " bgImageFile=" + bgImageFile
-                    + " bgExists=" + (bgImageFile != null && bgImageFile.isFile())
-                    + " | fm_bg_file='" + fmName + "'"
-                    + " fmBgFile=" + fmBgFile
-                    + " fmExists=" + (fmBgFile != null && fmBgFile.isFile())
-                    + " | bgDir=" + bgDirNow
-                    + " bgDirList=[" + lsb + "]"
-                    + " | fmThemeOn=" + fmThemeOn
-                    + " bgAlpha=" + bgAlpha
-                    + " fmBgAlpha=" + fmBgAlpha);
-        } catch (Throwable ignored) {
-        }
         uiMode = Math.max(0, Math.min(2, sp.getInt(PREF_UI_MODE, 0)));
         // 本地：默认展开（这是主入口，一进来就要能点目录）
         // 工具：默认收起（低频功能，收起来减少视觉噪声）
@@ -5503,18 +5479,11 @@ public class FileManagerModule extends HyVqModule {
         final int bgA = fmActiveBgAlpha();
         final int bgB = fmActiveBgBlur();
         if (bgFile == null || !bgFile.isFile()) {
-            // —— 诊断日志（临时）——
-            android.util.Log.w("HYBgDiag", "APPLY skip: bgFile=" + bgFile
-                    + " isFile=" + (bgFile != null && bgFile.isFile())
-                    + " bgImageFile=" + bgImageFile
-                    + " fmBgFile=" + fmBgFile
-                    + " fmThemeOn=" + fmThemeOn);
             bgImageView.setImageDrawable(null);
             bgImageView.setVisibility(View.GONE);
             syncContentTransparency(false);
             return;
         }
-        android.util.Log.i("HYBgDiag", "APPLY ok: " + bgFile + " alpha=" + bgA + " blur=" + bgB);
         bgImageView.setVisibility(View.VISIBLE);
         bgImageView.setAlpha(bgA / 100f);
         syncContentTransparency(true);
@@ -5527,32 +5496,23 @@ public class FileManagerModule extends HyVqModule {
         final int blur = bgB;
         new Thread(() -> {
             android.graphics.Bitmap bmp = decodeScaled(src);
-            android.util.Log.i("HYBgDiag", "DECODE " + src + " -> "
-                    + (bmp == null ? "null" : bmp.getWidth() + "x" + bmp.getHeight()));
             if (bmp != null && blur > 0) bmp = blurBitmap(bmp, blur);
             final android.graphics.Bitmap out = bmp;
             handler.post(() -> {
                 if (detached || seq != bgLoadSeq) {
                     // 过期或已销毁：直接丢掉，避免旧图盖掉新图
-                    android.util.Log.w("HYBgDiag", "SHOW dropped seq=" + seq
-                            + " cur=" + bgLoadSeq + " detached=" + detached);
                     if (out != null && !out.isRecycled()) out.recycle();
                     return;
                 }
                 if (bgImageView == null) {
-                    android.util.Log.w("HYBgDiag", "SHOW dropped: bgImageView==null");
                     if (out != null && !out.isRecycled()) out.recycle();
                     return;
                 }
                 if (out == null) {
-                    android.util.Log.w("HYBgDiag", "SHOW hidden: decode null");
                     bgImageView.setImageDrawable(null);
                     bgImageView.setVisibility(View.GONE);
                     return;
                 }
-                android.util.Log.i("HYBgDiag", "SHOW set " + out.getWidth() + "x" + out.getHeight()
-                        + " viewAlpha=" + bgImageView.getAlpha()
-                        + " viewVisibility=" + bgImageView.getVisibility());
                 bgImageView.setImageBitmap(out);
             });
         }, "HyBgDecode").start();
@@ -5733,12 +5693,6 @@ public class FileManagerModule extends HyVqModule {
                 handler.post(() -> {
                     if (detached) return;
                     if (forFm) fmBgFile = dst; else bgImageFile = dst;
-                    // —— 诊断日志（临时）——
-                    android.util.Log.i("HYBgDiag", "SET forFm=" + forFm
-                            + " dst=" + dst + " dstExists=" + dst.isFile()
-                            + " dstLen=" + dst.length()
-                            + " old=" + old
-                            + " oldExistsAfter=" + (old != null && old.isFile()));
                     // 立刻落盘：不等 onDetach。
                     // 设完图马上被后台杀掉时 onDetach 不会执行，
                     // 之前只有滑块回调才 persistState，边界场景会丢。
@@ -5747,10 +5701,6 @@ public class FileManagerModule extends HyVqModule {
                     if (old != null && !old.equals(dst)) {
                         //noinspection ResultOfMethodCallIgnored
                         old.delete();
-                        android.util.Log.i("HYBgDiag", "DELETE old=" + old
-                                + " stillExists=" + old.isFile()
-                                + " | bgImageFile=" + bgImageFile
-                                + " fmBgFile=" + fmBgFile);
                     }
                     applyFmThemeToAdapters();
                     UiKit.toast(ctx, forFm ? "文件管理背景图已更换" : "背景图已更换");
@@ -7474,9 +7424,9 @@ public class FileManagerModule extends HyVqModule {
                 }
                 long used = Math.max(0, ft - ff);
                 int pct = (int) Math.round(used * 100.0 / ft);
-                tvLeft.setText("已用 " + humanSize(used) + " / " + humanSize(ft));
+                tvLeft.setText("已用 " + fmtStorageSize(used) + " / " + fmtStorageSize(ft));
                 tvPct.setText(pct + "%");
-                tvFree.setText("可用 " + humanSize(ff));
+                tvFree.setText("可用 " + fmtStorageSize(ff));
 
                 // 进度条宽度（用 post 等布局完成拿到 track 宽度）
                 track.post(() -> {
@@ -12157,7 +12107,7 @@ public class FileManagerModule extends HyVqModule {
                 .append(System.lineSeparator());
         sb.append("目标 SDK　").append(targetSdk == 0 ? "未知" : String.valueOf(targetSdk))
                 .append(System.lineSeparator());
-        sb.append("大小　　").append(humanSize(apk.length())).append(System.lineSeparator());
+        sb.append("大小　　").append(fmtStorageSize(apk.length())).append(System.lineSeparator());
         if (installed) {
             sb.append("已安装　").append(installedVc)
                     .append(pi.versionCode >= installedVc ? "（覆盖升级）" : "（降级安装）");
@@ -13609,7 +13559,7 @@ public class FileManagerModule extends HyVqModule {
             } else {
                 String childVirt = p.path + rel;
                 boolean encrypted = Boolean.TRUE.equals(encMap.get(name));
-                String sub = (it.size >= 0 ? humanSize(it.size) : "—")
+                String sub = fmtStorageSize(it.size)
                         + (encrypted ? " · 加密" : "");
                 files.put(rel, new FileEntry(childVirt, rel,
                         FileEntry.Type.VIRTUAL_FILE, it.size, it.time, true,
@@ -14538,13 +14488,6 @@ public class FileManagerModule extends HyVqModule {
 
     // ── 网络模式：极简 FTP 服务器（左上角入口；参考 Ghost Commander 网络能力方向；
     /** 人类可读的字节数（B/KB/MB/GB）。原在 FTP 块内，删网络功能后仍被占用率条使用 */
-    private static String humanSize(long b) {
-        if (b < 1024) return b + " B";
-        if (b < 1048576) return String.format(Locale.US, "%.1f KB", b / 1024.0);
-        if (b < 1073741824L) return String.format(Locale.US, "%.1f MB", b / 1048576.0);
-        return String.format(Locale.US, "%.2f GB", b / 1073741824.0);
-    }
-
     private boolean checkPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             return Environment.isExternalStorageManager();
