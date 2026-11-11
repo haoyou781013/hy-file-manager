@@ -8,6 +8,47 @@
 
 ---
 
+## 未发布
+
+### 图片查看器重构（bbd78c1）
+
+**改动面**：`ImageViewerActivity.java`（179→378 行）、`activity_image_viewer.xml`、
+新增 `drawable/ic_share.xml`、`FileManagerModule.java`（openImageViewer + onViewerResult）、
+`MainActivity.java`（onActivityResult 转发一行）。
+
+**架构决策：查看器不持有业务，全部回传主界面**
+- 删除：查看器内仅弹确认（glassDialog 自建，UiKit.alert 是固定失败样式不能用于确认框）
+  → `setResult` 携带 RESULT_ACTION_DELETE → finish →
+  模块 `onViewerResult` 构造 FileEntry（final 字段模型，用完整构造器，
+  Type.FILE + length/mtime）→ `confirmDelete(singletonList)` 复用回收站机制 + reloadAll。
+  不复制 moveToTrash 逻辑（它依赖实例状态，静态化得不偿失）。
+- 设为背景：选择框（全局/文件列表页）→ RESULT_ACTION_WALLPAPER + EXTRA_FOR_FM →
+  模块置 `pickForFmTheme` → `setBackgroundFromUri(Uri.fromFile(path))`——
+  ContentResolver.openInputStream 支持 file:// scheme（FileUriExposedException
+  只限跨进程 Intent，本应用内部可用），finally 里复位 pickForFmTheme。
+- 回传通道：`REQ_VIEWER=0x4B49`，`hostActivity.startActivityForResult`
+  （照抄 REQ_SAF_MOUNT=1005 模式），`openImageViewer` 三处调用方零改动。
+  hostActivity 为 null 时退化为普通启动（此时底部栏仍工作但结果无人接，
+  理论不可达，模块必挂在 MainActivity 上）。
+- `viewerPendingPath`：onActivityResult 的 data 只带动作，源路径存在模块字段里。
+
+**UI 实现**
+- 暗色沉浸：纯黑背景不变，scrim `#99000000`（用户选择：不接主题卡片色）
+- 状态栏：`setDecorFitsSystemWindows(false)` + TRANSPARENT + insets 双次重算
+  （addOnAttachStateChangeListener + root.post，照抄主界面模式，
+  ColorOS status_bar_height 资源值偏小 22px）+ 浅色图标（黑底）
+- 底部栏：三按钮图标+文字竖排，横向均分，`selectableItemBackground` ripple
+- 唤出式显隐：toggleBars 同时切顶/底栏，3s 自动隐藏（Handler+removeCallbacks，
+  onDestroy 清理）；content:// 来源隐藏删除/设背景按钮（SAF 删除与壁纸流不走本链路）
+- `attachBaseContext` 补 `DpiUtils.wrap`（原缺失，显示密度对本页无效）
+
+**顺带**：更新页发布日期空值兜底 `fmtPublishDate()`（3 处消费点 4680/4684/4922），
+清单缺 publishedAt 时显示"未知"。
+
+**验证**：assembleRelease 通过，6,826,398 字节，签名一致。
+**未实测**：设备上的唤出/自动隐藏、分享面板、回收站链路、壁纸生效。
+
+---
 ## 1.0.1（2026-11-05）已发布
 
 本批全部改动已汇总：
