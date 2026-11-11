@@ -4677,11 +4677,11 @@ public class FileManagerModule extends HyVqModule {
                     if (info.code <= curCode) {
                         tvState.setText("已是最新版本（最新 " + info.ver
                                 + " / versionCode " + info.code + "）\n"
-                                + "发布日期：" + info.date);
+                                + "发布日期：" + fmtPublishDate(info.date));
                     } else {
                         tvState.setText("发现新版本 " + info.ver
                                 + "（versionCode " + info.code + "）\n"
-                                + "发布日期：" + info.date);
+                                + "发布日期：" + fmtPublishDate(info.date));
                         showUpdateDetailDialog(info);
                     }
                 });
@@ -4733,6 +4733,11 @@ public class FileManagerModule extends HyVqModule {
      * 数组顺序可能因手工编辑而乱，取 max 才能保证「不管多少个版本
      * 都能拿到真正最新的那个」。</p>
      */
+    /** 发布日期显示用的空值兜底：清单缺 publishedAt（旧版手工编辑遗漏）时不再出现裸冒号 */
+    private static String fmtPublishDate(String date) {
+        return (date == null || date.isEmpty()) ? "未知" : date;
+    }
+
     private UpdateInfo fetchLatestUpdate() {
         for (String url : UPDATE_MANIFEST_URLS) {
             java.io.InputStream in = null;
@@ -4914,7 +4919,7 @@ public class FileManagerModule extends HyVqModule {
         TextView tv = new TextView(ctx);
         StringBuilder sb = new StringBuilder();
         sb.append("版本：").append(info.ver).append('\n');
-        sb.append("发布于：").append(info.date).append('\n');
+        sb.append("发布于：").append(fmtPublishDate(info.date)).append('\n');
         if (!info.body.isEmpty()) {
             sb.append('\n').append(stripMarkdown(info.body));
         }
@@ -6136,6 +6141,8 @@ public class FileManagerModule extends HyVqModule {
     // ── 背景图选择入口 ──
 
     private static final int REQ_PICK_BG = 0x4B47;   // 老式 startActivityForResult 通道（retired）
+    /** 图片查看器回传通道：删除已确认 / 设为背景已选择 */
+    private static final int REQ_VIEWER = 0x4B49;
     /** 系统照片选择器的启动器，由 MainActivity 注册后注入 */
     private Runnable bgPickerLauncher;
 
@@ -11990,7 +11997,7 @@ public class FileManagerModule extends HyVqModule {
     /** 内置图片查看器 */
     private void openImageViewer(String pathOrUri, String name, boolean isUri) {
         try {
-            // 内置图片查看器（双指缩放 / 拖动 / 双击还原 / 大图采样解码）
+            // 内置图片查看器（双指缩放 / 拖动 / 双击还原 / 大图采样解码 / 分享·删除·设为背景）
             Intent i = new Intent(ctx, com.aliya.hyfilemgr.ImageViewerActivity.class);
             if (isUri) {
                 i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_URI, pathOrUri);
@@ -11999,11 +12006,53 @@ public class FileManagerModule extends HyVqModule {
             }
             i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_TITLE, name);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            ctx.startActivity(i);
+            // 用 startActivityForResult：底部功能栏的「删除/设为背景」在查看器内
+            // 只做确认，真正的回收站删除与壁纸落盘都回传这里走既有链路
+            // （复用 REQ_SAF_MOUNT 同款 hostActivity 转发模式）。
+            // hostActivity 为 null（理论上不可能，模块就挂在 MainActivity 里）时退化为普通启动。
+            if (hostActivity != null) {
+                viewerPendingPath = pathOrUri;
+                viewerPendingIsUri = isUri;
+                hostActivity.startActivityForResult(i, REQ_VIEWER);
+            } else {
+                ctx.startActivity(i);
+            }
         } catch (Throwable t) {
             UiKit.alert(ctx, "无法打开图片查看器：" + t.getMessage());
         }
     }
+
+    /** 查看器回传处理：onActivityResult 由 MainActivity 转发过来 */
+    public void onViewerResult(int requestCode, int resultCode, android.content.Intent data) {
+        if (requestCode != REQ_VIEWER || resultCode != android.app.Activity.RESULT_OK
+                || data == null || viewerPendingPath == null) return;
+        String path = viewerPendingPath;
+        viewerPendingPath = null;
+        if (data.hasExtra(com.aliya.hyfilemgr.ImageViewerActivity.RESULT_ACTION_DELETE)) {
+            // 复用 confirmDelete：回收站机制、失败明细、reloadAll 全部现成。
+            // FileEntry 是 final 字段模型，用完整构造器；
+            // path 不在 /storage 下时 moveToTrash 会自动只保留文件名。
+            java.io.File f = new java.io.File(path);
+            FileEntry e = new com.aliya.hyfilemgr.access.FileEntry(
+                    path, f.getName(), com.aliya.hyfilemgr.access.FileEntry.Type.FILE,
+                    f.length(), f.lastModified(), false, null);
+            confirmDelete(java.util.Collections.singletonList(e));
+        } else if (data.hasExtra(com.aliya.hyfilemgr.ImageViewerActivity.RESULT_ACTION_WALLPAPER)) {
+            // 复用 setBackgroundFromUri：壁纸落盘/渲染/孤儿清理全部现成。
+            // pickForFmTheme 决定落到全局还是文件列表页（参数由查看器带上）。
+            pickForFmTheme = data.getBooleanExtra(
+                    com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_FOR_FM, false);
+            try {
+                setBackgroundFromUri(android.net.Uri.fromFile(new java.io.File(path)));
+            } finally {
+                pickForFmTheme = false;   // 用完复位，不影响设置页后续选图
+            }
+        }
+    }
+
+    /** 查看器回传时记住的源路径（onActivityResult 只带动作不带路径以外的上下文） */
+    private String viewerPendingPath;
+    private boolean viewerPendingIsUri;
 
     /** 用内置编辑器打开指定文件（先进入其所在目录再打开） */
     private void openInEditorByName(String pathOrUri, String name, boolean isUri) {

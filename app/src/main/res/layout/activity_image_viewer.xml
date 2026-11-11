@@ -14,7 +14,9 @@
         android:scaleType="matrix"
         android:contentDescription="图片" />
 
-    <!-- 顶部：返回 + 文件名 -->
+    <!-- 顶部：返回 + 文件名 + 尺寸。
+         暗色沉浸：半透明黑 scrim，状态栏透明后内容从状态栏后面开始，
+         padding 由代码按 insets 补（资源值在 ColorOS 上偏小，不能写死）。 -->
     <LinearLayout
         android:id="@+id/iv_top"
         android:layout_width="match_parent"
@@ -55,16 +57,92 @@
             android:textSize="12sp" />
     </LinearLayout>
 
-    <!-- 底部提示（点击画面可切换显隐） -->
-    <TextView
-        android:id="@+id/tv_iv_hint"
+    <!-- 底部功能栏：分享 / 删除 / 设为背景。
+         与顶栏同为「点击画面唤出、再点隐藏」，暗色沉浸同一套 scrim。
+         每项 = 图标 + 文字标签，竖排，横向均分。 -->
+    <LinearLayout
+        android:id="@+id/iv_bottom"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
         android:background="#99000000"
-        android:gravity="center"
-        android:paddingVertical="10dp"
-        android:text="双指缩放 · 拖动查看 · 双击还原"
-        android:textColor="#99FFFFFF"
-        android:textSize="12sp" />
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="10dp">
+
+        <LinearLayout
+            android:id="@+id/btn_iv_share"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:background="?attr/selectableItemBackground">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_share"
+                android:contentDescription="分享"
+                app:tint="#FFFFFF" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="分享"
+                android:textColor="#CCFFFFFF"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/btn_iv_delete"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:background="?attr/selectableItemBackground">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_trash"
+                android:contentDescription="删除"
+                app:tint="#FFFFFF" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="删除"
+                android:textColor="#CCFFFFFF"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/btn_iv_wallpaper"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:background="?attr/selectableItemBackground">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_img"
+                android:contentDescription="设为背景"
+                app:tint="#FFFFFF" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="设为背景"
+                android:textColor="#CCFFFFFF"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </LinearLayout>
 </FrameLayout>
