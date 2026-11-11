@@ -46,7 +46,15 @@
 清单缺 publishedAt 时显示"未知"。
 
 **验证**：assembleRelease 通过，6,826,398 字节，签名一致。
-**未实测**：设备上的唤出/自动隐藏、分享面板、回收站链路、壁纸生效。
+**实测崩溃 1 次（bbd78c1）**：`?attr/selectableItemBackground` 在查看器的
+framework 主题（Theme.Black.NoTitleBar.Fullscreen）下无法解析 →
+InflateException 打开图片即崩。修复 `4afc2b9`：换 `@drawable/bg_ripple`
+（纯 drawable 引用）。同型风险清理 `2f96584`：播放器音频占位
+`?attr/colorPrimary` 换静态色 + 删除两个含 ？attr 的零引用死布局。
+**教训**：查看器/播放器/Crash 页用的是 framework 主题，布局里
+禁用一切 `?attr/`（AppCompat attrs 由 AppCompat 主题提供，framework 主题没有）。
+全仓已 grep 清零（仅剩两个已删布局）。
+**未实测**：修复后的唤出/自动隐藏/分享/回收站/壁纸生效。
 
 ---
 ## 1.0.1（2026-11-05）已发布
