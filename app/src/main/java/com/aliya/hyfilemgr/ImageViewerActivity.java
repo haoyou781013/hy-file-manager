@@ -254,14 +254,14 @@ public class ImageViewerActivity extends Activity {
         title.setText("⚠ 删除确认");
         title.setTextSize(15);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
-        title.setTextColor(0xFF222222);
+        title.setTextColor(0xFFFFFFFF);
         title.setPadding(dp(4), 0, dp(4), dp(6));
         box.addView(title);
 
         TextView tv = new TextView(this);
         tv.setText("确定删除「" + name + "」吗？\n（将按主界面设置移入回收站或直接删除）");
         tv.setTextSize(13);
-        tv.setTextColor(0xFF444444);
+        tv.setTextColor(0xCCFFFFFF);
         tv.setPadding(dp(4), 0, dp(4), dp(8));
         box.addView(tv);
 
@@ -273,14 +273,14 @@ public class ImageViewerActivity extends Activity {
         android.widget.TextView cancel = new android.widget.TextView(this);
         cancel.setText("取消");
         cancel.setTextSize(14);
-        cancel.setTextColor(0xFF444444);
+        cancel.setTextColor(0xCCFFFFFF);
         cancel.setPadding(dp(16), dp(8), dp(16), dp(8));
         cancel.setOnClickListener(v -> UiKit.dismissWithAnim(dialog));
         android.widget.TextView ok = new android.widget.TextView(this);
         ok.setText("删除");
         ok.setTextSize(14);
         ok.setTypeface(null, android.graphics.Typeface.BOLD);
-        ok.setTextColor(0xFFD32F2F);
+        ok.setTextColor(0xFFFF6E6E);
         ok.setPadding(dp(16), dp(8), dp(16), dp(8));
         ok.setOnClickListener(v -> {
             UiKit.dismissWithAnim(dialog);
@@ -296,20 +296,54 @@ public class ImageViewerActivity extends Activity {
         dialog.show();
     }
 
-    /** 设为背景：先选目标（全局 / 文件列表页），确认后回传主界面 */
+    /** 设为背景：先选目标（全局 / 文件列表页），确认后回传主界面。
+     *
+     * <p>不用 AlertDialog：framework 主题下它是深底深字，且与玻璃弹窗风格不一致。
+     * 自建 glassDialog + 浅色文字，与暗色沉浸一致。</p> */
     private void askWallpaperTarget(String path) {
-        final String[] targets = {"全局背景", "文件列表页背景"};
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("设为背景图")
-                .setItems(targets, (dlg, which) -> {
-                    Intent data = new Intent();
-                    data.putExtra(RESULT_ACTION_WALLPAPER, path);
-                    data.putExtra(EXTRA_FOR_FM, which == 1);
-                    setResult(RESULT_OK, data);
-                    finish();
-                })
-                .setNegativeButton("取消", null)
-                .show();
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+
+        TextView title = new TextView(this);
+        title.setText("设为背景图");
+        title.setTextSize(15);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setTextColor(0xFFFFFFFF);
+        title.setPadding(dp(4), 0, dp(4), dp(6));
+        box.addView(title);
+
+        final android.app.Dialog dialog = UiKit.glassDialog(this, box);
+
+        String[] targets = {"全局背景", "文件列表页背景"};
+        for (int i = 0; i < targets.length; i++) {
+            final int which = i;
+            TextView row = new TextView(this);
+            row.setText(targets[i]);
+            row.setTextSize(14);
+            row.setTextColor(0xE6FFFFFF);
+            row.setPadding(dp(4), dp(12), dp(4), dp(12));
+            row.setBackgroundResource(com.aliya.hyfilemgr.R.drawable.bg_ripple);
+            row.setClickable(true);
+            row.setOnClickListener(v -> {
+                UiKit.dismissWithAnim(dialog);
+                Intent data = new Intent();
+                data.putExtra(RESULT_ACTION_WALLPAPER, path);
+                data.putExtra(EXTRA_FOR_FM, which == 1);
+                setResult(RESULT_OK, data);
+                finish();
+            });
+            box.addView(row);
+        }
+
+        TextView cancel = new TextView(this);
+        cancel.setText("取消");
+        cancel.setTextSize(13);
+        cancel.setTextColor(0x99FFFFFF);
+        cancel.setPadding(dp(4), dp(10), dp(4), dp(2));
+        cancel.setOnClickListener(v -> UiKit.dismissWithAnim(dialog));
+        box.addView(cancel);
+
+        dialog.show();
     }
 
     private String getMimeType(String name) {
