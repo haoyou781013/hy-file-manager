@@ -46,7 +46,7 @@
             android:src="@drawable/ic_audio"
             android:alpha="0.9"
             android:contentDescription="音频"
-            app:tint="?attr/colorPrimary" />
+            app:tint="#42A5F5" />
 
         <TextView
             android:id="@+id/tv_audio_name"
