@@ -24,7 +24,7 @@ android {
     // 密钥不在仓库内，从工作区 etc/keys 读取；缺失则回退 debug 签名（不影响本地编译）。
     signingConfigs {
         create("release") {
-            val ksDir = System.getenv("HY_KEYS_DIR") ?: "/sdcard/Android/haoyou781/etc/keys"
+            val ksDir = System.getenv("HY_KEYS_DIR") ?: "/root/keys"
             val ks = file("$ksDir/hyvq-release.jks")
             val passFile = file("$ksDir/.storepass")
             if (ks.exists() && passFile.exists()) {
