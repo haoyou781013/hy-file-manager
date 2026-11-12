@@ -84,6 +84,17 @@ EXTRA_LIST/EXTRA_INDEX 传入；content:// 或窗格不可用退化为单图。
 **坑**：View 没有 setMargins（必须 LayoutParams 上设）；View 没有 getDrawingColor
 （改用字段记录当前色）；模块非 Activity，getResources 要走 ctx.getResources()。
 
+**网格布局返工（62758c3，用户实测「一长条一张图」）**：GridLayout 的
+rowSpec/columnSpec 会覆盖逐格 LayoutParams 的高度约束，格子高度塌成原图比例。
+改用行式 LinearLayout：每行 3 格，cell = (内容宽 - 2gap)/3 固定方形，
+CENTER_CROP 填满裁切，末行补空 View 防拉宽。**教训：Android 上做等分网格
+优先行式 LinearLayout 或 RecyclerView+GridLayoutManager，不要手拼 GridLayout 规格。**
+
+**GIF 支持**：网格 gif 格子叠「GIF」角标（仍用首帧缩略图，网格内不解码动图）；
+查看器（API 28+）ImageDecoder.createSource + decodeDrawable 出
+AnimatedImageDrawable 播放，>屏幕 2 倍时 setTargetSampleSize(2) 降采样；
+信息位显示「宽 × 高 · GIF」；低版本/失败回退 BitmapFactory 静态首帧。
+
 **验证**：assembleRelease 通过；已静默装机。
 **未实测**：网格滚动性能（大目录）、chips 切换、路径增删后的刷新、点图进查看器。
 **实测崩溃 1 次（bbd78c1）**：`?attr/selectableItemBackground` 在查看器的
