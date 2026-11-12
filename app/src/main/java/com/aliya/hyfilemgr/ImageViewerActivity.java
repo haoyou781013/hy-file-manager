@@ -190,6 +190,10 @@ public class ImageViewerActivity extends Activity {
                 resetMatrix();
             });
         }).start();
+
+        // 初始态：白底+栏展开。之前漏调导致 XML 默认黑底+栏可见的混合态
+        //（用户实测：进入是黑底显示功能栏，点击后才恢复）。
+        setBarsVisible(true);
     }
 
     @Override protected void onDestroy() {
@@ -208,6 +212,9 @@ public class ImageViewerActivity extends Activity {
         setBarsVisible(!barsVisible);
     }
 
+    /** 背景色过渡时长（毫秒）：栏显隐同步的整页背景渐变 */
+    private static final long BG_ANIM_MS = 220;
+
     private void setBarsVisible(boolean show) {
         barsVisible = show;
         int vis = show ? View.VISIBLE : View.GONE;
@@ -217,7 +224,6 @@ public class ImageViewerActivity extends Activity {
         // 进入时默认栏展开+白底，点击画面后切黑沉浸。
         // 白底时栏背景透明（白透出来）、图标文字深色；黑底时栏用半透明黑 scrim、文字浅色。
         View root = findViewById(com.aliya.hyfilemgr.R.id.iv_root);
-        root.setBackgroundColor(show ? 0xFFFFFFFF : 0xFF000000);
         ImageView backBtn = findViewById(com.aliya.hyfilemgr.R.id.btn_iv_back);
         TextView title = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_title);
         TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
@@ -230,6 +236,17 @@ public class ImageViewerActivity extends Activity {
         title.setTextColor(mainText);
         info.setTextColor(subText);
         tintBottomButtons(mainText, subText);
+        // 背景渐变过渡：硬切会闪一下，ArgbEvaluator 平滑变白/变黑。
+        // 首次调用（onCreate 尾部）不播动画，直接落位。
+        android.animation.ValueAnimator bgAnim = android.animation.ValueAnimator.ofObject(
+                new android.animation.ArgbEvaluator(), currentBg, show ? 0xFFFFFFFF : 0xFF000000);
+        bgAnim.setDuration(firstApply ? 0 : BG_ANIM_MS);
+        bgAnim.addUpdateListener(a -> {
+            currentBg = (int) a.getAnimatedValue();
+            root.setBackgroundColor(currentBg);
+        });
+        bgAnim.start();
+        firstApply = false;
         // 状态栏底色跟随：白底时状态栏也白、图标深色；黑底时透明、图标浅色。
         android.view.Window w = getWindow();
         w.setStatusBarColor(show ? 0xFFFFFFFF : 0x00000000);
@@ -238,6 +255,11 @@ public class ImageViewerActivity extends Activity {
         hideHandler.removeCallbacks(autoHide);
         if (show) hideHandler.postDelayed(autoHide, AUTO_HIDE_MS);
     }
+
+    /** onCreate 首次落位不播动画 */
+    private boolean firstApply = true;
+    /** 当前背景色（ArgbEvaluator 动画的起点） */
+    private int currentBg = 0xFF000000;
 
     /** 底部栏三按钮图标+文字换色（分享/删除/设为背景） */
     private void tintBottomButtons(int iconColor, int textColor) {
