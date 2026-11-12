@@ -86,13 +86,23 @@ public final class FeedbackSender {
      * @param ctx    用于采集环境信息（可传 null 跳过）
      */
     public static Result submit(Context ctx, int type, String text) {
+        return submit(ctx, type, text, null);
+    }
+
+    /**
+     * 带技术附件的提交（崩溃报告用）。
+     *
+     * @param techDetail 附加的技术细节（崩溃堆栈），会折叠在正文末尾。
+     *                   传 null 与三参版本等价。
+     */
+    public static Result submit(Context ctx, int type, String text, String techDetail) {
         if (text == null || text.trim().isEmpty()) {
             return new Result(false, "内容不能为空", 0);
         }
         HttpURLConnection conn = null;
         try {
             String title = typeTitle(type) + firstLine(text);
-            String body = buildBody(ctx, type, text);
+            String body = buildBody(ctx, type, text, techDetail);
 
             JSONObject payload = new JSONObject();
             payload.put("title", title);
@@ -155,8 +165,8 @@ public final class FeedbackSender {
         return s;
     }
 
-    /** 正文 = 用户内容 + 折叠的环境信息（便于定位，用户不用手填） */
-    private static String buildBody(Context ctx, int type, String text) {
+    /** 正文 = 用户内容 + 折叠的环境信息（便于定位，用户不用手填）+ 可选技术细节 */
+    private static String buildBody(Context ctx, int type, String text, String techDetail) {
         StringBuilder sb = new StringBuilder();
         sb.append(text.trim()).append("\n\n");
         sb.append("---\n\n");
@@ -174,6 +184,16 @@ public final class FeedbackSender {
                 "yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(new java.util.Date()))
                 .append(" |\n");
         sb.append("\n</details>\n");
+
+        // 技术细节（崩溃堆栈）：必须折叠，且用代码围栏——
+        // 堆栈里的 < > 会被 Markdown 当标签吃掉，围栏能保证原样展示
+        if (techDetail != null && !techDetail.trim().isEmpty()) {
+            String t = techDetail.trim();
+            // GitHub issue 正文上限 65536 字符，留出余量截断
+            if (t.length() > 50000) t = t.substring(0, 50000) + "\n…（已截断）";
+            sb.append("\n<details><summary>崩溃堆栈</summary>\n\n");
+            sb.append("```\n").append(t).append("\n```\n\n</details>\n");
+        }
         return sb.toString();
     }
 

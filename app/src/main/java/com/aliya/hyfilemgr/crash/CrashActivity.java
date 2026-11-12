@@ -27,8 +27,9 @@ import java.util.Locale;
 /**
  * 崩溃展示页。
  *
- * <p>由 {@link CrashHandler} 冷启动；展示完整崩溃报告，右下角提供三个操作：</p>
+ * <p>由 {@link CrashHandler} 冷启动；展示完整崩溃报告，右下角提供四个操作：</p>
  * <ul>
+ *   <li><b>反馈</b>：一键把崩溃报告提交到开发者的 GitHub Issues（无需注册账号）</li>
  *   <li><b>复制</b>：整份报告写入剪贴板</li>
  *   <li><b>导出</b>：写到公共「下载/HY文件管理-崩溃日志/」，无需存储权限（Android 10+ 走 MediaStore）</li>
  *   <li><b>重启</b>：直接重新拉起 App</li>
@@ -124,11 +125,122 @@ public class CrashActivity extends Activity {
         View spacer = new View(this);
         btns.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
 
+        btns.addView(makeBtn("反馈", 0xFF6A3FB5, v -> submitFeedback()));
         btns.addView(makeBtn("复制", 0xFF2A3340, v -> copyReport()));
         btns.addView(makeBtn("导出", 0xFF2A3340, v -> exportReport()));
         btns.addView(makeBtn("重启", 0xFF1E88E5, v -> restartApp()));
 
         return root;
+    }
+
+    // ── 反馈崩溃 ──
+
+    /**
+     * 一键把崩溃报告提交到 GitHub Issues。
+     *
+     * <p><b>为什么崩溃页要直接给反馈入口</b>：用户在崩溃页时是最有动力反馈的时刻，
+     * 让他先去「设置→问题反馈」再手动粘贴堆栈，绝大多数人不会做。
+     * 这里直接把完整报告作为「崩溃堆栈」附件提交，开发者拿到一手信息。</p>
+     *
+     * <p><b>隐私</b>：报告里只有堆栈、设备与系统信息，可能包含用户当时打开的
+     * 文件路径（异常堆栈会带 path）。因此提交前弹窗明确告知并让用户确认，
+     * 同时提供「先看内容」（就是本页正文）。</p>
+     */
+    private void submitFeedback() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+
+        TextView title = new TextView(this);
+        title.setText("反馈此崩溃");
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        title.setTypeface(null, Typeface.BOLD);
+        title.setTextColor(0xFFE8ECF3);
+        title.setPadding(dp(4), 0, dp(4), dp(6));
+        box.addView(title);
+
+        TextView tip = new TextView(this);
+        tip.setText("将把崩溃堆栈、设备与系统信息提交到开发者的 GitHub Issues，无需注册账号。\n\n"
+                + "请注意：崩溃堆栈可能包含你当时打开的文件路径。若介意，请先点「复制」自行去除后再反馈。"
+                + "\n\n（可选）补充说明发生了什么：");
+        tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tip.setTextColor(0xFFC8D0DC);
+        tip.setLineSpacing(dp(2), 1f);
+        tip.setPadding(dp(4), 0, dp(4), dp(8));
+        box.addView(tip);
+
+        final android.widget.EditText input = new android.widget.EditText(this);
+        input.setHint("例如：打开某个文件夹时闪退");
+        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        input.setTextColor(0xFFE8ECF3);
+        input.setHintTextColor(0xFF7A8496);
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setCornerRadius(dp(10));
+        bg.setColor(0xFF1B1F26);
+        bg.setStroke(dp(1), 0xFF2E3742);
+        input.setBackground(bg);
+        input.setPadding(dp(12), dp(10), dp(12), dp(10));
+        input.setMinLines(2);
+        input.setMaxLines(4);
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        box.addView(input);
+
+        final android.app.Dialog dialog = new android.app.Dialog(this);
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE);
+        dialog.setContentView(box);
+        if (dialog.getWindow() != null) {
+            android.graphics.drawable.GradientDrawable panelBg = new android.graphics.drawable.GradientDrawable();
+            panelBg.setCornerRadius(dp(18));
+            panelBg.setColor(0xFF20262E);
+            box.setBackground(panelBg);
+            box.setPadding(dp(18), dp(18), dp(18), dp(18));
+            dialog.getWindow().setBackgroundDrawable(
+                    new android.graphics.drawable.ColorDrawable(0x00000000));
+            dialog.getWindow().setLayout(
+                    (int) (getResources().getDisplayMetrics().widthPixels * 0.9f),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+
+        LinearLayout btns = new LinearLayout(this);
+        btns.setGravity(Gravity.END);
+        TextView cancel = makeBtn("取消", 0xFF3A4048, v -> dialog.dismiss());
+        final TextView ok = makeBtn("提交", 0xFF6A3FB5, null);
+        ok.setOnClickListener(v -> {
+            final String extra = input.getText() == null ? ""
+                    : input.getText().toString().trim();
+            ok.setEnabled(false);
+            ok.setAlpha(0.5f);
+            ok.setText("提交中…");
+            new Thread(() -> {
+                String userText = extra.isEmpty() ? "打开应用后发生崩溃，详情见下方堆栈。" : extra;
+                final com.aliya.hyfilemgr.feedback.FeedbackSender.Result r =
+                        com.aliya.hyfilemgr.feedback.FeedbackSender.submit(
+                                this, com.aliya.hyfilemgr.feedback.FeedbackSender.TYPE_CRASH,
+                                userText, report);
+                runOnUiThread(() -> {
+                    ok.setEnabled(true);
+                    ok.setAlpha(1f);
+                    ok.setText("提交");
+                    dialog.dismiss();
+                    if (r.ok) {
+                        toast("已提交，编号 #" + r.issueNumber + "，感谢反馈！");
+                    } else {
+                        toast("提交失败：" + r.message + "\n可点「复制」后到网页反馈");
+                    }
+                });
+            }, "HyCrashFeedback").start();
+        });
+        LinearLayout.LayoutParams okLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        okLp.leftMargin = dp(8);
+        btns.addView(cancel);
+        btns.addView(ok, okLp);
+        LinearLayout.LayoutParams btnsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        btnsLp.topMargin = dp(12);
+        box.addView(btns, btnsLp);
+
+        dialog.show();
     }
 
     /** 胶囊按钮 */
