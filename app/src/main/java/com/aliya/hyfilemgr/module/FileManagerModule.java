@@ -4373,6 +4373,9 @@ public class FileManagerModule extends HyVqModule {
         galleryEmbedView = new LinearLayout(ctx);
         galleryEmbedView.setOrientation(LinearLayout.VERTICAL);
         galleryEmbedView.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        // 与 settingsEmbedView 一致：先隐藏，由 setContentMode 决定何时显示。
+        // 不设 GONE 会直接叠在文件列表上盖住并拦截点击。
+        galleryEmbedView.setVisibility(View.GONE);
 
         // 路径 chips：横向滚动，点击切换扫描目录
         android.widget.HorizontalScrollView chipsScroll = new android.widget.HorizontalScrollView(ctx);
@@ -6040,6 +6043,8 @@ public class FileManagerModule extends HyVqModule {
             // 容器恒透明：上面的卡片自己带 cardSurface 底色，
             // 容器再铺一层不透明色会把卡片的层级盖平（见 syncContentTransparency 的说明）
             settingsEmbedView.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+            // 创建时先隐藏，由 setContentMode 决定何时显示（幂等）。
+            settingsEmbedView.setVisibility(View.GONE);
             android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
             sv.setFillViewport(true);
             settingsEmbedContent = new LinearLayout(ctx);
@@ -6359,25 +6364,26 @@ public class FileManagerModule extends HyVqModule {
 
         // ── 内容区切换：加过渡 ──
         // 旧实现直接 VISIBLE/GONE，切设置页和返回文件列表都是"啪"一下换掉。
-        // 现在：进来的一层从「淡+轻微位移」到正常，出去的一层直接隐藏。
+        // 现在：进来的一层从「淡+轻微位移」到正常，出去的直接隐藏。
         // 不用同时双向动画 —— 两层叠加时如果都做 alpha，中间会出现
         // 两页半透明重叠的糊状帧，比硬切还难看。
+        //
+        // ⚠ 这里不靠 prev 推断「该隐藏谁」。早前版本写的是
+        //   outView = fileVisible ? (prev==SETTINGS ? settingsEmbedView : ...) : ...
+        // 一旦 prev 与实际可见性不同步（例如从 GALLERY 直接回 FILES、或
+        // 某次切换没走本方法），就会漏隐藏一层 —— 表现为「文件列表嵌在设置项
+        // 下方且点不动」（设置页仍在 contentWrap 里叠着，拦截了触摸）。
+        // 现在改为：**三个视图里非目标的一律隐藏**，幂等且不依赖历史状态。
         final View inView = fileVisible ? fileContentView
                 : (settingsVisible ? settingsEmbedView : galleryEmbedView);
-        final View outView;
-        if (fileVisible) {
-            outView = settingsVisible != false && prev == ContentMode.SETTINGS
-                    ? settingsEmbedView : (prev == ContentMode.GALLERY ? galleryEmbedView : null);
-        } else if (settingsVisible) {
-            outView = prev == ContentMode.GALLERY ? galleryEmbedView : fileContentView;
-        } else {
-            outView = prev == ContentMode.SETTINGS ? settingsEmbedView : fileContentView;
-        }
-        if (outView != null) {
-            outView.animate().cancel();
-            outView.setVisibility(View.GONE);
-            outView.setAlpha(1f);
-            outView.setTranslationY(0f);
+        final View[] allViews = {fileContentView, settingsEmbedView, galleryEmbedView};
+        for (View v : allViews) {
+            if (v == null || v == inView) continue;
+            v.animate().cancel();
+            v.setVisibility(View.GONE);
+            v.setAlpha(1f);
+            v.setTranslationX(0f);
+            v.setTranslationY(0f);
         }
         if (inView != null) {
             inView.animate().cancel();
