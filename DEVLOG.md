@@ -54,6 +54,12 @@ InflateException 打开图片即崩。修复 `4afc2b9`：换 `@drawable/bg_rippl
 **教训**：查看器/播放器/Crash 页用的是 framework 主题，布局里
 禁用一切 `?attr/`（AppCompat attrs 由 AppCompat 主题提供，framework 主题没有）。
 全仓已 grep 清零（仅剩两个已删布局）。
+**实测问题 2（3491731）**：弹窗黑底黑字 —— 删除确认框文字按浅色面板写的深色
+（0xFF222222 等），但 glassDialog 面板在本 App 暗色配置下是深底 →
+不可见。全部改浅色系（白/半透明白 + 亮红删除钮）。设为背景原用
+AlertDialog（framework 主题下同样深底深字）→ 改自建 glassDialog。
+**综合教训**：查看器内自建 UI 一律用浅色字（暗色沉浸风格），
+不要用 AlertDialog（framework 主题下深底深字），不要假设面板底色是浅色。
 **未实测**：修复后的唤出/自动隐藏/分享/回收站/壁纸生效。
 
 ---
