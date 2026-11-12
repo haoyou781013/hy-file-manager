@@ -2639,6 +2639,11 @@ public class FileManagerModule extends HyVqModule {
             }
             return true;
         }
+        // 4b. 相册页 → 文件列表
+        if (contentMode == ContentMode.GALLERY) {
+            setContentMode(ContentMode.FILES);
+            return true;
+        }
         // 5. 虚拟路径（压缩包内 / 回收站）→ 逐级返回
         if (active != null && active.path != null) {
             String cur = active.path;
@@ -4095,6 +4100,10 @@ public class FileManagerModule extends HyVqModule {
                 "隐藏文件 · 缩略图 · 排序方式", R.drawable.ic_folder, v -> {
                     showInSettingsDialog("文件管理", this::buildFileSettings);
                 });
+        addSettingsRow(box, "图片查看器",
+                "相册扫描路径管理", R.drawable.ic_img, v -> {
+                    showGallerySettings();
+                });
 
         // ── 软件 ──
         box.addView(sectionHeaderInCard("软件"));
@@ -4112,6 +4121,395 @@ public class FileManagerModule extends HyVqModule {
                     showInSettingsDialog("关于", this::showAboutPageBody);
                 });
         return box;
+    }
+
+    // ══════════ 相册浏览页 ══════════
+
+    /** 相册扫描路径持久化键（换行分隔） */
+    private static final String PREF_GALLERY_PATHS = "gallery_scan_paths";
+    /** 相册页视图（与 settingsEmbedView 同级，动态创建） */
+    private LinearLayout galleryEmbedView;
+    /** 网格内容容器（切扫描路径/重新扫描时重建） */
+    private LinearLayout galleryContent;
+    /** 扫描路径列表（内存态，改后落盘） */
+    private java.util.ArrayList<String> galleryScanPaths;
+    /** 网格当前展示的目录（点图进查看器时传图集用） */
+    private String galleryCurDir;
+
+    /** 默认扫描路径（存在才进列表；首次启动初始化用） */
+    private static String[] defaultGalleryPaths() {
+        String root = android.os.Environment.getExternalStorageDirectory().getAbsolutePath();
+        return new String[]{
+                root + "/DCIM/Camera", root + "/DCIM",
+                root + "/Pictures", root + "/Pictures/Screenshots",
+                root + "/Download"};
+    }
+
+    /** 读扫描路径（无持久化数据时初始化默认值并落盘） */
+    private java.util.ArrayList<String> loadGalleryPaths() {
+        if (galleryScanPaths != null) return galleryScanPaths;
+        galleryScanPaths = new java.util.ArrayList<>();
+        String saved = fmPrefs().getString(PREF_GALLERY_PATHS, "");
+        if (saved.isEmpty()) {
+            for (String p : defaultGalleryPaths()) {
+                if (new File(p).isDirectory()) galleryScanPaths.add(p);
+            }
+            saveGalleryPaths();
+        } else {
+            for (String p : saved.split("\n")) {
+                if (!p.trim().isEmpty()) galleryScanPaths.add(p.trim());
+            }
+        }
+        return galleryScanPaths;
+    }
+
+    private void saveGalleryPaths() {
+        if (galleryScanPaths == null) return;
+        fmPrefs().edit().putString(PREF_GALLERY_PATHS,
+                android.text.TextUtils.join("\n", galleryScanPaths)).apply();
+    }
+
+    /** 侧边栏/设置页入口：打开相册页（首个扫描路径） */
+    private void openGallery() {
+        java.util.ArrayList<String> paths = loadGalleryPaths();
+        String initial = paths.isEmpty()
+                ? android.os.Environment.getExternalStorageDirectory().getAbsolutePath()
+                : paths.get(0);
+        if (galleryEmbedView == null) {
+            buildGalleryView();
+            contentWrapRef.addView(galleryEmbedView, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT));
+        }
+        scanGallery(initial);
+        setContentMode(ContentMode.GALLERY);
+    }
+
+    /** 相册页骨架：路径 chips 行 + 网格区（滚动容器） */
+    private void buildGalleryView() {
+        galleryEmbedView = new LinearLayout(ctx);
+        galleryEmbedView.setOrientation(LinearLayout.VERTICAL);
+        galleryEmbedView.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+
+        // 路径 chips：横向滚动，点击切换扫描目录
+        android.widget.HorizontalScrollView chipsScroll = new android.widget.HorizontalScrollView(ctx);
+        chipsScroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout chips = new LinearLayout(ctx);
+        chips.setOrientation(LinearLayout.HORIZONTAL);
+        chips.setPadding(dp(10), dp(8), dp(10), dp(2));
+        chipsScroll.addView(chips, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT));
+        galleryEmbedView.addView(chipsScroll, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        galleryChipsRow = chips;
+
+        // 网格滚动容器
+        android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+        sv.setFillViewport(true);
+        galleryContent = new LinearLayout(ctx);
+        galleryContent.setOrientation(LinearLayout.VERTICAL);
+        galleryContent.setPadding(dp(8), dp(4), dp(8), dp(12));
+        sv.addView(galleryContent, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        galleryEmbedView.addView(sv, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+    }
+
+    private LinearLayout galleryChipsRow;
+
+    /** 刷新路径 chips 行 */
+    private void refreshGalleryChips(final String current) {
+        galleryChipsRow.removeAllViews();
+        for (final String p : loadGalleryPaths()) {
+            TextView chip = new TextView(ctx);
+            chip.setText(new File(p).getName());
+            chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            chip.setPadding(dp(12), dp(6), dp(12), dp(6));
+            chip.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            ((LinearLayout.LayoutParams) chip.getLayoutParams()).setMargins(0, 0, dp(6), 0);
+            boolean active = p.equals(current);
+            chip.setTextColor(UiKit.color(ctx,
+                    active ? com.google.android.material.R.attr.colorOnPrimary
+                           : com.google.android.material.R.attr.colorOnSurfaceVariant));
+            chip.setBackground(UiKit.rounded(ctx, 999,
+                    UiKit.color(ctx, active ? com.google.android.material.R.attr.colorPrimary
+                            : com.google.android.material.R.attr.colorSurfaceContainerHigh),
+                    active ? 0 : UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
+            chip.setClickable(true);
+            chip.setOnClickListener(v -> scanGallery(p));
+            galleryChipsRow.addView(chip);
+        }
+        // 末尾「+」chip：添加扫描路径（跳设置弹窗）
+        TextView add = new TextView(ctx);
+        add.setText("＋");
+        add.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        add.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary));
+        add.setPadding(dp(10), dp(6), dp(10), dp(6));
+        add.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        ((LinearLayout.LayoutParams) add.getLayoutParams()).setMargins(dp(2), 0, dp(6), 0);
+        add.setBackground(UiKit.rounded(ctx, 999,
+                UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHigh),
+                UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
+        add.setClickable(true);
+        add.setOnClickListener(v -> showGallerySettings());
+        galleryChipsRow.addView(add);
+    }
+
+    /** 扫描指定目录（一层）并重建网格：目录分组 → 组内缩略图网格 */
+    private void scanGallery(String rootPath) {
+        galleryCurDir = rootPath;
+        refreshGalleryChips(rootPath);
+        galleryContent.removeAllViews();
+
+        final TextView loading = new TextView(ctx);
+        loading.setText("扫描中…");
+        loading.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        loading.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        loading.setGravity(Gravity.CENTER);
+        loading.setPadding(0, dp(24), 0, dp(24));
+        galleryContent.addView(loading);
+
+        new Thread(() -> {
+            File root = new File(rootPath);
+            // 目录分组：本层图片一组 + 每个子目录一组（一层为限，不做全盘递归）
+            java.util.LinkedHashMap<String, java.util.ArrayList<File>> groups = new java.util.LinkedHashMap<>();
+            java.util.ArrayList<File> own = new java.util.ArrayList<>();
+            File[] kids = root.listFiles();
+            if (kids != null) {
+                java.util.Arrays.sort(kids, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+                for (File f : kids) {
+                    if (f.isDirectory()) {
+                        // 子目录：只收直接子层图片
+                        File[] sub = f.listFiles();
+                        java.util.ArrayList<File> subImgs = new java.util.ArrayList<>();
+                        if (sub != null) {
+                            java.util.Arrays.sort(sub, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+                            for (File s : sub) {
+                                if (s.isFile() && com.aliya.hyfilemgr.filemgr.ThumbLoader.isImage(s.getName().toLowerCase())) {
+                                    subImgs.add(s);
+                                }
+                            }
+                        }
+                        if (!subImgs.isEmpty()) groups.put(f.getName(), subImgs);
+                    } else if (com.aliya.hyfilemgr.filemgr.ThumbLoader.isImage(f.getName().toLowerCase())) {
+                        own.add(f);
+                    }
+                }
+            }
+            if (!own.isEmpty()) groups.put("", own);
+            final java.util.LinkedHashMap<String, java.util.ArrayList<File>> fGroups = groups;
+            handler.post(() -> {
+                if (contentMode != ContentMode.GALLERY || !rootPath.equals(galleryCurDir)) return;
+                galleryContent.removeAllViews();
+                if (fGroups.isEmpty()) {
+                    TextView empty = new TextView(ctx);
+                    empty.setText("此路径下没有图片\n可在下方 ＋ 或 设置 中添加其它扫描路径");
+                    empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                    empty.setTextColor(UiKit.color(ctx,
+                            com.google.android.material.R.attr.colorOnSurfaceVariant));
+                    empty.setGravity(Gravity.CENTER);
+                    empty.setPadding(0, dp(32), 0, dp(32));
+                    galleryContent.addView(empty);
+                    return;
+                }
+                for (java.util.Map.Entry<String, java.util.ArrayList<File>> g : fGroups.entrySet()) {
+                    String dir = g.getKey().isEmpty() ? rootPath
+                            : new File(rootPath, g.getKey()).getAbsolutePath();
+                    addGalleryGroup(g.getKey(), dir, g.getValue());
+                }
+            });
+        }, "HyGalleryScan").start();
+    }
+
+    /** 一组图片：组标题（子目录名）+ 缩略图网格 */
+    private void addGalleryGroup(String label, final String dir, java.util.ArrayList<File> imgs) {
+        if (label != null && !label.isEmpty()) {
+            TextView head = new TextView(ctx);
+            head.setText(label + "（" + imgs.size() + "）");
+            head.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            head.setTypeface(null, android.graphics.Typeface.BOLD);
+            head.setTextColor(UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorOnSurfaceVariant));
+            head.setPadding(dp(6), dp(10), dp(6), dp(4));
+            galleryContent.addView(head);
+        }
+
+        // 网格：3 列，正方形单元格
+        android.widget.GridLayout grid = new android.widget.GridLayout(ctx);
+        int col = 3;
+        grid.setColumnCount(col);
+        int side = (ctx.getResources().getDisplayMetrics().widthPixels - dp(28)) / col;
+
+        final java.util.ArrayList<String> paths = new java.util.ArrayList<>();
+        for (File f : imgs) paths.add(f.getAbsolutePath());
+
+        int index = 0;
+        for (final File f : imgs) {
+            final int pos = index++;
+            android.widget.FrameLayout cell = new android.widget.FrameLayout(ctx);
+            android.widget.ImageView iv = new android.widget.ImageView(ctx);
+            iv.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
+            iv.setBackgroundColor(UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorSurfaceContainerHigh));
+            // 预设类型图标：ThumbLoader 成功后替换，失败/加载中不至于空白
+            iv.setImageResource(R.drawable.ic_img);
+            com.aliya.hyfilemgr.filemgr.ThumbLoader.load(ctx, iv,
+                    f.getAbsolutePath(), f.getName(), f.lastModified());
+            cell.addView(iv, new android.widget.FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            iv.setClickable(true);
+            iv.setOnClickListener(v -> {
+                // 进入查看器：把本组目录列表作为图集传入，左右滑只在该目录内切
+                openImageViewerFromGallery(dir, paths, pos);
+            });
+            // 网格布局：先建参数（带边距与规格）再 setLayoutParams
+            android.widget.GridLayout.LayoutParams lp = new android.widget.GridLayout.LayoutParams();
+            lp.width = side;
+            lp.height = side;
+            lp.setMargins(dp(1), dp(1), dp(1), dp(1));
+            android.widget.GridLayout.Spec row = android.widget.GridLayout.spec(
+                    pos / col, android.widget.GridLayout.FILL, 1f);
+            android.widget.GridLayout.Spec colSpec = android.widget.GridLayout.spec(
+                    pos % col, android.widget.GridLayout.FILL, 1f);
+            lp.rowSpec = row;
+            lp.columnSpec = colSpec;
+            cell.setLayoutParams(lp);
+            grid.addView(cell);
+        }
+        galleryContent.addView(grid, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    /** 从相册页点图进查看器：目录图片列表作图集（左右滑只在当前目录内） */
+    private void openImageViewerFromGallery(final String dir, java.util.ArrayList<String> paths, int pos) {
+        try {
+            Intent i = new Intent(ctx, com.aliya.hyfilemgr.ImageViewerActivity.class);
+            i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_PATH, paths.get(pos));
+            i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_TITLE,
+                    new File(paths.get(pos)).getName());
+            if (paths.size() > 1) {
+                i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_LIST,
+                        paths.toArray(new String[0]));
+                i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_INDEX, pos);
+            }
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (hostActivity != null) {
+                viewerPendingPath = paths.get(pos);
+                hostActivity.startActivityForResult(i, REQ_VIEWER);
+            } else {
+                ctx.startActivity(i);
+            }
+        } catch (Throwable t) {
+            UiKit.alert(ctx, "无法打开图片查看器：" + t.getMessage());
+        }
+    }
+
+    /** 相册扫描路径设置弹窗（侧边栏 ＋ 与设置页共用）：列表增删 + 常用路径快捷加 */
+    private void showGallerySettings() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sectionHeaderInCard("图片查看器 · 扫描路径"));
+
+        TextView hint = new TextView(ctx);
+        hint.setText("相册页按这些路径扫描图片（含一层子目录）。\n点路径删除，点下方快捷项添加。");
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hint.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        hint.setPadding(dp(4), 0, dp(4), dp(6));
+        box.addView(hint);
+
+        // 路径行容器：重建式刷新
+        LinearLayout list = new LinearLayout(ctx);
+        list.setOrientation(LinearLayout.VERTICAL);
+        box.addView(list);
+
+        android.app.Dialog d = UiKit.glassDialog(ctx, box);
+
+        // lambda 内递归引用自身 → 用数组容器绕开 final 限制
+        final Runnable[] rebuildHolder = new Runnable[1];
+        rebuildHolder[0] = () -> {
+            list.removeAllViews();
+            for (final String p : loadGalleryPaths()) {
+                TextView row = new TextView(ctx);
+                row.setText(p.replace(
+                        android.os.Environment.getExternalStorageDirectory().getAbsolutePath(), "内部存储"));
+                row.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                row.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+                row.setPadding(dp(8), dp(10), dp(8), dp(10));
+                row.setBackgroundResource(com.aliya.hyfilemgr.R.drawable.bg_ripple);
+                row.setClickable(true);
+                row.setOnClickListener(v -> {
+                    loadGalleryPaths().remove(p);
+                    saveGalleryPaths();
+                    UiKit.toast(ctx, "已删除");
+                    rebuildHolder[0].run();
+                });
+                list.addView(row);
+            }
+            if (loadGalleryPaths().isEmpty()) {
+                TextView empty = new TextView(ctx);
+                empty.setText("（无扫描路径）");
+                empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                empty.setTextColor(UiKit.color(ctx,
+                        com.google.android.material.R.attr.colorOnSurfaceVariant));
+                empty.setPadding(dp(8), dp(8), dp(8), dp(8));
+                list.addView(empty);
+            }
+        };
+        rebuildHolder[0].run();
+
+        // 常用路径快捷添加：存在且未在列表中才显示
+        LinearLayout quick = new LinearLayout(ctx);
+        quick.setOrientation(LinearLayout.VERTICAL);
+        String root = android.os.Environment.getExternalStorageDirectory().getAbsolutePath();
+        String[][] quickPaths = {
+                {"DCIM（相机）", root + "/DCIM"},
+                {"DCIM/Camera", root + "/DCIM/Camera"},
+                {"Pictures", root + "/Pictures"},
+                {"Screenshots（截图）", root + "/Pictures/Screenshots"},
+                {"Download（下载）", root + "/Download"}};
+        for (final String[] qp : quickPaths) {
+            if (!new File(qp[1]).isDirectory()) continue;
+            if (loadGalleryPaths().contains(qp[1])) continue;
+            TextView row = new TextView(ctx);
+            row.setText("＋ " + qp[0]);
+            row.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            row.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary));
+            row.setPadding(dp(8), dp(10), dp(8), dp(10));
+            row.setBackgroundResource(com.aliya.hyfilemgr.R.drawable.bg_ripple);
+            row.setClickable(true);
+            row.setOnClickListener(v -> {
+                loadGalleryPaths().add(qp[1]);
+                saveGalleryPaths();
+                UiKit.toast(ctx, "已添加 " + qp[0]);
+                rebuildHolder[0].run();
+            });
+            quick.addView(row);
+        }
+        box.addView(quick);
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        TextView done = new TextView(ctx);
+        done.setText("完成");
+        done.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        done.setTypeface(null, android.graphics.Typeface.BOLD);
+        done.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary));
+        done.setPadding(dp(16), dp(8), dp(8), dp(8));
+        done.setOnClickListener(v -> {
+            UiKit.dismissWithAnim(d);
+            // 扫描路径变化后刷新相册页（若已打开）
+            if (contentMode == ContentMode.GALLERY && galleryCurDir != null) {
+                scanGallery(galleryCurDir);
+            }
+        });
+        btns.addView(done);
+        box.addView(btns);
+        d.show();
     }
 
     // ══════════ 存储管理 ══════════
@@ -5404,7 +5802,7 @@ public class FileManagerModule extends HyVqModule {
 
 
     /** 当前内容视图：三者互斥 */
-    private enum ContentMode { FILES, SETTINGS }
+    private enum ContentMode { FILES, SETTINGS, GALLERY }
 
     private ContentMode contentMode = ContentMode.FILES;
 
@@ -5423,6 +5821,7 @@ public class FileManagerModule extends HyVqModule {
 
         boolean fileVisible = target == ContentMode.FILES;
         boolean settingsVisible = target == ContentMode.SETTINGS;
+        boolean galleryVisible = target == ContentMode.GALLERY;
 
         // ── 内容区切换：加过渡 ──
         // 旧实现直接 VISIBLE/GONE，切设置页和返回文件列表都是"啪"一下换掉。
@@ -5430,9 +5829,16 @@ public class FileManagerModule extends HyVqModule {
         // 不用同时双向动画 —— 两层叠加时如果都做 alpha，中间会出现
         // 两页半透明重叠的糊状帧，比硬切还难看。
         final View inView = fileVisible ? fileContentView
-                : (settingsVisible ? settingsEmbedView : null);
-        final View outView = fileVisible ? settingsEmbedView
-                : (settingsVisible ? fileContentView : null);
+                : (settingsVisible ? settingsEmbedView : galleryEmbedView);
+        final View outView;
+        if (fileVisible) {
+            outView = settingsVisible != false && prev == ContentMode.SETTINGS
+                    ? settingsEmbedView : (prev == ContentMode.GALLERY ? galleryEmbedView : null);
+        } else if (settingsVisible) {
+            outView = prev == ContentMode.GALLERY ? galleryEmbedView : fileContentView;
+        } else {
+            outView = prev == ContentMode.SETTINGS ? settingsEmbedView : fileContentView;
+        }
         if (outView != null) {
             outView.animate().cancel();
             outView.setVisibility(View.GONE);
@@ -5443,10 +5849,10 @@ public class FileManagerModule extends HyVqModule {
             inView.animate().cancel();
             inView.setVisibility(View.VISIBLE);
             if (animScale > 0f && prev != target) {
-                // 设置页从右侧轻滑入，文件列表从左侧轻滑入 —— 有方向感
-                final boolean toSettings = settingsVisible;
+                // 设置/相册页从右侧轻滑入，文件列表从左侧轻滑入 —— 有方向感
+                final boolean toSub = settingsVisible || galleryVisible;
                 inView.setAlpha(0f);
-                inView.setTranslationX(dp(toSettings ? 24 : -24));
+                inView.setTranslationX(dp(toSub ? 24 : -24));
                 inView.animate().alpha(1f).translationX(0f)
                         .setDuration(ANIM_MODE_SWITCH)
                         .setInterpolator(new android.view.animation.DecelerateInterpolator())
@@ -5478,21 +5884,22 @@ public class FileManagerModule extends HyVqModule {
             }
         }
 
-        // 左上角图标三态：
-        //   文件页        → 面包键（开侧边栏）
-        //   设置主页      → 面包键（开侧边栏）—— 与文件页一致，不制造第二个"返回"
-        //   设置子页      → 返回键（回设置主页）
+        // 左上角图标：文件页 → 菜单；设置主页/相册 → 菜单；设置子页 → 返回。
+        // 相册页左上角也用菜单（与侧边栏入口一致），返回靠系统返回键逐层退。
         if (topBarLeftIcon != null) {
             topBarLeftIcon.setImageResource(
                     fileVisible || currentSettingsPage.isEmpty()
                             ? R.drawable.ic_menu : R.drawable.ic_back);
         }
 
-        // 顶栏：文件 / 设置 二选一
+        // 顶栏：文件 / 设置 / 相册 三选一
         if (fileVisible) {
             removeSettingsTopTitle();
             if (topBarCrumbView != null) topBarCrumbView.setVisibility(View.VISIBLE);
             if (topBarFileActions != null) topBarFileActions.setVisibility(View.VISIBLE);
+        } else if (galleryVisible) {
+            enterSettingsTopBar();
+            if (settingsTopTitle != null) settingsTopTitle.setText("图片查看器");
         } else {
             enterSettingsTopBar();
         }
@@ -7663,6 +8070,13 @@ public class FileManagerModule extends HyVqModule {
                 "回到文件列表（不改变当前目录）",
                 R.drawable.ic_folder, v -> {
                     closeNavSidebarThen(() -> setContentMode(ContentMode.FILES));
+                }));
+
+        // 图片查看器：相册网格页（扫描路径可在设置/网格页 + chip 中管理）
+        toolsBody.addView(buildToolCard("图片查看器",
+                "按扫描路径浏览相册图片",
+                R.drawable.ic_img, v -> {
+                    closeNavSidebarThen(this::openGallery);
                 }));
 
 
