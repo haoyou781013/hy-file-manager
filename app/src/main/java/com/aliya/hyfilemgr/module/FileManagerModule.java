@@ -4116,11 +4116,194 @@ public class FileManagerModule extends HyVqModule {
                 R.drawable.ic_refresh, v -> {
                     showInSettingsDialog("软件更新", this::showUpdatePageBody);
                 });
+        addSettingsRow(box, "问题反馈",
+                "崩溃 · 建议 · 其他（无需注册账号）", R.drawable.ic_info, v -> {
+                    showFeedbackDialog();
+                });
         addSettingsRow(box, "关于",
                 "版本信息 · 开源仓库 · 开发说明", R.drawable.ic_info, v -> {
                     showInSettingsDialog("关于", this::showAboutPageBody);
                 });
         return box;
+    }
+
+    // ══════════ 问题反馈 ══════════
+
+    /**
+     * 问题反馈弹窗：类型选择 + 内容输入 + 提交。
+     *
+     * <p>不需要用户注册账号——内置一枚<b>权限受限</b>的 GitHub token 代提交
+     * （fine-grained PAT，只授权本仓库 issues 写，90 天过期）。
+     * 详见 {@link com.aliya.hyfilemgr.feedback.FeedbackSender} 的安全说明。</p>
+     *
+     * <p>提交失败必须有退路：弹窗展示完整内容 + 「复制」+ 「网页提交」，
+     * 否则弱网/限流时用户白写一遂。</p>
+     */
+    private void showFeedbackDialog() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sectionHeaderInCard("问题反馈"));
+
+        TextView hint = new TextView(ctx);
+        hint.setText("不需要注册账号，直接提交到开发者的 GitHub Issues。\n"
+                + "会自动附带应用版本、机型与系统版本（不含任何文件内容）。");
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hint.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        hint.setPadding(dp(4), 0, dp(4), dp(8));
+        hint.setLineSpacing(dp(2), 1f);
+        box.addView(hint);
+
+        // 类型选择：三个可点的胶囊
+        final int[] sel = {com.aliya.hyfilemgr.feedback.FeedbackSender.TYPE_OTHER};
+        String[] names = {"崩溃", "功能建议", "其他"};
+        int[] types = {com.aliya.hyfilemgr.feedback.FeedbackSender.TYPE_CRASH,
+                com.aliya.hyfilemgr.feedback.FeedbackSender.TYPE_SUGGESTION,
+                com.aliya.hyfilemgr.feedback.FeedbackSender.TYPE_OTHER};
+        LinearLayout chips = new LinearLayout(ctx);
+        chips.setOrientation(LinearLayout.HORIZONTAL);
+        chips.setPadding(dp(2), 0, dp(2), dp(10));
+        box.addView(chips);
+
+        final TextView[] chipViews = new TextView[names.length];
+        for (int i = 0; i < names.length; i++) {
+            final int idx = i;
+            TextView chip = new TextView(ctx);
+            chip.setText(names[i]);
+            chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            chip.setPadding(dp(14), dp(7), dp(14), dp(7));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.rightMargin = dp(8);
+            chip.setLayoutParams(lp);
+            chip.setClickable(true);
+            chipViews[i] = chip;
+            chip.setOnClickListener(v -> {
+                sel[0] = types[idx];
+                for (int j = 0; j < chipViews.length; j++) styleFeedbackChip(chipViews[j], j == idx);
+            });
+            chips.addView(chip);
+        }
+        // 默认选「其他」
+        for (int j = 0; j < chipViews.length; j++) styleFeedbackChip(chipViews[j], j == 2);
+
+        // 内容输入
+        final android.widget.EditText input = new android.widget.EditText(ctx);
+        input.setHint("请描述遇到的问题或建议…");
+        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        input.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+        input.setHintTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        input.setBackground(UiKit.rounded(ctx, 10,
+                UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow),
+                UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
+        input.setPadding(dp(12), dp(10), dp(12), dp(10));
+        input.setGravity(android.view.Gravity.TOP | android.view.Gravity.START);
+        input.setMinLines(4);
+        input.setMaxLines(8);
+        input.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        LinearLayout.LayoutParams inLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        inLp.bottomMargin = dp(10);
+        box.addView(input, inLp);
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        TextView cancel = textButton("取消", v -> UiKit.dismissWithAnim(d));
+        final TextView submit = textButton("提交", null);
+        submit.setOnClickListener(v -> {
+            final String text = input.getText() == null ? "" : input.getText().toString().trim();
+            if (text.isEmpty()) {
+                UiKit.toast(ctx, "请先填写内容");
+                return;
+            }
+            submit.setEnabled(false);
+            submit.setAlpha(0.5f);
+            submit.setText("提交中…");
+            new Thread(() -> {
+                final com.aliya.hyfilemgr.feedback.FeedbackSender.Result r =
+                        com.aliya.hyfilemgr.feedback.FeedbackSender.submit(ctx, sel[0], text);
+                handler.post(() -> {
+                    if (detached) return;
+                    submit.setEnabled(true);
+                    submit.setAlpha(1f);
+                    submit.setText("提交");
+                    if (r.ok) {
+                        UiKit.dismissWithAnim(d);
+                        UiKit.toast(ctx, "已提交，编号 #" + r.issueNumber + "，感谢反馈！");
+                    } else {
+                        showFeedbackFailDialog(text, r.message);
+                    }
+                });
+            }, "HyFeedback").start();
+        });
+        btns.addView(cancel);
+        btns.addView(submit);
+        box.addView(btns);
+        d.show();
+    }
+
+    /** 反馈类型胶囊样式（选中=主题色填充，未选=卡片底+描边） */
+    private void styleFeedbackChip(TextView chip, boolean active) {
+        chip.setTextColor(UiKit.color(ctx, active
+                ? com.google.android.material.R.attr.colorOnPrimary
+                : com.google.android.material.R.attr.colorOnSurfaceVariant));
+        chip.setBackground(UiKit.rounded(ctx, 999,
+                UiKit.color(ctx, active
+                        ? com.google.android.material.R.attr.colorPrimary
+                        : com.google.android.material.R.attr.colorSurfaceContainerHigh),
+                active ? 0 : UiKit.color(ctx,
+                        com.google.android.material.R.attr.colorOutlineVariant)));
+    }
+
+    /** 提交失败的退路：展示内容 + 复制 + 网页提交 */
+    private void showFeedbackFailDialog(final String text, String reason) {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sectionHeaderInCard("⚠ 提交失败"));
+
+        TextView why = new TextView(ctx);
+        why.setText(reason + "\n\n以下是你的内容，可以复制后到网页提交：");
+        why.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        why.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorError));
+        why.setPadding(dp(4), 0, dp(4), dp(8));
+        box.addView(why);
+
+        TextView content = new TextView(ctx);
+        content.setText(text);
+        content.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        content.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+        content.setPadding(dp(10), dp(8), dp(10), dp(8));
+        content.setBackground(UiKit.rounded(ctx, 10,
+                UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow),
+                UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
+        android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+        sv.addView(content);
+        LinearLayout.LayoutParams svLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        svLp.bottomMargin = dp(10);
+        box.addView(sv, svLp);
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        btns.addView(textButton("复制", v -> {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                    ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+            if (cm != null) cm.setPrimaryClip(
+                    android.content.ClipData.newPlainText("反馈内容", text));
+            UiKit.toast(ctx, "已复制到剪贴板");
+        }));
+        btns.addView(textButton("网页提交", v -> {
+            com.aliya.hyfilemgr.feedback.FeedbackSender.openWebFallback(ctx, text);
+        }));
+        btns.addView(textButton("关闭", v -> UiKit.dismissWithAnim(d)));
+        box.addView(btns);
+        d.show();
     }
 
     // ══════════ 相册浏览页 ══════════
