@@ -60,6 +60,32 @@ EXTRA_LIST/EXTRA_INDEX 传入；content:// 或窗格不可用退化为单图。
 
 **验证**：assembleRelease 通过；已静默装机（pm install -r）。
 **未实测**：滑动切图、计数、快滑与拖图的手势边界。
+
+## 相册浏览页（5da0627）
+
+**功能**：侧边栏「工具→图片查看器」入口 → 相册页（路径 chips + 目录分组网格）→
+点图进查看器（本目录图集左右滑）；设置→工具→图片查看器管理扫描路径。
+
+**架构**：
+- ContentMode 加 GALLERY 三态互斥；galleryEmbedView 动态创建挂 contentWrapRef
+  （与 settingsEmbedView 同级），过渡动画/顶栏/底栏 FAB 显隐全部沿用 setContentMode
+- 顶栏：GALLERY 模式走 enterSettingsTopBar，页名显示「图片查看器」；
+  左上角保持菜单键（不制造第二个返回，系统返回键退）
+- handleBackPressed 加 GALLERY → FILES 分支（逐层退原则）
+- 扫描：一层为限（本层图片 + 每个子目录一层），不做全盘递归——
+  相册图片集中在 DCIM/Pictures 子目录，一层够用且性能可控；按 mtime 倒序
+- 缩略图复用 ThumbLoader（内存/磁盘缓存/in-flight 去重/防错位全现成），
+  预设 ic_img 占位图标防加载中空白
+- 网格：GridLayout 3 列方形（side = 屏宽-28dp）/3），spec FILL+weight
+- 扫描路径持久化：PREF_GALLERY_PATHS 换行分隔；默认值（存在才收）：
+  DCIM/Camera、DCIM、Pictures、Screenshots、Download
+- 设置弹窗 rebuild 递归引用自身 → final Runnable[] 数组容器绕开
+
+**坑**：View 没有 setMargins（必须 LayoutParams 上设）；View 没有 getDrawingColor
+（改用字段记录当前色）；模块非 Activity，getResources 要走 ctx.getResources()。
+
+**验证**：assembleRelease 通过；已静默装机。
+**未实测**：网格滚动性能（大目录）、chips 切换、路径增删后的刷新、点图进查看器。
 **实测崩溃 1 次（bbd78c1）**：`?attr/selectableItemBackground` 在查看器的
 framework 主题（Theme.Black.NoTitleBar.Fullscreen）下无法解析 →
 InflateException 打开图片即崩。修复 `4afc2b9`：换 `@drawable/bg_ripple`
