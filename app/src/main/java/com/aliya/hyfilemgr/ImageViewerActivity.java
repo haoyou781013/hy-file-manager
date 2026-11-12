@@ -213,8 +213,45 @@ public class ImageViewerActivity extends Activity {
         int vis = show ? View.VISIBLE : View.GONE;
         topBar.setVisibility(vis);
         bottomBar.setVisibility(vis);
+        // 栏出=白底（浏览模式）、栏藏=黑底（沉浸看图）。
+        // 进入时默认栏展开+白底，点击画面后切黑沉浸。
+        // 白底时栏背景透明（白透出来）、图标文字深色；黑底时栏用半透明黑 scrim、文字浅色。
+        View root = findViewById(com.aliya.hyfilemgr.R.id.iv_root);
+        root.setBackgroundColor(show ? 0xFFFFFFFF : 0xFF000000);
+        ImageView backBtn = findViewById(com.aliya.hyfilemgr.R.id.btn_iv_back);
+        TextView title = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_title);
+        TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
+        int mainText = show ? 0xFF1A1A1A : 0xFFFFFFFF;
+        int subText = show ? 0x991A1A1A : 0x99FFFFFF;
+        int scrim = show ? 0x00000000 : 0x99000000;
+        topBar.setBackgroundColor(scrim);
+        bottomBar.setBackgroundColor(scrim);
+        backBtn.setColorFilter(mainText);
+        title.setTextColor(mainText);
+        info.setTextColor(subText);
+        tintBottomButtons(mainText, subText);
+        // 状态栏底色跟随：白底时状态栏也白、图标深色；黑底时透明、图标浅色。
+        android.view.Window w = getWindow();
+        w.setStatusBarColor(show ? 0xFFFFFFFF : 0x00000000);
+        androidx.core.view.WindowCompat.getInsetsController(w, w.getDecorView())
+                .setAppearanceLightStatusBars(show);
         hideHandler.removeCallbacks(autoHide);
         if (show) hideHandler.postDelayed(autoHide, AUTO_HIDE_MS);
+    }
+
+    /** 底部栏三按钮图标+文字换色（分享/删除/设为背景） */
+    private void tintBottomButtons(int iconColor, int textColor) {
+        int[][] ids = {
+                {com.aliya.hyfilemgr.R.id.btn_iv_share, com.aliya.hyfilemgr.R.id.iv_share_icon},
+                {com.aliya.hyfilemgr.R.id.btn_iv_delete, com.aliya.hyfilemgr.R.id.iv_delete_icon},
+                {com.aliya.hyfilemgr.R.id.btn_iv_wallpaper, com.aliya.hyfilemgr.R.id.iv_wallpaper_icon}};
+        for (int[] pair : ids) {
+            LinearLayout row = findViewById(pair[0]);
+            ImageView icon = row.findViewById(pair[1]);
+            TextView label = (TextView) row.getChildAt(1);
+            icon.setColorFilter(iconColor);
+            label.setTextColor(textColor);
+        }
     }
 
     // ── 底部功能栏动作 ──

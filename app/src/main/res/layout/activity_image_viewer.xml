@@ -15,14 +15,13 @@
         android:contentDescription="图片" />
 
     <!-- 顶部：返回 + 文件名 + 尺寸。
-         暗色沉浸：半透明黑 scrim，状态栏透明后内容从状态栏后面开始，
-         padding 由代码按 insets 补（资源值在 ColorOS 上偏小，不能写死）。 -->
+         颜色由代码按「栏出=白底 / 栏藏=黑底」双模式动态控制，
+         scrim 与文字色不写死在 XML。 -->
     <LinearLayout
         android:id="@+id/iv_top"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="top"
-        android:background="#99000000"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:paddingHorizontal="10dp"
@@ -34,8 +33,7 @@
             android:layout_height="36dp"
             android:src="@drawable/ic_arrow_back"
             android:contentDescription="返回"
-            android:padding="8dp"
-            app:tint="#FFFFFF" />
+            android:padding="8dp" />
 
         <TextView
             android:id="@+id/tv_iv_title"
@@ -45,7 +43,6 @@
             android:layout_marginStart="6dp"
             android:ellipsize="middle"
             android:maxLines="1"
-            android:textColor="#FFFFFF"
             android:textSize="14sp" />
 
         <TextView
@@ -53,7 +50,6 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text=""
-            android:textColor="#99FFFFFF"
             android:textSize="12sp" />
     </LinearLayout>
 
@@ -65,7 +61,6 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:background="#99000000"
         android:orientation="horizontal"
         android:paddingHorizontal="12dp"
         android:paddingVertical="10dp">
@@ -80,18 +75,17 @@
             android:background="@drawable/bg_ripple">
 
             <ImageView
+                android:id="@+id/iv_share_icon"
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_share"
-                android:contentDescription="分享"
-                app:tint="#FFFFFF" />
+                android:contentDescription="分享" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:text="分享"
-                android:textColor="#CCFFFFFF"
                 android:textSize="11sp" />
         </LinearLayout>
 
@@ -105,18 +99,17 @@
             android:background="@drawable/bg_ripple">
 
             <ImageView
+                android:id="@+id/iv_delete_icon"
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_trash"
-                android:contentDescription="删除"
-                app:tint="#FFFFFF" />
+                android:contentDescription="删除" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:text="删除"
-                android:textColor="#CCFFFFFF"
                 android:textSize="11sp" />
         </LinearLayout>
 
@@ -130,18 +123,17 @@
             android:background="@drawable/bg_ripple">
 
             <ImageView
+                android:id="@+id/iv_wallpaper_icon"
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/ic_img"
-                android:contentDescription="设为背景"
-                app:tint="#FFFFFF" />
+                android:contentDescription="设为背景" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:text="设为背景"
-                android:textColor="#CCFFFFFF"
                 android:textSize="11sp" />
         </LinearLayout>
     </LinearLayout>
