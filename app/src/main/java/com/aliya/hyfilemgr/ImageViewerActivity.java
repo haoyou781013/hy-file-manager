@@ -222,11 +222,52 @@ public class ImageViewerActivity extends Activity {
 
     /** 加载指定路径的图片（后台解码 + 淡入过渡；序号防旧图晚到覆盖新图） */
     private void loadImage(String path, boolean isUri) {
+        final String src = isUri ? currentUriStr : path;
         final int seq = ++loadSeq;
+
+        // GIF（API 28+）：用 ImageDecoder 出 AnimatedImageDrawable，直接播放动图。
+        // 低版本/解码失败 → 回退下面的 BitmapFactory 静态首帧。
+        if (!isUri && android.os.Build.VERSION.SDK_INT >= 28
+                && path != null && path.toLowerCase().endsWith(".gif")) {
+            try {
+                android.graphics.ImageDecoder.Source gifSrc =
+                        android.graphics.ImageDecoder.createSource(new File(path));
+                android.graphics.drawable.Drawable anim =
+                        android.graphics.ImageDecoder.decodeDrawable(gifSrc, (decoder, info, s) -> {
+                            // 按屏幕尺寸降采样：动图内存占用比静态图高得多
+                            android.util.Size size = info.getSize();
+                            int w = size.getWidth(), h = size.getHeight();
+                            int reqW = getResources().getDisplayMetrics().widthPixels;
+                            int reqH = getResources().getDisplayMetrics().heightPixels;
+                            if (w > reqW * 2 || h > reqH * 2) {
+                                decoder.setTargetSampleSize(2);
+                            }
+                        });
+                if (anim instanceof android.graphics.drawable.AnimatedImageDrawable) {
+                    final android.graphics.drawable.AnimatedImageDrawable aid =
+                            (android.graphics.drawable.AnimatedImageDrawable) anim;
+                    runOnUiThread(() -> {
+                        if (seq != loadSeq) return;
+                        imageView.setImageDrawable(aid);
+                        imageView.setAlpha(0f);
+                        imageView.animate().alpha(1f).setDuration(FADE_MS).start();
+                        TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
+                        info.setText(aid.getIntrinsicWidth() + " × " + aid.getIntrinsicHeight() + " · GIF");
+                        updateCounter();
+                        resetMatrix();
+                        aid.start();
+                    });
+                    return;
+                }
+            } catch (Throwable ignored) {
+                // 落到静态解码分支
+            }
+        }
+
         new Thread(() -> {
             final Bitmap bmp;
             try {
-                bmp = decodeSampled(isUri ? currentUriStr : path, isUri);
+                bmp = decodeSampled(src, isUri);
             } catch (Throwable t) {
                 runOnUiThread(() ->
                         UiKit.toast(this, "图片解码失败：" + t.getMessage()));

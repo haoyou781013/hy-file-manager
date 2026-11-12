@@ -4338,50 +4338,84 @@ public class FileManagerModule extends HyVqModule {
             galleryContent.addView(head);
         }
 
-        // 网格：3 列，正方形单元格
-        android.widget.GridLayout grid = new android.widget.GridLayout(ctx);
-        int col = 3;
-        grid.setColumnCount(col);
-        int side = (ctx.getResources().getDisplayMetrics().widthPixels - dp(28)) / col;
+        // 网格：行式 LinearLayout（每行 3 格等分），格子恒为正方形。
+        //
+        // 不用 GridLayout：它靠 rowSpec/columnSpec 计算行列，
+        // 逐格 setLayoutParams 时高度约束会被行规格覆盖，
+        // 实测表现为「一长条一张图」（格子高度塌成图片原始比例）。
+        // 行式布局下 weight=1 保证等宽、height=固定 dp 保证正方形，行为确定。
+        final int col = 3;
+        final int gap = dp(2);
+        int contentW = ctx.getResources().getDisplayMetrics().widthPixels - dp(16 + 12);
+        final int side = (contentW - gap * (col - 1)) / col;
 
         final java.util.ArrayList<String> paths = new java.util.ArrayList<>();
         for (File f : imgs) paths.add(f.getAbsolutePath());
 
-        int index = 0;
-        for (final File f : imgs) {
-            final int pos = index++;
-            android.widget.FrameLayout cell = new android.widget.FrameLayout(ctx);
+        LinearLayout rowBox = null;
+        for (int i = 0; i < imgs.size(); i++) {
+            final File f = imgs.get(i);
+            final int pos = i;
+            if (i % col == 0) {
+                rowBox = new LinearLayout(ctx);
+                rowBox.setOrientation(LinearLayout.HORIZONTAL);
+                LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                rowLp.topMargin = i == 0 ? 0 : gap;
+                galleryContent.addView(rowBox, rowLp);
+            }
+
             android.widget.ImageView iv = new android.widget.ImageView(ctx);
+            // 居中裁切：不管原图什么比例，格子内都是填满的正方形
             iv.setScaleType(android.widget.ImageView.ScaleType.CENTER_CROP);
             iv.setBackgroundColor(UiKit.color(ctx,
                     com.google.android.material.R.attr.colorSurfaceContainerHigh));
-            // 预设类型图标：ThumbLoader 成功后替换，失败/加载中不至于空白
-            iv.setImageResource(R.drawable.ic_img);
+            iv.setImageResource(R.drawable.ic_img);   // 占位，ThumbLoader 成功后替换
             com.aliya.hyfilemgr.filemgr.ThumbLoader.load(ctx, iv,
                     f.getAbsolutePath(), f.getName(), f.lastModified());
-            cell.addView(iv, new android.widget.FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             iv.setClickable(true);
-            iv.setOnClickListener(v -> {
-                // 进入查看器：把本组目录列表作为图集传入，左右滑只在该目录内切
-                openImageViewerFromGallery(dir, paths, pos);
-            });
-            // 网格布局：先建参数（带边距与规格）再 setLayoutParams
-            android.widget.GridLayout.LayoutParams lp = new android.widget.GridLayout.LayoutParams();
-            lp.width = side;
-            lp.height = side;
-            lp.setMargins(dp(1), dp(1), dp(1), dp(1));
-            android.widget.GridLayout.Spec row = android.widget.GridLayout.spec(
-                    pos / col, android.widget.GridLayout.FILL, 1f);
-            android.widget.GridLayout.Spec colSpec = android.widget.GridLayout.spec(
-                    pos % col, android.widget.GridLayout.FILL, 1f);
-            lp.rowSpec = row;
-            lp.columnSpec = colSpec;
-            cell.setLayoutParams(lp);
-            grid.addView(cell);
+            iv.setOnClickListener(v -> openImageViewerFromGallery(dir, paths, pos));
+
+            LinearLayout.LayoutParams cellLp = new LinearLayout.LayoutParams(side, side);
+            int leftMargin = (i % col == 0) ? 0 : gap;
+            cellLp.setMargins(leftMargin, 0, 0, 0);
+
+            // GIF 角标：网格只播首帧，用角标告知是可动图
+            if (f.getName().toLowerCase().endsWith(".gif")) {
+                android.widget.FrameLayout cell = new android.widget.FrameLayout(ctx);
+                cell.addView(iv, new android.widget.FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+                TextView badge = new TextView(ctx);
+                badge.setText("GIF");
+                badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+                badge.setTypeface(null, android.graphics.Typeface.BOLD);
+                badge.setTextColor(0xFFFFFFFF);
+                badge.setBackgroundColor(0x99000000);
+                badge.setPadding(dp(4), dp(1), dp(4), dp(1));
+                android.widget.FrameLayout.LayoutParams bLp =
+                        new android.widget.FrameLayout.LayoutParams(
+                                ViewGroup.LayoutParams.WRAP_CONTENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT,
+                                Gravity.END | Gravity.BOTTOM);
+                bLp.setMargins(0, 0, dp(4), dp(4));
+                cell.addView(badge, bLp);
+                cell.setOnClickListener(v -> openImageViewerFromGallery(dir, paths, pos));
+                rowBox.addView(cell, cellLp);
+            } else {
+                iv.setLayoutParams(cellLp);
+                rowBox.addView(iv);
+            }
         }
-        galleryContent.addView(grid, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        // 末行补齐空位：保证最后一行的格子不会被 weight 拉宽
+        if (rowBox != null && imgs.size() % col != 0) {
+            int need = col - (imgs.size() % col);
+            for (int k = 0; k < need; k++) {
+                View spacer = new View(ctx);
+                LinearLayout.LayoutParams spLp = new LinearLayout.LayoutParams(side, side);
+                spLp.setMargins(gap, 0, 0, 0);
+                rowBox.addView(spacer, spLp);
+            }
+        }
     }
 
     /** 从相册页点图进查看器：目录图片列表作图集（左右滑只在当前目录内） */
