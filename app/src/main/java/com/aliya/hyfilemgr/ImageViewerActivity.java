@@ -99,7 +99,7 @@ public class ImageViewerActivity extends Activity {
         String name = isUri ? "图片" : new File(path == null ? "" : path).getName();
         if (title == null || title.isEmpty()) title = name;
         tvTitle.setText(title);
-        updateCounter(tvInfo);
+        updateCounter();
 
         findViewById(com.aliya.hyfilemgr.R.id.btn_iv_back).setOnClickListener(v -> finish());
 
@@ -242,11 +242,8 @@ public class ImageViewerActivity extends Activity {
                 imageView.setAlpha(0f);
                 imageView.animate().alpha(1f).setDuration(FADE_MS).start();
                 TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
-                if (gallery != null && gallery.length > 1) {
-                    updateCounter(info);   // 图集模式：保持「01/32」不动，尺寸不挤占
-                } else {
-                    info.setText(bmp.getWidth() + " × " + bmp.getHeight());
-                }
+                info.setText(bmp.getWidth() + " × " + bmp.getHeight());
+                updateCounter();
                 resetMatrix();
             });
         }).start();
@@ -267,17 +264,18 @@ public class ImageViewerActivity extends Activity {
         }).start();
         TextView tvTitle = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_title);
         tvTitle.setText(new File(p).getName());
-        TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
-        updateCounter(info);
+        updateCounter();
         loadImage(p, false);
     }
 
-    /** 顶栏信息位：有图集时显示「01/32」（两位序号），单图时显示尺寸 */
-    private void updateCounter(TextView info) {
+    /** 底栏计数行：有图集时显示「01/32」两位格式，单图隐藏（顶栏尺寸照常） */
+    private void updateCounter() {
+        TextView counter = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_counter);
         if (gallery != null && gallery.length > 1) {
-            info.setText(String.format("%02d/%02d", galleryIndex + 1, gallery.length));
+            counter.setVisibility(View.VISIBLE);
+            counter.setText(String.format("%02d/%02d", galleryIndex + 1, gallery.length));
         } else {
-            info.setText("");
+            counter.setVisibility(View.GONE);
         }
     }
 
@@ -311,6 +309,8 @@ public class ImageViewerActivity extends Activity {
         backBtn.setColorFilter(mainText);
         title.setTextColor(mainText);
         info.setTextColor(subText);
+        findViewById(com.aliya.hyfilemgr.R.id.tv_iv_counter).setBackgroundColor(0x00000000);
+        ((TextView) findViewById(com.aliya.hyfilemgr.R.id.tv_iv_counter)).setTextColor(subText);
         tintBottomButtons(mainText, subText);
         // 背景渐变过渡：硬切会闪一下，ArgbEvaluator 平滑变白/变黑。
         // 首次调用（onCreate 尾部）不播动画，直接落位。

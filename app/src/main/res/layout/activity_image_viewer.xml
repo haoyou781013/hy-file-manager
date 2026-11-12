@@ -53,17 +53,31 @@
             android:textSize="12sp" />
     </LinearLayout>
 
-    <!-- 底部功能栏：分享 / 删除 / 设为背景。
-         与顶栏同为「点击画面唤出、再点隐藏」，暗色沉浸同一套 scrim。
-         每项 = 图标 + 文字标签，竖排，横向均分。 -->
+    <!-- 底部功能栏：计数行 + 分享 / 删除 / 设为背景。
+         与顶栏同为「点击画面唤出、再点隐藏」，颜色由代码按双模式控制。
+         计数行在按钮上方居中，比顶栏右侧更醒目。 -->
     <LinearLayout
         android:id="@+id/iv_bottom"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:paddingHorizontal="12dp"
         android:paddingVertical="10dp">
+
+        <TextView
+            android:id="@+id/tv_iv_counter"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:text=""
+            android:textSize="13sp"
+            android:paddingBottom="6dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
 
         <LinearLayout
             android:id="@+id/btn_iv_share"
@@ -135,6 +149,7 @@
                 android:layout_marginTop="4dp"
                 android:text="设为背景"
                 android:textSize="11sp" />
+        </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>
