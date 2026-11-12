@@ -45,7 +45,16 @@
 **顺带**：更新页发布日期空值兜底 `fmtPublishDate()`（3 处消费点 4680/4684/4922），
 清单缺 publishedAt 时显示"未知"。
 
-**验证**：assembleRelease 通过，6,826,398 字节，签名一致。
+**图集切换（8d70f49）**：模块 `collectImages()` 从当前窗格 entries 收集
+同目录图片（IMAGE_EXTS 过滤，与播放器 collectPlayable 同思路），
+EXTRA_LIST/EXTRA_INDEX 传入；content:// 或窗格不可用退化为单图。
+查看器 onFling 切图（≥60dp、水平 1.5× 垂直、vx≥800，循环）；
+切图重置矩阵+清旧图+标题/计数更新；删除/设背景跟随 currentPath
+（底部栏按钮改间接引用，不用闭包旧 path）。顶栏信息位显示
+「当前/总数」，单图时显示尺寸。移除超时隐藏（用户指示）。
+
+**验证**：assembleRelease 通过；已静默装机（pm install -r）。
+**未实测**：滑动切图、计数、快滑与拖图的手势边界。
 **实测崩溃 1 次（bbd78c1）**：`?attr/selectableItemBackground` 在查看器的
 framework 主题（Theme.Black.NoTitleBar.Fullscreen）下无法解析 →
 InflateException 打开图片即崩。修复 `4afc2b9`：换 `@drawable/bg_ripple`
