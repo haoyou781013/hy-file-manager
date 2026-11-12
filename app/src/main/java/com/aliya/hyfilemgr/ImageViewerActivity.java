@@ -215,8 +215,14 @@ public class ImageViewerActivity extends Activity {
 
     // ── 图集加载与切换 ──
 
-    /** 加载指定路径的图片（后台解码，成功后更新信息栏与矩阵） */
+    /** 切图过渡时长（毫秒）：淡出旧图→换新图→淡入 */
+    private static final long FADE_MS = 150;
+    /** 解码任务序号：连续切换时只认最后一次的结果，避免慢图晚到盖住新图 */
+    private int loadSeq;
+
+    /** 加载指定路径的图片（后台解码 + 淡入过渡；序号防旧图晚到覆盖新图） */
     private void loadImage(String path, boolean isUri) {
+        final int seq = ++loadSeq;
         new Thread(() -> {
             final Bitmap bmp;
             try {
@@ -227,13 +233,20 @@ public class ImageViewerActivity extends Activity {
                 return;
             }
             runOnUiThread(() -> {
+                if (seq != loadSeq) return;   // 已切到别的图：丢弃
                 if (bmp == null) {
                     UiKit.toast(this, "无法解码该图片");
                     return;
                 }
                 imageView.setImageBitmap(bmp);
+                imageView.setAlpha(0f);
+                imageView.animate().alpha(1f).setDuration(FADE_MS).start();
                 TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
-                info.setText(bmp.getWidth() + " × " + bmp.getHeight());
+                if (gallery != null && gallery.length > 1) {
+                    updateCounter(info);   // 图集模式：保持「01/32」不动，尺寸不挤占
+                } else {
+                    info.setText(bmp.getWidth() + " × " + bmp.getHeight());
+                }
                 resetMatrix();
             });
         }).start();
@@ -248,19 +261,21 @@ public class ImageViewerActivity extends Activity {
         currentIsUri = false;
         matrix.reset();
         imageView.setImageMatrix(matrix);
-        imageView.setImageDrawable(null);
+        // 旧图淡出后清掉，等新图淡入（手感上是一段连续的渐变）
+        imageView.animate().alpha(0f).setDuration(FADE_MS).withEndAction(() -> {
+            imageView.setImageDrawable(null);
+        }).start();
         TextView tvTitle = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_title);
         tvTitle.setText(new File(p).getName());
         TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
-        info.setText("");
         updateCounter(info);
         loadImage(p, false);
     }
 
-    /** 顶栏信息位：有图集时显示「当前/总数」，单图时留空（尺寸由 loadImage 填） */
+    /** 顶栏信息位：有图集时显示「01/32」（两位序号），单图时显示尺寸 */
     private void updateCounter(TextView info) {
         if (gallery != null && gallery.length > 1) {
-            info.setText((galleryIndex + 1) + " / " + gallery.length);
+            info.setText(String.format("%02d/%02d", galleryIndex + 1, gallery.length));
         } else {
             info.setText("");
         }
