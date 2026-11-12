@@ -115,6 +115,9 @@ public class ImageViewerActivity extends Activity {
         wp.setOnClickListener(v -> askWallpaperTarget(currentPath));
         findViewById(com.aliya.hyfilemgr.R.id.btn_iv_share).setOnClickListener(
                 v -> shareImage(currentPath, currentUriStr, currentIsUri));
+        // 高清模式：长按图片切换（默认关，按屏幕 2 倍采样 + RGB_565，快且省内存）。
+        // 注意：不能在这里用 setOnLongClickListener（会被 OnTouchListener 吃掉），
+        // 实际回调在 GestureDetector.onLongPress 里。
 
         // ── 状态栏沉浸：透明状态栏，顶栏从状态栏后面开始。
         // insets 必须在 attach 后取（createMainView 阶段 DecorView 未 attach
@@ -190,6 +193,14 @@ public class ImageViewerActivity extends Activity {
                         toggleBars();
                         return true;
                     }
+
+                    @Override public void onLongPress(MotionEvent e) {
+                        // 长按 = 切换高清模式。
+                        // 必须写在 GestureDetector 里：imageView 的 OnTouchListener
+                        // 恒返回 true（为了接管缩放/拖动），会吃掉 View 级长按事件，
+                        // setOnLongClickListener 根本不会触发。
+                        toggleHd();
+                    }
                 });
 
         imageView.setOnTouchListener((v, ev) -> {
@@ -207,6 +218,41 @@ public class ImageViewerActivity extends Activity {
 
     @Override protected void onDestroy() {
         super.onDestroy();
+    }
+
+    // ── 高清模式 ──
+
+    /**
+     * 高清模式开关（长按图片切换）。
+     *
+     * <p><b>默认为什么不是高清</b>：默认走「屏幕 2 倍采样 + RGB_565」，
+     * 首屏快、内存占用低（大图动辄 20~60MB）。但用户放大看细节、或图片带渐变/文字时，
+     * RGB_565 的色阶压缩与屏幕采样会看出模糊与色带。
+     * 高清模式改用原分辨率兜底采样（仍防 OOM，见 {@link #calcHdSample}）+ ARGB_8888。</p>
+     *
+     * <p>只对静态位图生效；GIF 动图不受影响（它走另一条解码路径）。</p>
+     */
+    private void toggleHd() {
+        hdMode = !hdMode;
+        UiKit.toast(this, hdMode ? "高清模式：开（重新加载中）" : "高清模式：关");
+        loadImage(currentPath, currentIsUri);
+    }
+
+    /** 高清模式标记 */
+    private boolean hdMode;
+
+    /**
+     * 高清采样倍率：取「原始尺寸不超过屏幕 4 倍」时用 1（不采样），
+     * 超出则按 2/4 逐级降，既保留细节又防超大图 OOM。
+     */
+    private int calcHdSample(int w, int h) {
+        int reqW = getResources().getDisplayMetrics().widthPixels;
+        int reqH = getResources().getDisplayMetrics().heightPixels;
+        int sample = 1;
+        while ((w / (sample * 2) > reqW * 4 || h / (sample * 2) > reqH * 4) && sample < 8) {
+            sample *= 2;
+        }
+        return sample;
     }
 
     private int dp(int v) {
@@ -283,7 +329,8 @@ public class ImageViewerActivity extends Activity {
                 imageView.setAlpha(0f);
                 imageView.animate().alpha(1f).setDuration(FADE_MS).start();
                 TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
-                info.setText(bmp.getWidth() + " × " + bmp.getHeight());
+                info.setText(bmp.getWidth() + " × " + bmp.getHeight()
+                        + (hdMode ? " · 高清" : ""));
                 updateCounter();
                 resetMatrix();
             });
@@ -555,7 +602,7 @@ public class ImageViewerActivity extends Activity {
         imageView.setImageMatrix(matrix);
     }
 
-    /** 按屏幕尺寸采样解码，避免大图 OOM */
+    /** 按屏幕尺寸采样解码，避免大图 OOM（高清模式下改为保细节采样 + ARGB_8888） */
     private Bitmap decodeSampled(String src, boolean isUri) throws Exception {
         BitmapFactory.Options o = new BitmapFactory.Options();
         o.inJustDecodeBounds = true;
@@ -566,9 +613,12 @@ public class ImageViewerActivity extends Activity {
         } else {
             BitmapFactory.decodeFile(src, o);
         }
-        o.inSampleSize = calcSample(o.outWidth, o.outHeight);
+        o.inSampleSize = hdMode ? calcHdSample(o.outWidth, o.outHeight)
+                                : calcSample(o.outWidth, o.outHeight);
         o.inJustDecodeBounds = false;
-        o.inPreferredConfig = Bitmap.Config.RGB_565;   // 省内存
+        // RGB_565 省一半内存但会丢色阶（渐变、文字边缘发虚）；
+        // 高清模式用 ARGB_8888 保原色
+        o.inPreferredConfig = hdMode ? Bitmap.Config.ARGB_8888 : Bitmap.Config.RGB_565;
         if (isUri) {
             try (InputStream in = getContentResolver().openInputStream(Uri.parse(src))) {
                 return BitmapFactory.decodeStream(in, null, o);

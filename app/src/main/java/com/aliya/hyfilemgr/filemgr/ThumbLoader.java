@@ -73,7 +73,10 @@ public final class ThumbLoader {
     public static boolean supports(String name) {
         if (name == null) return false;
         String low = name.toLowerCase(Locale.ROOT);
-        return isImage(low) || isVideo(low) || low.endsWith(".apk");
+        // ico 是图标容器（自研解码器）；exe/dll/mun/cpl 走 PE 资源提取
+        return isImage(low) || isVideo(low) || low.endsWith(".apk")
+                || low.endsWith(".ico")
+                || com.aliya.hyfilemgr.icon.PeIconExtractor.supports(low);
     }
 
     public static boolean isImage(String low) {
@@ -182,6 +185,18 @@ public final class ThumbLoader {
         String low = name == null ? path.toLowerCase(Locale.ROOT)
                 : name.toLowerCase(Locale.ROOT);
         try {
+            // ① ICO：Android BitmapFactory 不支持该格式，必须走自研解码器。
+            // 放在 isImage 之前——.ico 同时也在 isImage 的扩展名列表里。
+            if (low.endsWith(".ico")) {
+                com.aliya.hyfilemgr.icon.IcoDecoder.Result r =
+                        com.aliya.hyfilemgr.icon.IcoDecoder.decode(path, TARGET_PX * 2);
+                return r == null ? null : scaleTo(r.bitmap, TARGET_PX);
+            }
+            // ② Windows PE（exe/dll/mun/cpl）：从 .rsrc 节提取图标
+            if (com.aliya.hyfilemgr.icon.PeIconExtractor.supports(low)) {
+                Bitmap bm = com.aliya.hyfilemgr.icon.PeIconExtractor.extractIcon(path, TARGET_PX * 2);
+                return bm == null ? null : scaleTo(bm, TARGET_PX);
+            }
             if (isImage(low)) return decodeImage(path);
             if (isVideo(low)) return decodeVideo(path);
             if (low.endsWith(".apk")) {
