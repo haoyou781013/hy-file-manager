@@ -5560,68 +5560,140 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 关于页内容（由 showInSettingsDialog 承载） */
+    /**
+     * 关于页（2026-11-12 重构）。
+     *
+     * <p>结构：头部大图标 + 版本徽标 → 快捷操作（检查更新/问题反馈）→
+     * 应用信息 → 开源仓库 → 第三方库（含许可证）→ 诊断 → 致谢与许可。</p>
+     *
+     * <p><b>为什么拆成清单</b>：旧版是一大段文本，用户看不清也没耐心读。
+     * 拆开后每项都能扫读，且报 issue 时可直接报版本号/库版本。</p>
+     */
     private View showAboutPageBody() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
 
-        TextView title = new TextView(ctx);
-        title.setText("HY文件管理");
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
-        title.setTypeface(null, android.graphics.Typeface.BOLD);
-        title.setTextColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurface));
-        title.setPadding(dp(4), 0, dp(4), 0);
-        // 标题恒套卡片：不再按「有没有背景图」二分。
-        // 二分会让卡片不透明度滑块在有/无背景图两种状态下表现不同，
-        // 属于行为漂移（这个项目已经因此踩过三处）。
-        LinearLayout titleCard = new LinearLayout(ctx);
-        titleCard.setOrientation(LinearLayout.VERTICAL);
-        titleCard.setGravity(Gravity.CENTER_VERTICAL);
-        titleCard.setPadding(dp(12), dp(12), dp(12), dp(12));
-        applyCardSurface(titleCard, 8, true);
-        titleCard.setTag(CARD_TAG_KEY, Boolean.TRUE);
-        titleCard.setTag(CARD_TAG_HDR_KEY, Boolean.TRUE);
-        titleCard.addView(title);
-        box.addView(titleCard);
+        // ══════ 头部：图标 + 应用名 + 版本徽标 + 一句话定位 ══════
+        LinearLayout header = new LinearLayout(ctx);
+        header.setOrientation(LinearLayout.VERTICAL);
+        header.setGravity(Gravity.CENTER_HORIZONTAL);
+        header.setPadding(dp(16), dp(20), dp(16), dp(18));
+        applyCardSurface(header, 12, true);
+        header.setTag(CARD_TAG_KEY, Boolean.TRUE);
+        header.setTag(CARD_TAG_HDR_KEY, Boolean.TRUE);
 
-        addInfoRow(box, "版本", appVersionName() + "（" + appVersionCode() + "）", true, null);
+        android.widget.ImageView logo = new android.widget.ImageView(ctx);
+        logo.setImageResource(R.mipmap.ic_launcher);
+        header.addView(logo, new LinearLayout.LayoutParams(dp(72), dp(72)));
+
+        TextView appName = new TextView(ctx);
+        appName.setText("HY文件管理");
+        appName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
+        appName.setTypeface(null, android.graphics.Typeface.BOLD);
+        appName.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        appName.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        nameLp.topMargin = dp(10);
+        header.addView(appName, nameLp);
+
+        TextView verBadge = new TextView(ctx);
+        verBadge.setText("v" + appVersionName() + "  ·  " + appVersionCode());
+        verBadge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        verBadge.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnPrimary));
+        verBadge.setPadding(dp(12), dp(4), dp(12), dp(4));
+        verBadge.setBackground(UiKit.rounded(ctx, 999,
+                UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary), 0));
+        LinearLayout.LayoutParams vLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        vLp.topMargin = dp(8);
+        header.addView(verBadge, vLp);
+
+        TextView tagline = new TextView(ctx);
+        tagline.setText("双窗格文件管理器 · 压缩包直读 · 内置编辑器");
+        tagline.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        tagline.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tagline.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams tagLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        tagLp.topMargin = dp(6);
+        header.addView(tagline, tagLp);
+        box.addView(header);
+
+        // ══════ 快捷操作：检查更新 / 问题反馈（横向等分）══════
+        LinearLayout quick = new LinearLayout(ctx);
+        quick.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams quickLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        quickLp.topMargin = dp(8);
+
+        LinearLayout btnUpdate = aboutQuickButton("检查更新", R.drawable.ic_refresh, v -> {
+            showInSettingsDialog("软件更新", this::showUpdatePageBody);
+        });
+        LinearLayout btnFeedback = aboutQuickButton("问题反馈", R.drawable.ic_info,
+                v -> showFeedbackDialog());
+        LinearLayout.LayoutParams half1 = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        quick.addView(btnUpdate, half1);
+        LinearLayout.LayoutParams half2 = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        half2.leftMargin = dp(8);
+        quick.addView(btnFeedback, half2);
+        box.addView(quick, quickLp);
+
+        // ══════ 应用信息 ══════
+        box.addView(sectionHeaderInCard("应用信息"));
         addInfoRow(box, "包名", ctx.getPackageName(), true, null);
         addInfoRow(box, "最低系统", "Android 6.0（API 23）", true, null);
+        addInfoRow(box, "编译 SDK", "Android 16（API 36）", true, null);
 
+        // ══════ 开源仓库 ══════
         box.addView(sectionHeaderInCard("开源仓库"));
         addInfoRow(box, "GitHub", REPO_GITHUB, true, v -> openUrl(REPO_GITHUB));
         addInfoRow(box, "Gitee", REPO_GITEE, true, v -> openUrl(REPO_GITEE));
+        addInfoRow(box, "问题反馈", "无需注册，应用内直接提交", true,
+                v -> showFeedbackDialog());
 
-        box.addView(sectionHeaderInCard("关于本项目"));
+        // ══════ 第三方开源库（许可证合规 + 排查用）══════
+        box.addView(sectionHeaderInCard("第三方开源库"));
+        addInfoRow(box, "AndroidX · Material Components", "Apache-2.0", false, null);
+        addInfoRow(box, "Media3 / ExoPlayer", "Apache-2.0", false, null);
+        addInfoRow(box, "OkHttp", "Apache-2.0", false, null);
+        addInfoRow(box, "zip4j", "Apache-2.0", false, null);
+        addInfoRow(box, "Apache Commons Compress / Codec", "Apache-2.0", false, null);
+        addInfoRow(box, "XZ for Java", "Public Domain", false, null);
+        addInfoRow(box, "zstd-jni", "BSD-2-Clause", false, null);
+        addInfoRow(box, "junrar", "UnRAR License（仅解压）", false, null);
+
+        // ══════ 诊断 ══════
+        box.addView(sectionHeaderInCard("诊断"));
+        addInfoRow(box, "导出诊断日志", "崩溃记录 + 设备与应用信息", true,
+                v -> exportDiagnosticLog());
+        addInfoRow(box, "清除应用数据", "设置与缓存（不动你的文件）", true,
+                v -> confirmClearAllData());
+
+        // ══════ 致谢与许可 ══════
+        box.addView(sectionHeaderInCard("致谢与许可"));
         TextView desc = new TextView(ctx);
         desc.setText(
-                "HY文件管理是一个 Android 双窗格文件管理器，"
-                + "支持 11 种压缩格式的创建与解压、内置文本编辑器和媒体播放器。\n\n"
-                + "开发说明：\n"
-                + "本项目在开发过程中使用了 AI 辅助工具进行代码编写、"
-                + "审查与文档整理，所有产出均经过人工核对与真机验证。"
-                + "具体使用的工具包括 DeepSeek 系列模型（代码生成与审查）、"
-                + "Gradle 8.1.1 / AGP 8.1.4 构建工具链、"
-                + "以及自建的 aarch64 版 aapt2。\n\n"
-                + "开源许可：详见仓库内 LICENSE 文件。");
-        desc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                "本应用以 MIT 许可证开源，源码见上方仓库。\n\n"
+                + "开发说明：开发过程中使用了 AI 辅助工具进行代码编写、审查与"
+                + "文档整理，所有产出均经人工核对与真机验证。\n\n"
+                + "解压能力基于上述第三方库。RAR 为专有格式，"
+                + "本应用仅用 junrar 解压，不提供 RAR 压缩。");
+        desc.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         desc.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         desc.setLineSpacing(dp(3), 1f);
         desc.setTextIsSelectable(true);
-        // 多行正文不能裸压在背景图上：套一层卡片，
-        // 可读性交给「卡片不透明度」这一个旋钮统一控制。
-        //
-        // ⚠ 这里原本是「有背景图才套卡、没有就裸放」，两种模式下
-        // 卡片不透明度滑块一个有作用一个没作用，属于行为漂移。
-        // 统一成无条件套卡：无论有没有背景图，页面上的字都在卡片里，
-        // 都由 cardAlpha 一个旋钮控制。
         LinearLayout descCard = new LinearLayout(ctx);
         descCard.setOrientation(LinearLayout.VERTICAL);
         descCard.setPadding(dp(12), dp(12), dp(12), dp(12));
         applyCardSurface(descCard, -1, false);
         descCard.setTag(CARD_TAG_KEY, Boolean.TRUE);
-        desc.setPadding(0, 0, 0, 0);
         descCard.addView(desc);
         LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -5629,6 +5701,251 @@ public class FileManagerModule extends HyVqModule {
         box.addView(descCard, dlp);
 
         return box;
+    }
+
+    /** 关于页快捷按钮：图标 + 文字横排，卡片底，由调用方决定宽度 */
+    private LinearLayout aboutQuickButton(String text, int iconRes, View.OnClickListener onClick) {
+        LinearLayout btn = new LinearLayout(ctx);
+        btn.setOrientation(LinearLayout.HORIZONTAL);
+        btn.setGravity(Gravity.CENTER);
+        btn.setPadding(dp(10), dp(13), dp(10), dp(13));
+        applyCardSurface(btn, 10, false);
+        btn.setTag(CARD_TAG_KEY, Boolean.TRUE);
+        btn.setClickable(true);
+        btn.setFocusable(true);
+
+        android.widget.ImageView icon = new android.widget.ImageView(ctx);
+        icon.setImageResource(iconRes);
+        icon.setColorFilter(UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary));
+        LinearLayout.LayoutParams iLp = new LinearLayout.LayoutParams(dp(18), dp(18));
+        iLp.rightMargin = dp(6);
+        btn.addView(icon, iLp);
+
+        TextView tv = new TextView(ctx);
+        tv.setText(text);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tv.setTypeface(null, android.graphics.Typeface.BOLD);
+        tv.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+        btn.addView(tv);
+
+        btn.setOnClickListener(onClick);
+        return btn;
+    }
+
+    /** 导出诊断日志（应用/设备信息 + 最近 5 条崩溃记录） */
+    private void exportDiagnosticLog() {
+        new Thread(() -> {
+            StringBuilder sb = new StringBuilder();
+            sb.append("=== HY文件管理 诊断日志 ===\n");
+            sb.append("时间：").append(new java.text.SimpleDateFormat(
+                    "yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date())).append('\n');
+            sb.append("版本：").append(appVersionName()).append("（")
+                    .append(appVersionCode()).append("）\n");
+            sb.append("包名：").append(ctx.getPackageName()).append('\n');
+            sb.append("设备：").append(android.os.Build.MANUFACTURER).append(' ')
+                    .append(android.os.Build.MODEL).append('\n');
+            sb.append("系统：Android ").append(android.os.Build.VERSION.RELEASE)
+                    .append("（API ").append(android.os.Build.VERSION.SDK_INT).append("）\n");
+            sb.append("ABI：").append(android.os.Build.SUPPORTED_ABIS.length > 0
+                    ? android.os.Build.SUPPORTED_ABIS[0] : "?").append('\n');
+            sb.append("\n=== 崩溃日志 ===\n");
+            java.io.File crashDir = new java.io.File(ctx.getFilesDir(), "crash");
+            java.io.File[] logs = crashDir.listFiles();
+            if (logs == null || logs.length == 0) {
+                sb.append("（无崩溃记录）\n");
+            } else {
+                java.util.Arrays.sort(logs, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+                int n = Math.min(5, logs.length);
+                for (int i = 0; i < n; i++) {
+                    sb.append("\n--- ").append(logs[i].getName()).append(" ---\n");
+                    try {
+                        byte[] d = java.nio.file.Files.readAllBytes(logs[i].toPath());
+                        sb.append(new String(d, java.nio.charset.StandardCharsets.UTF_8));
+                    } catch (Throwable t) {
+                        sb.append("（读取失败：").append(t).append("）\n");
+                    }
+                }
+                if (logs.length > 5) {
+                    sb.append("\n…还有 ").append(logs.length - 5).append(" 个更早的崩溃日志未包含\n");
+                }
+            }
+            final String content = sb.toString();
+            handler.post(() -> {
+                if (detached) return;
+                showSaveLogDialog(content);
+            });
+        }, "HyDiag").start();
+    }
+
+    /** 日志保存弹窗：预览 + 复制 + 保存到下载 */
+    private void showSaveLogDialog(final String content) {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sectionHeaderInCard("导出诊断日志"));
+
+        TextView tip = new TextView(ctx);
+        String preview = content.length() > 400 ? content.substring(0, 400) + "\n…" : content;
+        tip.setText("共 " + content.length() + " 字符：\n\n" + preview);
+        tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tip.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tip.setTypeface(android.graphics.Typeface.MONOSPACE);
+        tip.setPadding(dp(8), dp(8), dp(8), dp(8));
+        tip.setBackground(UiKit.rounded(ctx, 8,
+                UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow),
+                UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
+        android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+        sv.addView(tip);
+        LinearLayout.LayoutParams svLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        svLp.bottomMargin = dp(10);
+        box.addView(sv, svLp);
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        btns.addView(textButton("复制", v -> {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                    ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+            if (cm != null) cm.setPrimaryClip(
+                    android.content.ClipData.newPlainText("HY诊断日志", content));
+            UiKit.toast(ctx, "已复制");
+        }));
+        btns.addView(textButton("保存到下载", v -> {
+            UiKit.dismissWithAnim(d);
+            saveLogToDownloads(content);
+        }));
+        btns.addView(textButton("关闭", v -> UiKit.dismissWithAnim(d)));
+        box.addView(btns);
+        d.show();
+    }
+
+    /** 写日志到下载目录（Android 10+ 走 MediaStore，无需存储权限） */
+    private void saveLogToDownloads(final String content) {
+        String name = "hy_diag_" + new java.text.SimpleDateFormat(
+                "yyyyMMdd_HHmmss", java.util.Locale.US).format(new java.util.Date()) + ".log";
+        try {
+            String saved;
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                android.content.ContentValues cv = new android.content.ContentValues();
+                cv.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name);
+                cv.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain");
+                cv.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                        android.os.Environment.DIRECTORY_DOWNLOADS + "/HY文件管理-日志");
+                android.net.Uri uri = ctx.getContentResolver().insert(
+                        android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv);
+                if (uri == null) {
+                    UiKit.alert(ctx, "无法创建文件");
+                    return;
+                }
+                try (java.io.OutputStream out = ctx.getContentResolver().openOutputStream(uri)) {
+                    if (out == null) {
+                        UiKit.alert(ctx, "无法打开输出流");
+                        return;
+                    }
+                    out.write(content.getBytes("UTF-8"));
+                    out.flush();
+                }
+                saved = "下载/HY文件管理-日志/" + name;
+            } else {
+                java.io.File dir = new java.io.File(
+                        android.os.Environment.getExternalStoragePublicDirectory(
+                                android.os.Environment.DIRECTORY_DOWNLOADS), "HY文件管理-日志");
+                if (!dir.exists() && !dir.mkdirs()) {
+                    UiKit.alert(ctx, "无法创建目录");
+                    return;
+                }
+                java.io.File f = new java.io.File(dir, name);
+                try (java.io.FileOutputStream out = new java.io.FileOutputStream(f)) {
+                    out.write(content.getBytes("UTF-8"));
+                    out.flush();
+                }
+                saved = f.getAbsolutePath();
+            }
+            UiKit.toast(ctx, "已保存到：\n" + saved);
+        } catch (Throwable t) {
+            UiKit.alert(ctx, "保存失败：" + msgOf(t));
+        }
+    }
+
+    /** 清除应用数据：二次确认 */
+    private void confirmClearAllData() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sectionHeaderInCard("⚠ 清除应用数据"));
+
+        TextView tv = new TextView(ctx);
+        tv.setText("将清除：\n· 全部设置（主题、背景图、排序、扫描路径等）\n"
+                + "· 缩略图缓存、ZIP 浏览缓存、更新包缓存\n\n"
+                + "不会动：\n· 你的文件与回收站内容\n\n"
+                + "清除后应用恢复到初始状态，不可撤销。");
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tv.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+        tv.setLineSpacing(dp(2), 1f);
+        tv.setPadding(dp(4), 0, dp(4), dp(8));
+        box.addView(tv);
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+        LinearLayout btns = new LinearLayout(ctx);
+        btns.setGravity(Gravity.END);
+        btns.addView(textButton("取消", v -> UiKit.dismissWithAnim(d)));
+        TextView ok = textButton("确认清除", null);
+        ok.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorError));
+        ok.setOnClickListener(v -> {
+            UiKit.dismissWithAnim(d);
+            doClearAllData();
+        });
+        btns.addView(ok);
+        box.addView(btns);
+        d.show();
+    }
+
+    /** 实际清除：SharedPreferences + 缓存子目录（不碰用户文件与回收站） */
+    private void doClearAllData() {
+        new Thread(() -> {
+            StringBuilder report = new StringBuilder();
+            try {
+                fmPrefs().edit().clear().commit();
+                report.append("· 设置已清除\n");
+            } catch (Throwable t) {
+                report.append("· 设置清除失败：").append(t).append('\n');
+            }
+            String[] caches = {"thumbs", "zipview", "zipnested"};
+            for (String c : caches) {
+                java.io.File dir = new java.io.File(ctx.getCacheDir(), c);
+                if (deleteDirQuiet(dir)) report.append("· 缓存已清：").append(c).append('\n');
+            }
+            java.io.File[] ups = ctx.getCacheDir().listFiles((d, n) -> n.startsWith("update_"));
+            if (ups != null) {
+                for (java.io.File f : ups) {
+                    //noinspection ResultOfMethodCallIgnored
+                    f.delete();
+                }
+                report.append("· 更新包已清\n");
+            }
+            final String msg = report.toString().trim();
+            handler.post(() -> {
+                if (detached) return;
+                UiKit.alert(ctx, "清除完成：\n\n" + msg + "\n\n建议重启应用以完全生效。");
+            });
+        }, "HyClearData").start();
+    }
+
+    /** 静默删目录（不抛异常，返回是否删掉了） */
+    private boolean deleteDirQuiet(java.io.File dir) {
+        if (dir == null || !dir.exists()) return false;
+        java.io.File[] kids = dir.listFiles();
+        if (kids != null) {
+            for (java.io.File k : kids) {
+                if (k.isDirectory()) deleteDirQuiet(k);
+                else {
+                    //noinspection ResultOfMethodCallIgnored
+                    k.delete();
+                }
+            }
+        }
+        //noinspection ResultOfMethodCallIgnored
+        return dir.delete();
     }
 
     /** 用系统浏览器打开链接 */
