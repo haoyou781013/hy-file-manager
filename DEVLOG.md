@@ -97,6 +97,34 @@ AnimatedImageDrawable 播放，>屏幕 2 倍时 setTargetSampleSize(2) 降采样
 
 **验证**：assembleRelease 通过；已静默装机。
 **未实测**：网格滚动性能（大目录）、chips 切换、路径增删后的刷新、点图进查看器。
+
+## ICO / PE 图标提取 + 查看器高清模式（44052ba）
+
+**新增文件**：`icon/IcoDecoder.java`（293 行）、`icon/PeIconExtractor.java`（282 行），
+均纯 Java 零依赖，只读文件头与 .rsrc 节，不加载/执行 PE 内容。
+
+**ThumbLoader 接入**：supports() 加 ico 与 exe/dll/mun/cpl；
+decode() 里 ico/PE 分支必须在 isImage 之前（.ico 同时在 isImage 列表）。
+失败静默回退静态类型图标。
+
+**PE 解析两个致命坑（实测 notepad++.exe 逐层验证）**：
+1. `RandomAccessFile.readInt()/readUnsignedShort()` 是**大端**，PE 是小端。
+   直接用会把 'MZ'(0x5A4D) 读成 0x4D5A，第一步就判非 PE → 全量静默失败。
+   必须自写 le16/le32。
+2. **两套偏移语义不同**：
+   - 目录项 `OffsetToDirectory` → 相对 **.rsrc 节起点**
+   - 数据项 `OffsetToData` → **真 RVA**，需减 rsrcRva
+   混用会得到负偏移（seek 抛 Negative seek offset）或读到文件尾外。
+3. 无 .rsrc 节的 PE（如 PyInstaller bootloader）正确返回 null。
+
+**实测结果**：notepad++.exe → 128×128 图标，9999/16384 不透明像素、7250 种颜色
+（确认是真实彩色图标而非全黑/空白）；边界（不存在/垃圾/只有 MZ 头/无 rsrc）均 null。
+
+**查看器高清模式**：长按切换。默认屏幕 2 倍采样 + RGB_565（快、省内存）；
+高清模式屏幕 4 倍采样 + ARGB_8888，信息位标「· 高清」。
+**坑**：长按不能写在 `imageView.setOnLongClickListener` ——
+`OnTouchListener` 恒返回 true 会吃掉 View 级长按事件，必须写在
+`GestureDetector.onLongPress`。GIF 动图走 ImageDecoder 另一条路径，不受影响。
 **实测崩溃 1 次（bbd78c1）**：`?attr/selectableItemBackground` 在查看器的
 framework 主题（Theme.Black.NoTitleBar.Fullscreen）下无法解析 →
 InflateException 打开图片即崩。修复 `4afc2b9`：换 `@drawable/bg_ripple`
