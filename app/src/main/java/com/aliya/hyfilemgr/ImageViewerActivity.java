@@ -234,12 +234,21 @@ public class ImageViewerActivity extends Activity {
      */
     private void toggleHd() {
         hdMode = !hdMode;
-        UiKit.toast(this, hdMode ? "高清模式：开（重新加载中）" : "高清模式：关");
+        UiKit.toast(this, hdMode ? "高清模式：开" : "高清模式：关（省内存）");
         loadImage(currentPath, currentIsUri);
     }
 
-    /** 高清模式标记 */
-    private boolean hdMode;
+    /**
+     * 高清模式标记（默认开）。
+     *
+     * <p><b>为什么改成默认开</b>：用户要求默认高清。
+     * 代价是大图（>屏幕 4 倍）解码慢一些、内存占用高一些，
+     * 但屏幕上看图清晰度优先；内存风险由 {@link #calcHdSample} 上界兑底
+     * （超过屏幕 4 倍才降采样，最长边上限 8 倍）。</p>
+     *
+     * <p>长按画面可切回普通模式（屏幕 2 倍采样 + RGB_565，快但色彩有损）。</p>
+     */
+    private boolean hdMode = true;
 
     /**
      * 高清采样倍率：取「原始尺寸不超过屏幕 4 倍」时用 1（不采样），
