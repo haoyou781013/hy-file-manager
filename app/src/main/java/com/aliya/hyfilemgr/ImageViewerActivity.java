@@ -7,8 +7,6 @@ import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
@@ -43,9 +41,9 @@ public class ImageViewerActivity extends Activity {
     /** 结果动作：设为背景已选择。data = 图片路径；extra = 是否文件列表页背景 */
     public static final String RESULT_ACTION_WALLPAPER = "image_action_wallpaper";
     public static final String EXTRA_FOR_FM = "image_for_fm";
-
-    /** 唤出顶/底栏后自动隐藏的延时（毫秒） */
-    private static final long AUTO_HIDE_MS = 3000;
+    /** 同目录图片列表（String[]）与起始索引；不传则不启用左右切换 */
+    public static final String EXTRA_LIST = "image_list";
+    public static final String EXTRA_INDEX = "image_index";
 
     private ImageView imageView;
     private View topBar, bottomBar;
@@ -53,8 +51,14 @@ public class ImageViewerActivity extends Activity {
     private android.view.ScaleGestureDetector scaleDetector;
     private android.view.GestureDetector gestureDetector;
     private boolean barsVisible = true;
-    private final Handler hideHandler = new Handler(Looper.getMainLooper());
-    private final Runnable autoHide = () -> setBarsVisible(false);
+
+    /** 同目录图片列表与当前位置（EXTRA_LIST 未传时只含当前一张，不显示计数） */
+    private String[] gallery;
+    private int galleryIndex;
+    /** 当前展示的路径（删除/设背景都以它为准） */
+    private String currentPath;
+    private boolean currentIsUri;
+    private String currentUriStr;
 
     @Override protected void attachBaseContext(android.content.Context base) {
         // 应用级 DPI 覆盖：与主界面/播放器一致，否则密度设置对本页无效
@@ -76,29 +80,41 @@ public class ImageViewerActivity extends Activity {
         String uriStr = getIntent().getStringExtra(EXTRA_URI);
         String title = getIntent().getStringExtra(EXTRA_TITLE);
         boolean isUri = uriStr != null && !uriStr.isEmpty();
-        if (title == null || title.isEmpty()) {
-            title = isUri ? "图片" : new File(path == null ? "" : path).getName();
+        currentPath = path;
+        currentIsUri = isUri;
+        currentUriStr = uriStr;
+
+        // 同目录图集：模块传来的当前窗格列表（与播放器 collectPlayable 同思路）。
+        // 未传或只有一张 → 不启用切换；local path 才能扫，content:// 无目录概念。
+        String[] list = getIntent().getStringArrayExtra(EXTRA_LIST);
+        int idx = getIntent().getIntExtra(EXTRA_INDEX, 0);
+        if (!isUri && path != null && list != null && list.length > 1) {
+            gallery = list;
+            galleryIndex = Math.max(0, Math.min(idx, list.length - 1));
+        } else {
+            gallery = new String[]{ isUri ? uriStr : path };
+            galleryIndex = 0;
         }
+
+        String name = isUri ? "图片" : new File(path == null ? "" : path).getName();
+        if (title == null || title.isEmpty()) title = name;
         tvTitle.setText(title);
-        tvInfo.setText("");
+        updateCounter(tvInfo);
 
         findViewById(com.aliya.hyfilemgr.R.id.btn_iv_back).setOnClickListener(v -> finish());
 
         // ── 底部功能栏：全部回传主界面处理 ──
         // 删除/设为背景只对本地路径可用（content:// 的删除要 SAF 流程、
         // 壁纸复制需要可重开的流——两者都走模块的既有链路，Uri 来源另议）。
-        boolean canOperate = !isUri && path != null;
+        // 切图后按钮行为跟随 currentPath，所以用间接引用而不是直接闭包 path。
         View del = findViewById(com.aliya.hyfilemgr.R.id.btn_iv_delete);
         View wp = findViewById(com.aliya.hyfilemgr.R.id.btn_iv_wallpaper);
-        del.setVisibility(canOperate ? View.VISIBLE : View.GONE);
-        wp.setVisibility(canOperate ? View.VISIBLE : View.GONE);
-        if (canOperate) {
-            del.setOnClickListener(v -> confirmDelete(path));
-            wp.setOnClickListener(v -> askWallpaperTarget(path));
-            findViewById(com.aliya.hyfilemgr.R.id.btn_iv_share).setOnClickListener(v -> shareImage(path, uriStr, isUri));
-        } else {
-            findViewById(com.aliya.hyfilemgr.R.id.btn_iv_share).setOnClickListener(v -> shareImage(path, uriStr, isUri));
-        }
+        del.setVisibility(!isUri ? View.VISIBLE : View.GONE);
+        wp.setVisibility(!isUri ? View.VISIBLE : View.GONE);
+        del.setOnClickListener(v -> confirmDelete(currentPath));
+        wp.setOnClickListener(v -> askWallpaperTarget(currentPath));
+        findViewById(com.aliya.hyfilemgr.R.id.btn_iv_share).setOnClickListener(
+                v -> shareImage(currentPath, currentUriStr, currentIsUri));
 
         // ── 状态栏沉浸：透明状态栏，顶栏从状态栏后面开始。
         // insets 必须在 attach 后取（createMainView 阶段 DecorView 未 attach
@@ -156,6 +172,20 @@ public class ImageViewerActivity extends Activity {
                         return true;
                     }
 
+                    @Override public boolean onFling(MotionEvent e1, MotionEvent e2,
+                                                     float vx, float vy) {
+                        // 左右快滑切图：仅单指、水平分量明显大于垂直、无缩放中。
+                        // 图片被放大拖动时水平滑动是拖图（dx 已被 onScroll 消费），
+                        // fling 只在图片未放大（可判定 matrix 平移在边界内）或快速甩动时触发。
+                        if (e1 == null || e2 == null) return false;
+                        float dx = e2.getX() - e1.getX();
+                        float dy = e2.getY() - e1.getY();
+                        if (Math.abs(dx) < dp(60) || Math.abs(dx) < Math.abs(dy) * 1.5f) return false;
+                        if (Math.abs(vx) < 800f) return false;
+                        switchImage(dx < 0 ? 1 : -1);
+                        return true;
+                    }
+
                     @Override public boolean onSingleTapConfirmed(MotionEvent e) {
                         toggleBars();
                         return true;
@@ -168,28 +198,7 @@ public class ImageViewerActivity extends Activity {
             return true;
         });
 
-        new Thread(() -> {
-            final Bitmap bmp;
-            try {
-                bmp = decodeSampled(isUri ? uriStr : path, isUri);
-            } catch (Throwable t) {
-                runOnUiThread(() -> {
-                    UiKit.toast(this, "图片解码失败：" + t.getMessage());
-                    finish();
-                });
-                return;
-            }
-            runOnUiThread(() -> {
-                if (bmp == null) {
-                    UiKit.toast(this, "无法解码该图片");
-                    finish();
-                    return;
-                }
-                imageView.setImageBitmap(bmp);
-                tvInfo.setText(bmp.getWidth() + " × " + bmp.getHeight());
-                resetMatrix();
-            });
-        }).start();
+        loadImage(path, isUri);
 
         // 初始态：白底+栏展开。之前漏调导致 XML 默认黑底+栏可见的混合态
         //（用户实测：进入是黑底显示功能栏，点击后才恢复）。
@@ -197,12 +206,64 @@ public class ImageViewerActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
-        hideHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
 
     private int dp(int v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
+    }
+
+    // ── 图集加载与切换 ──
+
+    /** 加载指定路径的图片（后台解码，成功后更新信息栏与矩阵） */
+    private void loadImage(String path, boolean isUri) {
+        new Thread(() -> {
+            final Bitmap bmp;
+            try {
+                bmp = decodeSampled(isUri ? currentUriStr : path, isUri);
+            } catch (Throwable t) {
+                runOnUiThread(() ->
+                        UiKit.toast(this, "图片解码失败：" + t.getMessage()));
+                return;
+            }
+            runOnUiThread(() -> {
+                if (bmp == null) {
+                    UiKit.toast(this, "无法解码该图片");
+                    return;
+                }
+                imageView.setImageBitmap(bmp);
+                TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
+                info.setText(bmp.getWidth() + " × " + bmp.getHeight());
+                resetMatrix();
+            });
+        }).start();
+    }
+
+    /** 左右切换同目录图片：dir=1 下一张 / -1 上一张，循环 */
+    private void switchImage(int dir) {
+        if (gallery == null || gallery.length <= 1) return;
+        galleryIndex = (galleryIndex + dir + gallery.length) % gallery.length;
+        String p = gallery[galleryIndex];
+        currentPath = p;
+        currentIsUri = false;
+        matrix.reset();
+        imageView.setImageMatrix(matrix);
+        imageView.setImageDrawable(null);
+        TextView tvTitle = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_title);
+        tvTitle.setText(new File(p).getName());
+        TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
+        info.setText("");
+        updateCounter(info);
+        loadImage(p, false);
+    }
+
+    /** 顶栏信息位：有图集时显示「当前/总数」，单图时留空（尺寸由 loadImage 填） */
+    private void updateCounter(TextView info) {
+        if (gallery != null && gallery.length > 1) {
+            info.setText((galleryIndex + 1) + " / " + gallery.length);
+        } else {
+            info.setText("");
+        }
     }
 
     // ── 顶/底栏显隐 ──
@@ -252,8 +313,7 @@ public class ImageViewerActivity extends Activity {
         w.setStatusBarColor(show ? 0xFFFFFFFF : 0x00000000);
         androidx.core.view.WindowCompat.getInsetsController(w, w.getDecorView())
                 .setAppearanceLightStatusBars(show);
-        hideHandler.removeCallbacks(autoHide);
-        if (show) hideHandler.postDelayed(autoHide, AUTO_HIDE_MS);
+        // 不自动隐藏（用户指示）：栏常驻直到用户再点画面。
     }
 
     /** onCreate 首次落位不播动画 */

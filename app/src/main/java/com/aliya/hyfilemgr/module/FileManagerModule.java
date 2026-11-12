@@ -11994,15 +11994,25 @@ public class FileManagerModule extends HyVqModule {
         return String.format(java.util.Locale.CHINA, "%02d:%02d", s / 60, s % 60);
     }
 
-    /** 内置图片查看器 */
+    /** 用内置图片查看器打开（同目录左右切换：从当前窗格条目收集图片列表） */
     private void openImageViewer(String pathOrUri, String name, boolean isUri) {
         try {
-            // 内置图片查看器（双指缩放 / 拖动 / 双击还原 / 大图采样解码 / 分享·删除·设为背景）
+            // 内置图片查看器（双指缩放 / 拖动 / 双击还原 / 左右滑动切图 /
+            // 分享·删除·设为背景）
             Intent i = new Intent(ctx, com.aliya.hyfilemgr.ImageViewerActivity.class);
             if (isUri) {
                 i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_URI, pathOrUri);
             } else {
                 i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_PATH, pathOrUri);
+                // 同目录图集：当前窗格里同扩展名的其它图片。
+                // 与播放器 collectPlayable 同思路；窗格列表不可用时查看器自动退化为单图。
+                java.util.ArrayList<String> imgs = collectImages(pathOrUri);
+                if (imgs.size() > 1) {
+                    i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_LIST,
+                            imgs.toArray(new String[0]));
+                    i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_INDEX,
+                            Math.max(0, imgs.indexOf(pathOrUri)));
+                }
             }
             i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_TITLE, name);
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -12012,7 +12022,6 @@ public class FileManagerModule extends HyVqModule {
             // hostActivity 为 null（理论上不可能，模块就挂在 MainActivity 里）时退化为普通启动。
             if (hostActivity != null) {
                 viewerPendingPath = pathOrUri;
-                viewerPendingIsUri = isUri;
                 hostActivity.startActivityForResult(i, REQ_VIEWER);
             } else {
                 ctx.startActivity(i);
@@ -12020,6 +12029,21 @@ public class FileManagerModule extends HyVqModule {
         } catch (Throwable t) {
             UiKit.alert(ctx, "无法打开图片查看器：" + t.getMessage());
         }
+    }
+
+    /** 收集当前窗格里的同目录图片（自然序外的文件系统序），至少包含当前图 */
+    private java.util.ArrayList<String> collectImages(String curPath) {
+        java.util.ArrayList<String> out = new java.util.ArrayList<>();
+        Pane p = active;
+        if (p != null && p.entries != null) {
+            for (FileEntry e : p.entries) {
+                if (e == null || e.isDir() || e.name == null) continue;
+                if (IMAGE_EXTS.contains(extOf(e.name))
+                        && e.path != null && !e.path.isEmpty()) out.add(e.path);
+            }
+        }
+        if (!out.contains(curPath)) out.add(0, curPath);
+        return out;
     }
 
     /** 查看器回传处理：onActivityResult 由 MainActivity 转发过来 */
@@ -12052,7 +12076,6 @@ public class FileManagerModule extends HyVqModule {
 
     /** 查看器回传时记住的源路径（onActivityResult 只带动作不带路径以外的上下文） */
     private String viewerPendingPath;
-    private boolean viewerPendingIsUri;
 
     /** 用内置编辑器打开指定文件（先进入其所在目录再打开） */
     private void openInEditorByName(String pathOrUri, String name, boolean isUri) {
