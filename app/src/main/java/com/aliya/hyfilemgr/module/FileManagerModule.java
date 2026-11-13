@@ -4101,8 +4101,8 @@ public class FileManagerModule extends HyVqModule {
                     showInSettingsDialog("文件管理", this::buildFileSettings);
                 });
         addSettingsRow(box, "图片查看器",
-                "相册扫描路径管理", R.drawable.ic_img, v -> {
-                    showGallerySettings();
+                "高清模式 · 相册扫描路径", R.drawable.ic_img, v -> {
+                    showInSettingsDialog("图片查看器", this::buildGallerySettings);
                 });
 
         // ── 软件 ──
@@ -4440,7 +4440,7 @@ public class FileManagerModule extends HyVqModule {
                 UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHigh),
                 UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
         add.setClickable(true);
-        add.setOnClickListener(v -> showGallerySettings());
+        add.setOnClickListener(v -> showInSettingsDialog("图片查看器", this::buildGallerySettings));
         galleryChipsRow.addView(add);
     }
 
@@ -4629,62 +4629,81 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 相册扫描路径设置弹窗（侧边栏 ＋ 与设置页共用）：列表增删 + 常用路径快捷加 */
-    private void showGallerySettings() {
+    /**
+     * 图片查看器设置（内嵌页，2026-11-12 从弹窗改为与「文件管理」同款）。
+     *
+     * <p>为什么改：弹窗在设置页里是「另一层 UI」，用户点进去后返回键行为、
+     * 背景图/卡片透明度都跟设置页不一致；改成内嵌页后与其它设置项完全同构。</p>
+     *
+     * <p>内容：高清模式开关 + 扫描路径管理（增删 + 常用路径快捷添加）。</p>
+     */
+    private View buildGallerySettings() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(sectionHeaderInCard("图片查看器 · 扫描路径"));
+        box.addView(sectionHeaderInCard("图片查看器"));
+
+        // ── 高清模式（默认开）──
+        addInfoRow(box, "高清模式",
+                hdDefaultOn ? "已开启 · 按近原图分辨率解码（更清晰，占内存）"
+                            : "已关闭 · 按屏幕尺寸采样（更省内存）",
+                hdDefaultOn, v -> {
+                    hdDefaultOn = !hdDefaultOn;
+                    savePrefBool(PREF_VIEWER_HD, hdDefaultOn);
+                    persistState();
+                    hideSettingsDialog();
+                    showInSettingsDialog("图片查看器", this::buildGallerySettings);
+                    UiKit.toast(ctx, hdDefaultOn ? "高清模式已开启" : "高清模式已关闭");
+                });
+
+        TextView hdTip = new TextView(ctx);
+        hdTip.setText("开启后大图更清晰，但解码更慢、内存占用更高。\n"
+                + "查看器中长按画面可临时切换，不影响此处的默认设置。");
+        hdTip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        hdTip.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        hdTip.setLineSpacing(dp(2), 1f);
+        hdTip.setPadding(dp(14), dp(2), dp(14), dp(10));
+        box.addView(hdTip);
+
+        // ── 扫描路径 ──
+        box.addView(sectionHeaderInCard("相册扫描路径"));
 
         TextView hint = new TextView(ctx);
-        hint.setText("相册页按这些路径扫描图片（含一层子目录）。\n点路径删除，点下方快捷项添加。");
+        hint.setText("相册页按这些路径扫描图片（含一层子目录）。点路径删除，点下方快捷项添加。");
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         hint.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
-        hint.setPadding(dp(4), 0, dp(4), dp(6));
+        hint.setLineSpacing(dp(2), 1f);
+        hint.setPadding(dp(14), 0, dp(14), dp(8));
         box.addView(hint);
 
-        // 路径行容器：重建式刷新
-        LinearLayout list = new LinearLayout(ctx);
+        final LinearLayout list = new LinearLayout(ctx);
         list.setOrientation(LinearLayout.VERTICAL);
         box.addView(list);
-
-        android.app.Dialog d = UiKit.glassDialog(ctx, box);
 
         // lambda 内递归引用自身 → 用数组容器绕开 final 限制
         final Runnable[] rebuildHolder = new Runnable[1];
         rebuildHolder[0] = () -> {
             list.removeAllViews();
             for (final String p : loadGalleryPaths()) {
-                TextView row = new TextView(ctx);
-                row.setText(p.replace(
-                        android.os.Environment.getExternalStorageDirectory().getAbsolutePath(), "内部存储"));
-                row.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-                row.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
-                row.setPadding(dp(8), dp(10), dp(8), dp(10));
-                row.setBackgroundResource(com.aliya.hyfilemgr.R.drawable.bg_ripple);
-                row.setClickable(true);
-                row.setOnClickListener(v -> {
+                String shown = p.replace(
+                        android.os.Environment.getExternalStorageDirectory().getAbsolutePath(),
+                        "内部存储");
+                addInfoRow(list, shown, "点击删除此扫描路径", true, v -> {
                     loadGalleryPaths().remove(p);
                     saveGalleryPaths();
                     UiKit.toast(ctx, "已删除");
                     rebuildHolder[0].run();
                 });
-                list.addView(row);
             }
             if (loadGalleryPaths().isEmpty()) {
-                TextView empty = new TextView(ctx);
-                empty.setText("（无扫描路径）");
-                empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-                empty.setTextColor(UiKit.color(ctx,
-                        com.google.android.material.R.attr.colorOnSurfaceVariant));
-                empty.setPadding(dp(8), dp(8), dp(8), dp(8));
-                list.addView(empty);
+                addInfoRow(list, "（无扫描路径）", "点下方快捷项添加", false, null);
             }
         };
         rebuildHolder[0].run();
 
-        // 常用路径快捷添加：存在且未在列表中才显示
-        LinearLayout quick = new LinearLayout(ctx);
-        quick.setOrientation(LinearLayout.VERTICAL);
+        // ── 常用路径快捷添加（存在且未在列表中才显示）──
+        box.addView(sectionHeaderInCard("快捷添加"));
         String root = android.os.Environment.getExternalStorageDirectory().getAbsolutePath();
         String[][] quickPaths = {
                 {"DCIM（相机）", root + "/DCIM"},
@@ -4692,45 +4711,35 @@ public class FileManagerModule extends HyVqModule {
                 {"Pictures", root + "/Pictures"},
                 {"Screenshots（截图）", root + "/Pictures/Screenshots"},
                 {"Download（下载）", root + "/Download"}};
+        boolean anyQuick = false;
         for (final String[] qp : quickPaths) {
             if (!new File(qp[1]).isDirectory()) continue;
             if (loadGalleryPaths().contains(qp[1])) continue;
-            TextView row = new TextView(ctx);
-            row.setText("＋ " + qp[0]);
-            row.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            row.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary));
-            row.setPadding(dp(8), dp(10), dp(8), dp(10));
-            row.setBackgroundResource(com.aliya.hyfilemgr.R.drawable.bg_ripple);
-            row.setClickable(true);
-            row.setOnClickListener(v -> {
+            anyQuick = true;
+            addInfoRow(box, "＋ " + qp[0], qp[1].replace(root, "内部存储"), true, v -> {
                 loadGalleryPaths().add(qp[1]);
                 saveGalleryPaths();
                 UiKit.toast(ctx, "已添加 " + qp[0]);
-                rebuildHolder[0].run();
+                hideSettingsDialog();
+                showInSettingsDialog("图片查看器", this::buildGallerySettings);
             });
-            quick.addView(row);
         }
-        box.addView(quick);
+        if (!anyQuick) {
+            TextView none = new TextView(ctx);
+            none.setText("常用路径均已添加");
+            none.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+            none.setTextColor(UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorOnSurfaceVariant));
+            none.setPadding(dp(14), dp(6), dp(14), dp(10));
+            box.addView(none);
+        }
 
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setGravity(Gravity.END);
-        TextView done = new TextView(ctx);
-        done.setText("完成");
-        done.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        done.setTypeface(null, android.graphics.Typeface.BOLD);
-        done.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary));
-        done.setPadding(dp(16), dp(8), dp(8), dp(8));
-        done.setOnClickListener(v -> {
-            UiKit.dismissWithAnim(d);
-            // 扫描路径变化后刷新相册页（若已打开）
-            if (contentMode == ContentMode.GALLERY && galleryCurDir != null) {
-                scanGallery(galleryCurDir);
-            }
-        });
-        btns.addView(done);
-        box.addView(btns);
-        d.show();
+        return box;
     }
+
+    /** 高清模式默认值（持久化，默认开） */
+    private boolean hdDefaultOn = true;
+    private static final String PREF_VIEWER_HD = "viewer_hd_default";
 
     // ══════════ 存储管理 ══════════
 
@@ -4746,20 +4755,28 @@ public class FileManagerModule extends HyVqModule {
      * <p><b>为什么先建行再回填</b>：统计要几秒，先 show 再刷新，
      * 用户不会盯着一个白屏等。每项先显示「统计中…」，回调里 setText。</p>
      */
+    /**
+     * 存储管理页（2026-11-12 重构）。
+     *
+     * <p><b>本次改动</b>：
+     * <ul>
+     *   <li><b>分段彩色进度条</b>：原来单色条只表达「已用多少」，
+     *       看不出谁占大头。现在按「缓存 / 应用数据 / 回收站 / 其它」分段着色，
+     *       图例与颜色一一对应</li>
+     *   <li><b>多选批量清理</b>：每项前面加勾选框，底部「清理所选」一次处理，
+     *       不用逐项点（原来 7 项要按 7 次）</li>
+     *   <li><b>卡片包裹修复</b>：「可一键清理合计」这行原来直接 addView 到 box，
+     *       落在分组卡片外面——设了背景图后白字压白墙看不清（用户反馈）。
+     *       现在统一走 addToSettingsGroup</li>
+     * </ul></p>
+     */
     private View buildStorageManager() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.addView(sectionHeaderInCard("存储管理"));
 
         final String storePath = Environment.getExternalStorageDirectory().getAbsolutePath();
 
-        // ── 一、内部存储总量 ──
-        //
-        // ⚠ 容量数字、百分比、进度条必须全部躺在分组卡片里面。
-        // 之前它们直接 addView 到 box，落在卡片外面——一旦设了背景图，
-        // 这行字就是白字压白墙，整段「内部存储」只剩标题能看见。
-        // 现在整段包进 sectionHeaderInCard 返回的卡片，与「应用占用」
-        // 同一种结构，背景图和卡片透明度都能正确作用于它。
+        // ══════ 一、容量总览（分段彩色条）══════
         box.addView(sectionHeaderInCard("内部存储"));
 
         final TextView tvTotal = new TextView(ctx);
@@ -4779,95 +4796,376 @@ public class FileManagerModule extends HyVqModule {
         tvDetail.setPadding(dp(14), 0, dp(14), dp(10));
         addToSettingsGroup(box, tvDetail);
 
-        final android.widget.ProgressBar bar = new android.widget.ProgressBar(
-                ctx, null, android.R.attr.progressBarStyleHorizontal);
-        bar.setMax(1000);
-        bar.setProgress(0);
+        // 分段彩色条：自绘 View（ProgressBar 只能单色/单 drawable）
+        final SegmentedBar segBar = new SegmentedBar(ctx);
         LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(8));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(10));
         barLp.leftMargin = dp(14);
         barLp.rightMargin = dp(14);
-        barLp.bottomMargin = dp(14);
-        addToSettingsGroup(box, bar, barLp);
+        addToSettingsGroup(box, segBar, barLp);
 
-        // ── 二、应用占用明细 ──
+        // 图例：颜色与分段一一对应
+        final LinearLayout legend = new LinearLayout(ctx);
+        legend.setOrientation(LinearLayout.VERTICAL);
+        legend.setPadding(dp(14), dp(8), dp(14), dp(4));
+        addToSettingsGroup(box, legend);
+
+        // 未被分段覆盖的「其它占用」说明（系统 + 其它应用），避免用户以为统计漏了
+        final TextView tvOther = new TextView(ctx);
+        tvOther.setText("");
+        tvOther.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvOther.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tvOther.setLineSpacing(dp(2), 1f);
+        tvOther.setPadding(dp(14), dp(2), dp(14), dp(10));
+        addToSettingsGroup(box, tvOther);
+
+        // ══════ 二、应用占用明细（可多选）══════
         box.addView(sectionHeaderInCard("应用占用"));
 
-        final TextView tvThumb = addStorageItem(box, "缩略图缓存", "统计中…", true,
-                () -> {
+        // 可勾选项：key → 清理动作
+        final java.util.LinkedHashMap<String, Runnable> clearActions = new java.util.LinkedHashMap<>();
+        final java.util.LinkedHashSet<String> selected = new java.util.LinkedHashSet<>();
+
+        final TextView tvThumb = addStorageItemSelectable(box, clearActions, selected,
+                "thumbs", "缩略图缓存", () -> {
                     clearCacheSub("thumbs");
                     UiKit.toast(ctx, "已清理缩略图缓存");
-                    refreshStoragePage();
                 });
-        final TextView tvZip = addStorageItem(box, "ZIP 浏览缓存", "统计中…", true,
-                () -> {
+        final TextView tvZip = addStorageItemSelectable(box, clearActions, selected,
+                "zip", "ZIP 浏览缓存", () -> {
                     clearCacheSub("zipview");
                     clearCacheSub("zipnested");
                     UiKit.toast(ctx, "已清理 ZIP 缓存");
-                    refreshStoragePage();
                 });
-        final TextView tvUpd = addStorageItem(box, "更新包缓存", "统计中…", true,
-                () -> {
+        final TextView tvUpd = addStorageItemSelectable(box, clearActions, selected,
+                "update", "更新包缓存", () -> {
                     clearUpdateApks();
                     UiKit.toast(ctx, "已清理更新包");
-                    refreshStoragePage();
                 });
-        final TextView tvDraft = addStorageItem(box, "编辑器草稿", "统计中…", true,
-                () -> confirmThen("清理编辑器草稿", "未保存的编辑内容会丢失，确定继续？", () -> {
+        final TextView tvDraft = addStorageItemSelectable(box, clearActions, selected,
+                "draft", "编辑器草稿", () -> {
                     File d = draftDir();
                     if (d != null) deleteChildren(d);
                     UiKit.toast(ctx, "已清理编辑器草稿");
-                    refreshStoragePage();
-                }));
-        final TextView tvBg = addStorageItem(box, "背景图", "统计中…", true,
-                () -> confirmThen("清理旧背景图", "只删除当前未使用的旧背景图，正在用的那张会保留。", () -> {
+                });
+        final TextView tvBg = addStorageItemSelectable(box, clearActions, selected,
+                "bg", "背景图（旧图）", () -> {
                     int n = purgeOrphanWallpapers();
                     UiKit.toast(ctx, n > 0 ? "已清理 " + n + " 张旧背景图" : "没有可清理的旧背景图");
-                    refreshStoragePage();
-                }));
-        final TextView tvTrash = addStorageItem(box, "回收站", "统计中…", true,
-                () -> confirmThen("清空回收站", "回收站内所有文件将被彻底删除，无法恢复。", () -> {
+                });
+        final TextView tvTrash = addStorageItemSelectable(box, clearActions, selected,
+                "trash", "回收站", () -> {
                     runTask(() -> {
                         int cnt = deleteChildren(new File(TRASH_DIR));
-                        handler.post(() -> {
-                            UiKit.toast(ctx, cnt > 0 ? "已清空回收站" : "回收站已经是空的");
-                            refreshStoragePage();
-                        });
+                        handler.post(() -> UiKit.toast(ctx,
+                                cnt > 0 ? "已清空回收站" : "回收站已经是空的"));
                     });
-                }));
+                });
+        // 应用私有数据合计：只读，不可清理
         final TextView tvApp = addStorageItem(box, "应用私有数据合计", "统计中…", false, null);
 
-        // ── 三、一键清理 ──
-        box.addView(sectionHeaderInCard("一键清理"));
+        // ══════ 三、操作区 ══════
+        box.addView(sectionHeaderInCard("清理"));
+
         final TextView tvAllClearable = new TextView(ctx);
         tvAllClearable.setText("统计中…");
         tvAllClearable.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         tvAllClearable.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
-        tvAllClearable.setPadding(dp(14), dp(12), dp(14), dp(4));
-        box.addView(tvAllClearable);
+        tvAllClearable.setLineSpacing(dp(2), 1f);
+        tvAllClearable.setPadding(dp(14), dp(12), dp(14), dp(8));
+        addToSettingsGroup(box, tvAllClearable);
 
         LinearLayout btns = new LinearLayout(ctx);
         btns.setOrientation(LinearLayout.HORIZONTAL);
-        btns.setPadding(dp(8), 0, dp(8), dp(8));
-        box.addView(btns, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        btns.addView(textButton("全部清理", v -> confirmThen(
+        btns.setPadding(dp(8), 0, dp(8), dp(10));
+        addToSettingsGroup(box, btns);
+
+        TextView clearSel = textButton("清理所选", null);
+        clearSel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        btns.addView(clearSel);
+        TextView clearCache = textButton("仅清缓存", null);
+        clearCache.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        btns.addView(clearCache);
+        TextView refresh = textButton("刷新", null);
+        refresh.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        btns.addView(refresh);
+
+        clearSel.setOnClickListener(v -> {
+            if (selected.isEmpty()) {
+                UiKit.toast(ctx, "请先勾选要清理的项");
+                return;
+            }
+            StringBuilder names = new StringBuilder();
+            for (String k : selected) names.append("· ").append(displayNameOf(k)).append('\n');
+            confirmThen("清理所选 " + selected.size() + " 项",
+                    names.toString().trim() + "\n\n回收站与草稿清空后不可恢复。", () -> {
+                        for (String k : new java.util.ArrayList<>(selected)) {
+                            Runnable act = clearActions.get(k);
+                            if (act != null) {
+                                try { act.run(); } catch (Throwable ignored) { }
+                            }
+                        }
+                        selected.clear();
+                        refreshStoragePage();
+                    });
+        });
+
+        clearCache.setOnClickListener(v -> confirmThen(
                 "清理全部缓存",
-                "缩略图、ZIP 缓存、更新包会被清除。草稿、背景图、回收站不受影响。", () -> {
+                "缩略图、ZIP 缓存、更新包会被清除。\n草稿、背景图、回收站不受影响。", () -> {
                     clearCacheSub("thumbs");
                     clearCacheSub("zipview");
                     clearCacheSub("zipnested");
                     clearUpdateApks();
                     UiKit.toast(ctx, "缓存已全部清理");
                     refreshStoragePage();
-                })));
-        btns.addView(textButton("刷新", v -> refreshStoragePage()));
+                }));
 
-        loadStorageStats(storePath, tvTotal, tvDetail, bar,
+        refresh.setOnClickListener(v -> refreshStoragePage());
+
+        loadStorageStatsV2(storePath, tvTotal, tvDetail, segBar, legend, tvOther,
                 tvThumb, tvZip, tvUpd, tvDraft, tvBg, tvTrash, tvApp, tvAllClearable);
 
         return box;
+    }
+
+    /** 可勾选的存储明细行：勾选框 + 标题 + 大小 + 单项「清理」按钮 */
+    private TextView addStorageItemSelectable(LinearLayout parent,
+                                              final java.util.Map<String, Runnable> actions,
+                                              final java.util.Set<String> selected,
+                                              final String key, String title,
+                                              final Runnable onClear) {
+        final LinearLayout host = settingsGroup != null ? settingsGroup : parent;
+        final boolean inGroup = host == settingsGroup;
+        if (inGroup) addGroupDivider(host);
+
+        actions.put(key, onClear);
+
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(10), dp(14), dp(10));
+
+        final android.widget.CheckBox cb = new android.widget.CheckBox(ctx);
+        cb.setPadding(0, 0, dp(6), 0);
+        cb.setOnCheckedChangeListener((b, checked) -> {
+            if (checked) selected.add(key); else selected.remove(key);
+        });
+        row.addView(cb);
+
+        LinearLayout texts = new LinearLayout(ctx);
+        texts.setOrientation(LinearLayout.VERTICAL);
+        row.addView(texts, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView tvTitle = new TextView(ctx);
+        tvTitle.setText(title);
+        tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tvTitle.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        texts.addView(tvTitle);
+
+        TextView tvSize = new TextView(ctx);
+        tvSize.setText("统计中…");
+        tvSize.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        tvSize.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tvSize.setAlpha(0.8f);
+        texts.addView(tvSize);
+
+        TextView btn = textButton("清理", v -> confirmThen(
+                "清理「" + title + "」",
+                "回收站与草稿清空后不可恢复，确定继续？",
+                () -> {
+                    try { onClear.run(); } catch (Throwable ignored) { }
+                    refreshStoragePage();
+                }));
+        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        btn.setPadding(dp(10), dp(6), dp(10), dp(6));
+        row.addView(btn);
+
+        host.addView(row, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return tvSize;
+    }
+
+    private static String displayNameOf(String key) {
+        switch (key) {
+            case "thumbs": return "缩略图缓存";
+            case "zip": return "ZIP 浏览缓存";
+            case "update": return "更新包缓存";
+            case "draft": return "编辑器草稿";
+            case "bg": return "背景图（旧图）";
+            case "trash": return "回收站";
+            default: return key;
+        }
+    }
+
+    /**
+     * 分段彩色容量条。
+     *
+     * <p>自绘而非 ProgressBar：ProgressBar 只能单色或单个 drawable，
+     * 做不出「缓存 / 应用数据 / 回收站 / 其它 各自不同颜色」的分段效果。</p>
+     */
+    private class SegmentedBar extends View {
+        /** 各段占比（0~1），按绘制顺序排 */
+        private float[] fractions = new float[0];
+        private int[] colors = new int[0];
+
+        SegmentedBar(android.content.Context c) {
+            super(c);
+        }
+
+        void setSegments(float[] fr, int[] cl) {
+            fractions = fr;
+            colors = cl;
+            invalidate();
+        }
+
+        @Override protected void onDraw(android.graphics.Canvas canvas) {
+            super.onDraw(canvas);
+            int w = getWidth(), h = getHeight();
+            if (w <= 0 || h <= 0) return;
+            int r = h / 2;
+            // 底槽（未使用部分）
+            android.graphics.Paint p = new android.graphics.Paint(
+                    android.graphics.Paint.ANTI_ALIAS_FLAG);
+            p.setColor(UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorSurfaceContainerHighest));
+            android.graphics.RectF all = new android.graphics.RectF(0, 0, w, h);
+            canvas.drawRoundRect(all, r, r, p);
+
+            float x = 0;
+            for (int i = 0; i < fractions.length && i < colors.length; i++) {
+                float segW = w * Math.max(0f, Math.min(1f, fractions[i]));
+                if (segW <= 0.5f) continue;
+                p.setColor(colors[i]);
+                android.graphics.RectF seg = new android.graphics.RectF(
+                        x, 0, Math.min(w, x + segW), h);
+                canvas.drawRoundRect(seg, Math.min(r, segW / 2), Math.min(r, segW / 2), p);
+                x += segW;
+            }
+        }
+    }
+
+    /** 存储统计（分段版）：算出各部分占比，喂给 SegmentedBar，并刷新图例与各项大小 */
+    private void loadStorageStatsV2(String storePath,
+                                    TextView tvTotal, TextView tvDetail,
+                                    SegmentedBar bar, LinearLayout legend, TextView tvOther,
+                                    TextView tvThumb, TextView tvZip, TextView tvUpd,
+                                    TextView tvDraft, TextView tvBg, TextView tvTrash,
+                                    TextView tvApp, TextView tvAllClearable) {
+        new Thread(() -> {
+            long total = 0, avail = 0;
+            try {
+                android.os.StatFs sf = new android.os.StatFs(storePath);
+                total = sf.getTotalBytes();
+                avail = sf.getAvailableBytes();
+            } catch (Throwable t) {
+                try {
+                    android.os.StatFs sf2 = new android.os.StatFs("/data");
+                    total = sf2.getTotalBytes();
+                    avail = sf2.getAvailableBytes();
+                } catch (Throwable ignored) { }
+            }
+
+            final long thumb = FileOps.dirSize(new File(ctx.getCacheDir(), "thumbs"));
+            final long zip = FileOps.dirSize(new File(ctx.getCacheDir(), "zipview"))
+                    + FileOps.dirSize(new File(ctx.getCacheDir(), "zipnested"));
+            final long upd = updateApkSize();
+            final long draft = FileOps.dirSize(draftDir());
+            final long bg = FileOps.dirSize(bgDir());
+            final long trash = FileOps.dirSize(new File(TRASH_DIR));
+            final long cacheAll = thumb + zip + upd;
+            final long appData = FileOps.dirSize(ctx.getFilesDir()) + FileOps.dirSize(ctx.getCacheDir());
+
+            final long fTotal = total, fAvail = avail;
+            handler.post(() -> {
+                if (detached) return;
+                if (fTotal > 0) {
+                    long used = Math.max(0, fTotal - fAvail);
+                    int pct = (int) Math.round(used * 100.0 / fTotal);
+                    tvTotal.setText("已用 " + fmtStorageSize(used)
+                            + " / " + fmtStorageSize(fTotal));
+                    tvDetail.setText(pct + "% 已用 · 可用 " + fmtStorageSize(fAvail));
+
+                    // 分段：缓存 / 应用数据 / 回收站 / 其它（占「已用」的比例）
+                    int cCache = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
+                    int cApp = 0xFF66BB6A;      // 绿：应用数据
+                    int cTrash = 0xFFFFA726;    // 橙：回收站
+                    int cOther = UiKit.color(ctx,
+                            com.google.android.material.R.attr.colorSurfaceContainerHighest);
+                    float fCache = used > 0 ? (float) cacheAll / used : 0;
+                    float fApp = used > 0 ? (float) appData / used : 0;
+                    float fTrash = used > 0 ? (float) trash / used : 0;
+                    float sum = Math.min(1f, fCache + fApp + fTrash);
+                    bar.setSegments(new float[]{fCache, fApp, fTrash, 1f - sum},
+                            new int[]{cCache, cApp, cTrash, cOther});
+
+                    // 图例
+                    legend.removeAllViews();
+                    addLegendRow(legend, cCache, "应用缓存", cacheAll);
+                    addLegendRow(legend, cApp, "应用数据", appData);
+                    addLegendRow(legend, cTrash, "回收站", trash);
+                    addLegendRow(legend, cOther, "其它（系统与其它应用）",
+                            Math.max(0, used - cacheAll - appData - trash));
+
+                    tvOther.setText("分段只统计本应用可清理的部分；"
+                            + "「其它」是系统、其它应用与你自己的文件。");
+                } else {
+                    tvTotal.setText("存储空间不可用");
+                    tvDetail.setText("无法读取容量信息（可能权限不足）");
+                    tvOther.setText("");
+                }
+                tvThumb.setText(fmtStorageSize(thumb));
+                tvZip.setText(fmtStorageSize(zip));
+                tvUpd.setText(fmtStorageSize(upd));
+                tvDraft.setText(fmtStorageSize(draft));
+                tvBg.setText(fmtStorageSize(bg));
+                tvTrash.setText(fmtStorageSize(trash));
+                tvApp.setText(fmtStorageSize(appData));
+                tvAllClearable.setText("可一键清理的缓存合计 "
+                        + fmtStorageSize(cacheAll)
+                        + "\n勾选上方各项后可「清理所选」，或直接「仅清缓存」。");
+            });
+        }, "HyStorageStats").start();
+    }
+
+    /** 图例一行：色块 + 名称 + 大小 */
+    private void addLegendRow(LinearLayout parent, int color, String name, long bytes) {
+        LinearLayout row = new LinearLayout(ctx);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(2), 0, dp(2));
+
+        View dot = new View(ctx);
+        android.graphics.drawable.GradientDrawable g =
+                new android.graphics.drawable.GradientDrawable();
+        g.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        g.setColor(color);
+        dot.setBackground(g);
+        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(8), dp(8));
+        dotLp.rightMargin = dp(8);
+        row.addView(dot, dotLp);
+
+        TextView label = new TextView(ctx);
+        label.setText(name);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        label.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        row.addView(label, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        TextView size = new TextView(ctx);
+        size.setText(fmtStorageSize(bytes));
+        size.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        size.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        row.addView(size);
+
+        parent.addView(row);
     }
 
     /**
@@ -5044,64 +5342,6 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 异步统计并回填所有大小。全部求和跑在一个后台线程里依次做。 */
-    private void loadStorageStats(String storePath,
-                                  TextView tvTotal, TextView tvDetail,
-                                  android.widget.ProgressBar bar,
-                                  TextView tvThumb, TextView tvZip, TextView tvUpd,
-                                  TextView tvDraft, TextView tvBg, TextView tvTrash,
-                                  TextView tvApp, TextView tvAllClearable) {
-        new Thread(() -> {
-            long total = 0, avail = 0;
-            try {
-                android.os.StatFs sf = new android.os.StatFs(storePath);
-                total = sf.getTotalBytes();
-                avail = sf.getAvailableBytes();
-            } catch (Throwable t) {
-                try {
-                    android.os.StatFs sf2 = new android.os.StatFs("/data");
-                    total = sf2.getTotalBytes();
-                    avail = sf2.getAvailableBytes();
-                } catch (Throwable ignored) {
-                }
-            }
-            final long fTotal = total, fAvail = avail;
-
-            final long thumb = FileOps.dirSize(new File(ctx.getCacheDir(), "thumbs"));
-            final long zip = FileOps.dirSize(new File(ctx.getCacheDir(), "zipview"))
-                    + FileOps.dirSize(new File(ctx.getCacheDir(), "zipnested"));
-            final long upd = updateApkSize();
-            final long draft = FileOps.dirSize(draftDir());
-            final long bg = FileOps.dirSize(bgDir());
-            final long trash = FileOps.dirSize(new File(TRASH_DIR));
-            final long appAll = FileOps.dirSize(ctx.getFilesDir())
-                    + FileOps.dirSize(ctx.getCacheDir());
-
-            handler.post(() -> {
-                if (detached) return;
-                if (fTotal > 0) {
-                    long used = Math.max(0, fTotal - fAvail);
-                    int pct = (int) Math.round(used * 100.0 / fTotal);
-                    tvTotal.setText("已用 " + fmtStorageSize(used)
-                            + " / " + fmtStorageSize(fTotal));
-                    tvDetail.setText(pct + "% 已用 · 可用 " + fmtStorageSize(fAvail));
-                    bar.setProgress(Math.max(0, Math.min(1000, pct * 10)));
-                } else {
-                    tvTotal.setText("存储空间不可用");
-                    tvDetail.setText("无法读取容量信息（可能权限不足）");
-                }
-                tvThumb.setText(fmtStorageSize(thumb));
-                tvZip.setText(fmtStorageSize(zip));
-                tvUpd.setText(fmtStorageSize(upd));
-                tvDraft.setText(fmtStorageSize(draft));
-                tvBg.setText(fmtStorageSize(bg));
-                tvTrash.setText(fmtStorageSize(trash));
-                tvApp.setText(fmtStorageSize(appAll));
-                tvAllClearable.setText("可一键清理的缓存合计 "
-                        + fmtStorageSize(thumb + zip + upd));
-            });
-        }, "HyStorageStats").start();
-    }
-
     /** cacheDir 里 update_*.apk 的总大小 */
     private long updateApkSize() {
         long n = 0;

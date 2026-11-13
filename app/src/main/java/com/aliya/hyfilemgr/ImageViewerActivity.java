@@ -84,6 +84,14 @@ public class ImageViewerActivity extends Activity {
         currentIsUri = isUri;
         currentUriStr = uriStr;
 
+        // 高清模式默认值从设置读（与模块共享同一个 SharedPreferences）
+        try {
+            hdMode = getSharedPreferences("hyvq_filemgr", MODE_PRIVATE)
+                    .getBoolean("viewer_hd_default", true);
+        } catch (Throwable ignored) {
+            hdMode = true;
+        }
+
         // 同目录图集：模块传来的当前窗格列表（与播放器 collectPlayable 同思路）。
         // 未传或只有一张 → 不启用切换；local path 才能扫，content:// 无目录概念。
         String[] list = getIntent().getStringArrayExtra(EXTRA_LIST);
@@ -177,14 +185,20 @@ public class ImageViewerActivity extends Activity {
 
                     @Override public boolean onFling(MotionEvent e1, MotionEvent e2,
                                                      float vx, float vy) {
-                        // 左右快滑切图：仅单指、水平分量明显大于垂直、无缩放中。
-                        // 图片被放大拖动时水平滑动是拖图（dx 已被 onScroll 消费），
-                        // fling 只在图片未放大（可判定 matrix 平移在边界内）或快速甩动时触发。
+                        // 左右快滑切图。
+                        //
+                        // 防误触（用户反馈「过于灵敏」）：
+                        //   ① 位移 ≥ 120dp（原来 60dp 太小，稍一拖就触发）
+                        //   ② 速度 ≥ 2000px/s（原来 800 太松）
+                        //   ③ 水平分量 ≥ 垂直的 2 倍（原来 1.5 倍）
+                        //   ④ 图片处于放大状态时不切（放大后水平拖是看边缘）
                         if (e1 == null || e2 == null) return false;
+                        if (isZoomedIn()) return false;
                         float dx = e2.getX() - e1.getX();
                         float dy = e2.getY() - e1.getY();
-                        if (Math.abs(dx) < dp(60) || Math.abs(dx) < Math.abs(dy) * 1.5f) return false;
-                        if (Math.abs(vx) < 800f) return false;
+                        if (Math.abs(dx) < dp(120)) return false;
+                        if (Math.abs(dx) < Math.abs(dy) * 2f) return false;
+                        if (Math.abs(vx) < 2000f) return false;
                         switchImage(dx < 0 ? 1 : -1);
                         return true;
                     }
@@ -239,14 +253,14 @@ public class ImageViewerActivity extends Activity {
     }
 
     /**
-     * 高清模式标记（默认开）。
+     * 高清模式标记（默认值来自设置页「图片查看器 → 高清模式」，默认为开）。
      *
-     * <p><b>为什么改成默认开</b>：用户要求默认高清。
-     * 代价是大图（>屏幕 4 倍）解码慢一些、内存占用高一些，
-     * 但屏幕上看图清晰度优先；内存风险由 {@link #calcHdSample} 上界兑底
-     * （超过屏幕 4 倍才降采样，最长边上限 8 倍）。</p>
+     * <p><b>默认开</b>：用户要求默认高清。代价是大图解码稍慢、内存略高，
+     * 由 {@link #calcHdSample} 上界兑底（超过屏幕 4 倍才降采样，最长边上限 8 倍）。</p>
      *
-     * <p>长按画面可切回普通模式（屏幕 2 倍采样 + RGB_565，快但色彩有损）。</p>
+     * <p><b>为什么要读设置</b>：设置页现在有「高清模式」开关（持久化在
+     * hyvq_filemgr 的 viewer_hd_default）。用户关了它，进查看器就该是普通模式；
+     * 长按仍可临时切换，但不回写设置（临时行为不覆盖用户偏好）。</p>
      */
     private boolean hdMode = true;
 
@@ -271,7 +285,7 @@ public class ImageViewerActivity extends Activity {
     // ── 图集加载与切换 ──
 
     /** 切图过渡时长（毫秒）：淡出旧图→换新图→淡入 */
-    private static final long FADE_MS = 150;
+    private static final long FADE_MS = 200;
     /** 解码任务序号：连续切换时只认最后一次的结果，避免慢图晚到盖住新图 */
     private int loadSeq;
 
@@ -346,7 +360,18 @@ public class ImageViewerActivity extends Activity {
         }).start();
     }
 
-    /** 左右切换同目录图片：dir=1 下一张 / -1 上一张，循环 */
+    /**
+     * 左右切换同目录图片。
+     *
+     * <p><b>为什么之前会「闪一下」</b>：旧实现先把旧图淡出 150ms 并在结束时
+     * {@code setImageDrawable(null)} 清空，而此时新图还在后台解码——中间这段
+     * 时间是空白。解码完成后新图才淡入，观感就是「闪一下 → 到新图」。</p>
+     *
+     * <p><b>现在的做法</b>：不清空、也不先淡出——直接发起新图解码，
+     * 解码完成时才在新旧图之间做一次淡入（新图从 0→1 叠在上层）。
+     * 这样无论解码多快多慢，屏幕上永远有图，不会出现空白帧。
+     * 若解码很快（小图），淡入从上一帧就已开始，视觉上是平滑推进。</p>
+     */
     private void switchImage(int dir) {
         if (gallery == null || gallery.length <= 1) return;
         galleryIndex = (galleryIndex + dir + gallery.length) % gallery.length;
@@ -355,10 +380,7 @@ public class ImageViewerActivity extends Activity {
         currentIsUri = false;
         matrix.reset();
         imageView.setImageMatrix(matrix);
-        // 旧图淡出后清掉，等新图淡入（手感上是一段连续的渐变）
-        imageView.animate().alpha(0f).setDuration(FADE_MS).withEndAction(() -> {
-            imageView.setImageDrawable(null);
-        }).start();
+        // ⚠ 不再提前淡出/清图：保持旧图可见直至新图解码就绪
         TextView tvTitle = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_title);
         tvTitle.setText(new File(p).getName());
         updateCounter();
@@ -592,6 +614,25 @@ public class ImageViewerActivity extends Activity {
     }
 
     /** 中央居中显示（初始与双击还原共用） */
+    /**
+     * 图片当前是否处于放大状态（用于判定滑动该切图还是拖图）。
+     *
+     * <p>matrix 的 MSCALE_X 分量与 resetMatrix 后的基准缩放（适应屏幕）
+     * 比对：明显大于基准即视为已放大。阈值 1.1 倍留出浮点误差余量。</p>
+     */
+    private boolean isZoomedIn() {
+        android.graphics.drawable.Drawable d = imageView.getDrawable();
+        if (d == null) return false;
+        int vw = imageView.getWidth(), vh = imageView.getHeight();
+        int dw = d.getIntrinsicWidth(), dh = d.getIntrinsicHeight();
+        if (vw <= 0 || vh <= 0 || dw <= 0 || dh <= 0) return false;
+        float fit = Math.min((float) vw / dw, (float) vh / dh);
+        float[] v = new float[9];
+        matrix.getValues(v);
+        float cur = v[android.graphics.Matrix.MSCALE_X];
+        return cur > fit * 1.1f;
+    }
+
     private void resetMatrix() {
         int vw = imageView.getWidth(), vh = imageView.getHeight();
         android.graphics.drawable.Drawable d = imageView.getDrawable();
