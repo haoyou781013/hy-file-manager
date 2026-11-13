@@ -6,13 +6,13 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
-    <ImageView
-        android:id="@+id/iv_image"
+    <!-- 图片区：ViewPager2 承载图集（跟手左右拖动、相邻图可见），
+         每个页面内部仍是一个支持双指缩放/拖动的 ImageView。
+         这样既能像主流相册一样滑看下一张，放大后拖动看边缘也不冲突。 -->
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/iv_pager"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_gravity="center"
-        android:scaleType="matrix"
-        android:contentDescription="图片" />
+        android:layout_height="match_parent" />
 
     <!-- 顶部：返回 + 文件名 + 尺寸。
          颜色由代码按「栏出=白底 / 栏藏=黑底」双模式动态控制，

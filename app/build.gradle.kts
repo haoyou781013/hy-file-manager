@@ -65,6 +65,8 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.activity:activity:1.9.3")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+    // 图片查看器分页滑动（跟手拖动 + 相邻图可见，与主流相册一致）
+    implementation("androidx.viewpager2:viewpager2:1.1.0")
 
     // 文件管理内置播放器（从 HY_VQ 剥离）
     implementation("androidx.media3:media3-exoplayer:1.11.1")

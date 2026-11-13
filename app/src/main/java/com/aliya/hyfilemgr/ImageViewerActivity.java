@@ -7,12 +7,19 @@ import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.Bundle;
+import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.RecyclerView;
+import androidx.viewpager2.widget.ViewPager2;
 
 import com.aliya.hyfilemgr.ui.UiKit;
 
@@ -20,16 +27,24 @@ import java.io.File;
 import java.io.InputStream;
 
 /**
- * 内置图片查看器（原生 BitmapFactory + Matrix，无第三方依赖）。
+ * 内置图片查看器（原生 BitmapFactory + Matrix + ViewPager2，无第三方图片库）。
  *
- * <p>配合文件管理的「打开方式」弹窗使用：图片类文件优先由本页打开。
- * 支持：双指缩放、拖动查看、双击还原、单击画面切换顶栏/底部功能栏显隐
- * （3 秒无操作自动隐藏）、大图按目标尺寸采样解码（避免 OOM），
- * 兼容本地路径与 SAF(content://)。</p>
+ * <p>配合文件管理的「打开方式」弹窗使用：图片类文件优先由本页打开。</p>
  *
- * <p>底部功能栏三个操作均<strong>回传主界面</strong>处理，本页不实现业务：
- * 删除走模块 confirmDelete（回收站+刷新），设为背景走 setBackgroundFromUri
- * （壁纸落盘与渲染都在模块）。回传协议见 {@link #RESULT_ACTION_*}。</p>
+ * <p><b>2026-11-12 重构：滑动改用 ViewPager2</b>。此前是单个 ImageView +
+ * GestureDetector.onFling 切图，观感是「甩一下→换一张」，拖动过程中看不到
+ * 下一张，与主流相册差距明显。现在：</p>
+ * <ul>
+ *   <li>跟手左右拖动、相邻图半露可见、松手吸附/翻页（{@link ViewPager2}）</li>
+ *   <li>每页内部仍是独立 ImageView，自带双指缩放/拖动/双击还原</li>
+ *   <li>图片放大后水平拖动优先拖图（不翻页）——通过
+ *       {@code requestDisallowInterceptTouchEvent} 实现</li>
+ *   <li>只缓存当前位置 ±1 页，翻页时不再重复解码相邻图</li>
+ * </ul>
+ *
+ * <p>底部功能栏三个操作均<strong>回传主界面</strong>处理：删除走模块
+ * confirmDelete（回收站+刷新），设为背景走 setBackgroundFromUri。
+ * 回传协议见 {@code RESULT_ACTION_*}。</p>
  */
 public class ImageViewerActivity extends Activity {
     public static final String EXTRA_PATH = "image_path";
@@ -45,11 +60,14 @@ public class ImageViewerActivity extends Activity {
     public static final String EXTRA_LIST = "image_list";
     public static final String EXTRA_INDEX = "image_index";
 
-    private ImageView imageView;
+    /** 切图淡入时长：仅在「新页首次显示」时用，翻页本身有 ViewPager 动效 */
+    private static final long FADE_MS = 160;
+    /** 背景色过渡时长（栏显隐时整页背景渐变） */
+    private static final long BG_ANIM_MS = 220;
+
+    private ViewPager2 pager;
+    private GalleryAdapter adapter;
     private View topBar, bottomBar;
-    private final Matrix matrix = new Matrix();
-    private android.view.ScaleGestureDetector scaleDetector;
-    private android.view.GestureDetector gestureDetector;
     private boolean barsVisible = true;
 
     /** 同目录图片列表与当前位置（EXTRA_LIST 未传时只含当前一张，不显示计数） */
@@ -59,6 +77,13 @@ public class ImageViewerActivity extends Activity {
     private String currentPath;
     private boolean currentIsUri;
     private String currentUriStr;
+
+    /** 高清模式（默认值从设置读） */
+    private boolean hdMode = true;
+    /** onCreate 首次落位不播背景动画 */
+    private boolean firstApply = true;
+    /** 当前背景色（ArgbEvaluator 动画起点） */
+    private int currentBg = 0xFF000000;
 
     @Override protected void attachBaseContext(android.content.Context base) {
         // 应用级 DPI 覆盖：与主界面/播放器一致，否则密度设置对本页无效
@@ -70,11 +95,9 @@ public class ImageViewerActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         setContentView(com.aliya.hyfilemgr.R.layout.activity_image_viewer);
 
-        imageView = findViewById(com.aliya.hyfilemgr.R.id.iv_image);
+        pager = findViewById(com.aliya.hyfilemgr.R.id.iv_pager);
         topBar = findViewById(com.aliya.hyfilemgr.R.id.iv_top);
         bottomBar = findViewById(com.aliya.hyfilemgr.R.id.iv_bottom);
-        TextView tvTitle = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_title);
-        TextView tvInfo = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
 
         String path = getIntent().getStringExtra(EXTRA_PATH);
         String uriStr = getIntent().getStringExtra(EXTRA_URI);
@@ -92,8 +115,7 @@ public class ImageViewerActivity extends Activity {
             hdMode = true;
         }
 
-        // 同目录图集：模块传来的当前窗格列表（与播放器 collectPlayable 同思路）。
-        // 未传或只有一张 → 不启用切换；local path 才能扫，content:// 无目录概念。
+        // 同目录图集：模块传来的当前窗格列表。未传或只有一张 → 只有一项，不显示计数
         String[] list = getIntent().getStringArrayExtra(EXTRA_LIST);
         int idx = getIntent().getIntExtra(EXTRA_INDEX, 0);
         if (!isUri && path != null && list != null && list.length > 1) {
@@ -105,169 +127,340 @@ public class ImageViewerActivity extends Activity {
         }
 
         String name = isUri ? "图片" : new File(path == null ? "" : path).getName();
-        if (title == null || title.isEmpty()) title = name;
-        tvTitle.setText(title);
-        updateCounter();
+        updateTitleAndCounter(title == null || title.isEmpty() ? name : title);
 
         findViewById(com.aliya.hyfilemgr.R.id.btn_iv_back).setOnClickListener(v -> finish());
 
-        // ── 底部功能栏：全部回传主界面处理 ──
-        // 删除/设为背景只对本地路径可用（content:// 的删除要 SAF 流程、
-        // 壁纸复制需要可重开的流——两者都走模块的既有链路，Uri 来源另议）。
-        // 切图后按钮行为跟随 currentPath，所以用间接引用而不是直接闭包 path。
+        // ── 底部功能栏 ──
         View del = findViewById(com.aliya.hyfilemgr.R.id.btn_iv_delete);
         View wp = findViewById(com.aliya.hyfilemgr.R.id.btn_iv_wallpaper);
         del.setVisibility(!isUri ? View.VISIBLE : View.GONE);
         wp.setVisibility(!isUri ? View.VISIBLE : View.GONE);
+        // 用 currentPath 间接引用：翻页后按钮作用对象要跟着变
         del.setOnClickListener(v -> confirmDelete(currentPath));
         wp.setOnClickListener(v -> askWallpaperTarget(currentPath));
         findViewById(com.aliya.hyfilemgr.R.id.btn_iv_share).setOnClickListener(
                 v -> shareImage(currentPath, currentUriStr, currentIsUri));
-        // 高清模式：长按图片切换（默认关，按屏幕 2 倍采样 + RGB_565，快且省内存）。
-        // 注意：不能在这里用 setOnLongClickListener（会被 OnTouchListener 吃掉），
-        // 实际回调在 GestureDetector.onLongPress 里。
 
-        // ── 状态栏沉浸：透明状态栏，顶栏从状态栏后面开始。
-        // insets 必须在 attach 后取（createMainView 阶段 DecorView 未 attach
-        // 时 getRootWindowInsets() 返回 null），照抄主界面「attach 后重算
-        // + post 一帧确认」的双次模式（ColorOS 的 status_bar_height 资源值偏小）。
+        setupPager();
+        setupStatusBarAndInsets();
+        setBarsVisible(true);
+    }
+
+    // ══════ ViewPager2 ══════
+
+    private void setupPager() {
+        adapter = new GalleryAdapter();
+        pager.setAdapter(adapter);
+        // 单页时禁止滑动，避免误以为能拖
+        pager.setUserInputEnabled(gallery != null && gallery.length > 1);
+        // 预加载相邻页：翻页时不用现解码（提升跟手感）
+        pager.setOffscreenPageLimit(1);
+        pager.setCurrentItem(galleryIndex, false);
+
+        pager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
+            @Override public void onPageSelected(int position) {
+                galleryIndex = position;
+                String p = gallery[position];
+                currentPath = p;
+                currentIsUri = false;
+                currentUriStr = null;
+                updateTitleAndCounter(new File(p).getName());
+                // 翻页后重置新页缩放，避免继承上一页的放大状态
+                View page = findPage(position);
+                if (page instanceof ImagePage) ((ImagePage) page).resetZoom();
+            }
+        });
+    }
+
+    /** 取当前 ViewPager2 内部 RecyclerView 中承载指定 position 的页 View */
+    private View findPage(int position) {
+        try {
+            RecyclerView rv = (RecyclerView) pager.getChildAt(0);
+            if (rv == null) return null;
+            for (int i = 0; i < rv.getChildCount(); i++) {
+                View child = rv.getChildAt(i);
+                int pos = rv.getChildAdapterPosition(child);
+                if (pos == position) return child;
+            }
+        } catch (Throwable ignored) { }
+        return null;
+    }
+
+    private void updateTitleAndCounter(String title) {
+        TextView tvTitle = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_title);
+        tvTitle.setText(title);
+        TextView counter = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_counter);
+        if (gallery != null && gallery.length > 1) {
+            counter.setVisibility(View.VISIBLE);
+            counter.setText(String.format("%02d/%02d", galleryIndex + 1, gallery.length));
+        } else {
+            counter.setVisibility(View.GONE);
+        }
+    }
+
+    /** ViewPager2 适配器：每页一个 ImagePage（自带缩放/拖动/双击/长按） */
+    private class GalleryAdapter extends RecyclerView.Adapter<GalleryAdapter.VH> {
+
+        @NonNull @Override
+        public VH onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            ImagePage page = new ImagePage();
+            page.setLayoutParams(new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            return new VH(page);
+        }
+
+        @Override public void onBindViewHolder(@NonNull VH holder, int position) {
+            ((ImagePage) holder.itemView).bind(gallery[position]);
+        }
+
+        @Override public int getItemCount() {
+            return gallery == null ? 0 : gallery.length;
+        }
+
+        class VH extends RecyclerView.ViewHolder {
+            VH(@NonNull View itemView) { super(itemView); }
+        }
+    }
+
+    /**
+     * 单张图片页：双击缩放/双指缩放/拖动/单击切栏/长按切高清。
+     *
+     * <p><b>与 ViewPager2 的手势冲突处理</b>（关键）：
+     * <ul>
+     *   <li>未放大：单指水平拖动交给 ViewPager2 翻页（不拦截）</li>
+     *   <li>已放大：单指拖动是看边缘 → {@code requestDisallowInterceptTouchEvent(true)}
+     *       阻止 ViewPager2 抢走事件</li>
+     * </ul>
+     * 否则放大后想拖看右侧，页面直接翻走了。</p>
+     */
+    private class ImagePage extends FrameLayout {
+        final ImageView iv;
+        final Matrix matrix = new Matrix();
+        android.view.ScaleGestureDetector scaleDetector;
+        GestureDetector gestureDetector;
+        private String boundPath;
+        private boolean decoding;
+        /** 解码序号：连续翻页时只认最后一次，防旧图晚到覆盖新图 */
+        private int seq;
+
+        ImagePage() {
+            super(ImageViewerActivity.this);
+            iv = new ImageView(ImageViewerActivity.this);
+            iv.setScaleType(ImageView.ScaleType.MATRIX);
+            iv.setBackgroundColor(0x00000000);
+            addView(iv, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+            scaleDetector = new android.view.ScaleGestureDetector(ImageViewerActivity.this,
+                    new android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                        @Override public boolean onScale(android.view.ScaleGestureDetector d) {
+                            float f = d.getScaleFactor();
+                            matrix.postScale(f, f, d.getFocusX(), d.getFocusY());
+                            iv.setImageMatrix(matrix);
+                            return true;
+                        }
+                    });
+
+            gestureDetector = new GestureDetector(ImageViewerActivity.this,
+                    new GestureDetector.SimpleOnGestureListener() {
+                        @Override public boolean onDoubleTap(MotionEvent e) {
+                            resetZoom();
+                            return true;
+                        }
+
+                        @Override public boolean onScroll(MotionEvent e1, MotionEvent e2,
+                                                         float dx, float dy) {
+                            if (e2.getPointerCount() > 1) return false;   // 双指交给缩放
+                            if (!isZoomedIn()) {
+                                // 未放大：不消费，让 ViewPager2 翻页
+                                return false;
+                            }
+                            matrix.postTranslate(-dx, -dy);
+                            iv.setImageMatrix(matrix);
+                            return true;
+                        }
+
+                        @Override public boolean onSingleTapConfirmed(MotionEvent e) {
+                            toggleBars();
+                            return true;
+                        }
+
+                        @Override public void onLongPress(MotionEvent e) {
+                            // 长按 = 切换高清模式（用当前页的路径）
+                            toggleHd();
+                        }
+                    });
+
+            setOnTouchListener((v, ev) -> {
+                // 放大状态下，从 ACTION_DOWN 起就禁止 ViewPager2 抢事件；
+                // 松开后再恢复，否则翻不动页
+                if (ev.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    v.getParent().requestDisallowInterceptTouchEvent(isZoomedIn());
+                }
+                scaleDetector.onTouchEvent(ev);
+                gestureDetector.onTouchEvent(ev);
+                return true;
+            });
+        }
+
+        /** 绑定路径：解码并展示（同路径已解码则跳过） */
+        void bind(String path) {
+            if (path == null || path.equals(boundPath)) return;
+            boundPath = path;
+            decoding = true;
+            final int mySeq = ++seq;
+            iv.setImageDrawable(null);
+            iv.setAlpha(0f);
+            resetZoomMatrix();
+
+            // GIF（API 28+）：AnimatedImageDrawable 直接播动图
+            if (android.os.Build.VERSION.SDK_INT >= 28
+                    && path.toLowerCase().endsWith(".gif")) {
+                try {
+                    android.graphics.ImageDecoder.Source src =
+                            android.graphics.ImageDecoder.createSource(new File(path));
+                    android.graphics.drawable.Drawable d =
+                            android.graphics.ImageDecoder.decodeDrawable(src, (decoder, info, s) -> {
+                                android.util.Size sz = info.getSize();
+                                int reqW = getResources().getDisplayMetrics().widthPixels;
+                                int reqH = getResources().getDisplayMetrics().heightPixels;
+                                if (sz.getWidth() > reqW * 2 || sz.getHeight() > reqH * 2) {
+                                    decoder.setTargetSampleSize(2);
+                                }
+                            });
+                    if (d instanceof android.graphics.drawable.AnimatedImageDrawable) {
+                        post(() -> {
+                            if (mySeq != seq) return;
+                            decoding = false;
+                            iv.setImageDrawable(d);
+                            iv.animate().alpha(1f).setDuration(FADE_MS).start();
+                            resetZoomMatrix();
+                            ((android.graphics.drawable.AnimatedImageDrawable) d).start();
+                        });
+                        return;
+                    }
+                } catch (Throwable ignored) {
+                    // 落到静态解码
+                }
+            }
+
+            new Thread(() -> {
+                Bitmap bmp = null;
+                try {
+                    bmp = decodeSampled(path, false);
+                } catch (Throwable ignored) { }
+                final Bitmap fb = bmp;
+                post(() -> {
+                    if (mySeq != seq) return;
+                    decoding = false;
+                    if (fb == null) {
+                        return;   // 解码失败：留空白，不弹 toast 打扰翻页
+                    }
+                    iv.setImageBitmap(fb);
+                    iv.animate().alpha(1f).setDuration(FADE_MS).start();
+                    resetZoomMatrix();
+                });
+            }, "HyImgDecode").start();
+        }
+
+        boolean isZoomedIn() {
+            android.graphics.drawable.Drawable d = iv.getDrawable();
+            if (d == null) return false;
+            int vw = iv.getWidth(), vh = iv.getHeight();
+            int dw = d.getIntrinsicWidth(), dh = d.getIntrinsicHeight();
+            if (vw <= 0 || vh <= 0 || dw <= 0 || dh <= 0) return false;
+            float fit = Math.min((float) vw / dw, (float) vh / dh);
+            float[] v = new float[9];
+            matrix.getValues(v);
+            return v[android.graphics.Matrix.MSCALE_X] > fit * 1.1f;
+        }
+
+        void resetZoom() {
+            resetZoomMatrix();
+            iv.setImageMatrix(matrix);
+        }
+
+        /** 居中适配显示（初始与双击还原共用） */
+        void resetZoomMatrix() {
+            int vw = iv.getWidth(), vh = iv.getHeight();
+            android.graphics.drawable.Drawable d = iv.getDrawable();
+            if (d == null || vw == 0 || vh == 0) {
+                matrix.reset();
+                iv.setImageMatrix(matrix);
+                return;
+            }
+            float sx = (float) vw / d.getIntrinsicWidth();
+            float sy = (float) vh / d.getIntrinsicHeight();
+            float s = Math.min(sx, sy);
+            float dx = (vw - d.getIntrinsicWidth() * s) / 2f;
+            float dy = (vh - d.getIntrinsicHeight() * s) / 2f;
+            matrix.reset();
+            matrix.postScale(s, s);
+            matrix.postTranslate(dx, dy);
+            iv.setImageMatrix(matrix);
+        }
+
+        @Override protected void onSizeChanged(int w, int h, int ow, int oh) {
+            super.onSizeChanged(w, h, ow, oh);
+            resetZoomMatrix();
+        }
+    }
+
+    // ══════ 状态栏与 insets ══════
+
+    private void setupStatusBarAndInsets() {
         android.view.Window w = getWindow();
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(w, false);
         w.setStatusBarColor(0x00000000);
         w.setNavigationBarColor(0x99000000);
-        LinearLayout top = (LinearLayout) topBar;
-        LinearLayout bot = (LinearLayout) bottomBar;
-        View root = findViewById(com.aliya.hyfilemgr.R.id.iv_root);
+
+        final LinearLayout top = (LinearLayout) topBar;
+        final LinearLayout bot = (LinearLayout) bottomBar;
+        final View root = findViewById(com.aliya.hyfilemgr.R.id.iv_root);
         View.OnClickListener applyInsets = v -> {
             androidx.core.view.WindowInsetsCompat ins =
                     androidx.core.view.ViewCompat.getRootWindowInsets(root);
             if (ins == null) return;
             androidx.core.graphics.Insets sys = ins.getInsets(
                     androidx.core.view.WindowInsetsCompat.Type.systemBars());
-            top.setPadding(top.getPaddingLeft(),
-                    sys.top + dp(8), top.getPaddingRight(), dp(8));
+            top.setPadding(top.getPaddingLeft(), sys.top + dp(8), top.getPaddingRight(), dp(8));
             bot.setPadding(bot.getPaddingLeft(), dp(10),
                     bot.getPaddingRight(), sys.bottom + dp(10));
         };
-        root.addOnAttachStateChangeListener(
-                new View.OnAttachStateChangeListener() {
-                    @Override public void onViewAttachedToWindow(View v) { applyInsets.onClick(null); }
-                    @Override public void onViewDetachedFromWindow(View v) { }
-                });
-        root.post(() -> applyInsets.onClick(null));   // attach 后再补一次（insets 那时才可用）
-        androidx.core.view.WindowCompat.getInsetsController(w, w.getDecorView())
-                .setAppearanceLightStatusBars(false);   // 黑底浅色图标
-
-        // 手势：ScaleGestureDetector 管双指缩放，GestureDetector 管拖动/双击/单击
-        scaleDetector = new android.view.ScaleGestureDetector(this,
-                new android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
-                    @Override public boolean onScale(android.view.ScaleGestureDetector d) {
-                        float f = d.getScaleFactor();
-                        matrix.postScale(f, f, d.getFocusX(), d.getFocusY());
-                        imageView.setImageMatrix(matrix);
-                        return true;
-                    }
-                });
-
-        gestureDetector = new android.view.GestureDetector(this,
-                new android.view.GestureDetector.SimpleOnGestureListener() {
-                    @Override public boolean onDoubleTap(MotionEvent e) {
-                        resetMatrix();
-                        return true;
-                    }
-
-                    @Override public boolean onScroll(MotionEvent e1, MotionEvent e2, float dx, float dy) {
-                        if (e2.getPointerCount() > 1) return false;   // 双指时交给缩放
-                        matrix.postTranslate(-dx, -dy);
-                        imageView.setImageMatrix(matrix);
-                        return true;
-                    }
-
-                    @Override public boolean onFling(MotionEvent e1, MotionEvent e2,
-                                                     float vx, float vy) {
-                        // 左右快滑切图。
-                        //
-                        // 防误触（用户反馈「过于灵敏」）：
-                        //   ① 位移 ≥ 120dp（原来 60dp 太小，稍一拖就触发）
-                        //   ② 速度 ≥ 2000px/s（原来 800 太松）
-                        //   ③ 水平分量 ≥ 垂直的 2 倍（原来 1.5 倍）
-                        //   ④ 图片处于放大状态时不切（放大后水平拖是看边缘）
-                        if (e1 == null || e2 == null) return false;
-                        if (isZoomedIn()) return false;
-                        float dx = e2.getX() - e1.getX();
-                        float dy = e2.getY() - e1.getY();
-                        if (Math.abs(dx) < dp(120)) return false;
-                        if (Math.abs(dx) < Math.abs(dy) * 2f) return false;
-                        if (Math.abs(vx) < 2000f) return false;
-                        switchImage(dx < 0 ? 1 : -1);
-                        return true;
-                    }
-
-                    @Override public boolean onSingleTapConfirmed(MotionEvent e) {
-                        toggleBars();
-                        return true;
-                    }
-
-                    @Override public void onLongPress(MotionEvent e) {
-                        // 长按 = 切换高清模式。
-                        // 必须写在 GestureDetector 里：imageView 的 OnTouchListener
-                        // 恒返回 true（为了接管缩放/拖动），会吃掉 View 级长按事件，
-                        // setOnLongClickListener 根本不会触发。
-                        toggleHd();
-                    }
-                });
-
-        imageView.setOnTouchListener((v, ev) -> {
-            scaleDetector.onTouchEvent(ev);
-            gestureDetector.onTouchEvent(ev);
-            return true;
+        root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override public void onViewAttachedToWindow(View v) { applyInsets.onClick(null); }
+            @Override public void onViewDetachedFromWindow(View v) { }
         });
-
-        loadImage(path, isUri);
-
-        // 初始态：白底+栏展开。之前漏调导致 XML 默认黑底+栏可见的混合态
-        //（用户实测：进入是黑底显示功能栏，点击后才恢复）。
-        setBarsVisible(true);
+        root.post(() -> applyInsets.onClick(null));
+        androidx.core.view.WindowCompat.getInsetsController(w, w.getDecorView())
+                .setAppearanceLightStatusBars(false);
     }
 
-    @Override protected void onDestroy() {
-        super.onDestroy();
-    }
-
-    // ── 高清模式 ──
+    // ══════ 高清模式 ══════
 
     /**
-     * 高清模式开关（长按图片切换）。
+     * 高清模式开关（长按图片切换，只影响当前页重新解码）。
      *
-     * <p><b>默认为什么不是高清</b>：默认走「屏幕 2 倍采样 + RGB_565」，
-     * 首屏快、内存占用低（大图动辄 20~60MB）。但用户放大看细节、或图片带渐变/文字时，
-     * RGB_565 的色阶压缩与屏幕采样会看出模糊与色带。
-     * 高清模式改用原分辨率兜底采样（仍防 OOM，见 {@link #calcHdSample}）+ ARGB_8888。</p>
-     *
-     * <p>只对静态位图生效；GIF 动图不受影响（它走另一条解码路径）。</p>
+     * <p>默认值来自设置页「图片查看器 → 高清模式」（持久化在
+     * hyvq_filemgr 的 viewer_hd_default）。长按只改本次会话，不回写设置——
+     * 临时行为不覆盖用户偏好。</p>
      */
     private void toggleHd() {
         hdMode = !hdMode;
         UiKit.toast(this, hdMode ? "高清模式：开" : "高清模式：关（省内存）");
-        loadImage(currentPath, currentIsUri);
+        // 强制当前页重新解码
+        if (adapter != null) {
+            View page = findPage(galleryIndex);
+            if (page instanceof ImagePage) {
+                ImagePage ip = (ImagePage) page;
+                ip.boundPath = null;
+                ip.bind(gallery[galleryIndex]);
+            }
+        }
     }
 
-    /**
-     * 高清模式标记（默认值来自设置页「图片查看器 → 高清模式」，默认为开）。
-     *
-     * <p><b>默认开</b>：用户要求默认高清。代价是大图解码稍慢、内存略高，
-     * 由 {@link #calcHdSample} 上界兑底（超过屏幕 4 倍才降采样，最长边上限 8 倍）。</p>
-     *
-     * <p><b>为什么要读设置</b>：设置页现在有「高清模式」开关（持久化在
-     * hyvq_filemgr 的 viewer_hd_default）。用户关了它，进查看器就该是普通模式；
-     * 长按仍可临时切换，但不回写设置（临时行为不覆盖用户偏好）。</p>
-     */
-    private boolean hdMode = true;
-
-    /**
-     * 高清采样倍率：取「原始尺寸不超过屏幕 4 倍」时用 1（不采样），
-     * 超出则按 2/4 逐级降，既保留细节又防超大图 OOM。
-     */
+    /** 高清采样：原始尺寸不超屏幕 4 倍则用 1，超出按 2/4 逐级降（上界 8） */
     private int calcHdSample(int w, int h) {
         int reqW = getResources().getDisplayMetrics().widthPixels;
         int reqH = getResources().getDisplayMetrics().heightPixels;
@@ -278,148 +471,56 @@ public class ImageViewerActivity extends Activity {
         return sample;
     }
 
-    private int dp(int v) {
-        return Math.round(v * getResources().getDisplayMetrics().density);
+    /** 普通模式采样：按屏幕 2 倍，上界 16（超宽/超高图也能降下来） */
+    private int calcSample(int w, int h) {
+        int reqW = getResources().getDisplayMetrics().widthPixels;
+        int reqH = getResources().getDisplayMetrics().heightPixels;
+        int sample = 1;
+        // 用 || 而非 &&：超宽/超高图在 && 下 sample 恒为 1，会全尺寸解码
+        while ((w / sample > reqW * 2 || h / sample > reqH * 2) && sample < 16) sample *= 2;
+        return Math.max(1, sample);
     }
 
-    // ── 图集加载与切换 ──
-
-    /** 切图过渡时长（毫秒）：淡出旧图→换新图→淡入 */
-    private static final long FADE_MS = 200;
-    /** 解码任务序号：连续切换时只认最后一次的结果，避免慢图晚到盖住新图 */
-    private int loadSeq;
-
-    /** 加载指定路径的图片（后台解码 + 淡入过渡；序号防旧图晚到覆盖新图） */
-    private void loadImage(String path, boolean isUri) {
-        final String src = isUri ? currentUriStr : path;
-        final int seq = ++loadSeq;
-
-        // GIF（API 28+）：用 ImageDecoder 出 AnimatedImageDrawable，直接播放动图。
-        // 低版本/解码失败 → 回退下面的 BitmapFactory 静态首帧。
-        if (!isUri && android.os.Build.VERSION.SDK_INT >= 28
-                && path != null && path.toLowerCase().endsWith(".gif")) {
-            try {
-                android.graphics.ImageDecoder.Source gifSrc =
-                        android.graphics.ImageDecoder.createSource(new File(path));
-                android.graphics.drawable.Drawable anim =
-                        android.graphics.ImageDecoder.decodeDrawable(gifSrc, (decoder, info, s) -> {
-                            // 按屏幕尺寸降采样：动图内存占用比静态图高得多
-                            android.util.Size size = info.getSize();
-                            int w = size.getWidth(), h = size.getHeight();
-                            int reqW = getResources().getDisplayMetrics().widthPixels;
-                            int reqH = getResources().getDisplayMetrics().heightPixels;
-                            if (w > reqW * 2 || h > reqH * 2) {
-                                decoder.setTargetSampleSize(2);
-                            }
-                        });
-                if (anim instanceof android.graphics.drawable.AnimatedImageDrawable) {
-                    final android.graphics.drawable.AnimatedImageDrawable aid =
-                            (android.graphics.drawable.AnimatedImageDrawable) anim;
-                    runOnUiThread(() -> {
-                        if (seq != loadSeq) return;
-                        imageView.setImageDrawable(aid);
-                        imageView.setAlpha(0f);
-                        imageView.animate().alpha(1f).setDuration(FADE_MS).start();
-                        TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
-                        info.setText(aid.getIntrinsicWidth() + " × " + aid.getIntrinsicHeight() + " · GIF");
-                        updateCounter();
-                        resetMatrix();
-                        aid.start();
-                    });
-                    return;
-                }
-            } catch (Throwable ignored) {
-                // 落到静态解码分支
+    /** 按目标尺寸采样解码，避免大图 OOM */
+    private Bitmap decodeSampled(String src, boolean isUri) throws Exception {
+        BitmapFactory.Options o = new BitmapFactory.Options();
+        o.inJustDecodeBounds = true;
+        if (isUri) {
+            try (InputStream in = getContentResolver().openInputStream(Uri.parse(src))) {
+                BitmapFactory.decodeStream(in, null, o);
             }
-        }
-
-        new Thread(() -> {
-            final Bitmap bmp;
-            try {
-                bmp = decodeSampled(src, isUri);
-            } catch (Throwable t) {
-                runOnUiThread(() ->
-                        UiKit.toast(this, "图片解码失败：" + t.getMessage()));
-                return;
-            }
-            runOnUiThread(() -> {
-                if (seq != loadSeq) return;   // 已切到别的图：丢弃
-                if (bmp == null) {
-                    UiKit.toast(this, "无法解码该图片");
-                    return;
-                }
-                imageView.setImageBitmap(bmp);
-                imageView.setAlpha(0f);
-                imageView.animate().alpha(1f).setDuration(FADE_MS).start();
-                TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
-                info.setText(bmp.getWidth() + " × " + bmp.getHeight()
-                        + (hdMode ? " · 高清" : ""));
-                updateCounter();
-                resetMatrix();
-            });
-        }).start();
-    }
-
-    /**
-     * 左右切换同目录图片。
-     *
-     * <p><b>为什么之前会「闪一下」</b>：旧实现先把旧图淡出 150ms 并在结束时
-     * {@code setImageDrawable(null)} 清空，而此时新图还在后台解码——中间这段
-     * 时间是空白。解码完成后新图才淡入，观感就是「闪一下 → 到新图」。</p>
-     *
-     * <p><b>现在的做法</b>：不清空、也不先淡出——直接发起新图解码，
-     * 解码完成时才在新旧图之间做一次淡入（新图从 0→1 叠在上层）。
-     * 这样无论解码多快多慢，屏幕上永远有图，不会出现空白帧。
-     * 若解码很快（小图），淡入从上一帧就已开始，视觉上是平滑推进。</p>
-     */
-    private void switchImage(int dir) {
-        if (gallery == null || gallery.length <= 1) return;
-        galleryIndex = (galleryIndex + dir + gallery.length) % gallery.length;
-        String p = gallery[galleryIndex];
-        currentPath = p;
-        currentIsUri = false;
-        matrix.reset();
-        imageView.setImageMatrix(matrix);
-        // ⚠ 不再提前淡出/清图：保持旧图可见直至新图解码就绪
-        TextView tvTitle = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_title);
-        tvTitle.setText(new File(p).getName());
-        updateCounter();
-        loadImage(p, false);
-    }
-
-    /** 底栏计数行：有图集时显示「01/32」两位格式，单图隐藏（顶栏尺寸照常） */
-    private void updateCounter() {
-        TextView counter = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_counter);
-        if (gallery != null && gallery.length > 1) {
-            counter.setVisibility(View.VISIBLE);
-            counter.setText(String.format("%02d/%02d", galleryIndex + 1, gallery.length));
         } else {
-            counter.setVisibility(View.GONE);
+            BitmapFactory.decodeFile(src, o);
         }
+        o.inSampleSize = hdMode ? calcHdSample(o.outWidth, o.outHeight)
+                                : calcSample(o.outWidth, o.outHeight);
+        o.inJustDecodeBounds = false;
+        o.inPreferredConfig = hdMode ? Bitmap.Config.ARGB_8888 : Bitmap.Config.RGB_565;
+        if (isUri) {
+            try (InputStream in = getContentResolver().openInputStream(Uri.parse(src))) {
+                return BitmapFactory.decodeStream(in, null, o);
+            }
+        }
+        return BitmapFactory.decodeFile(src, o);
     }
 
-    // ── 顶/底栏显隐 ──
+    // ══════ 顶/底栏显隐 ══════
 
-    /** 单击画面：唤出或隐藏顶栏+底部功能栏；唤出时排 3 秒自动隐藏 */
     private void toggleBars() {
         setBarsVisible(!barsVisible);
     }
-
-    /** 背景色过渡时长（毫秒）：栏显隐同步的整页背景渐变 */
-    private static final long BG_ANIM_MS = 220;
 
     private void setBarsVisible(boolean show) {
         barsVisible = show;
         int vis = show ? View.VISIBLE : View.GONE;
         topBar.setVisibility(vis);
         bottomBar.setVisibility(vis);
-        // 栏出=白底（浏览模式）、栏藏=黑底（沉浸看图）。
-        // 进入时默认栏展开+白底，点击画面后切黑沉浸。
-        // 白底时栏背景透明（白透出来）、图标文字深色；黑底时栏用半透明黑 scrim、文字浅色。
+
         View root = findViewById(com.aliya.hyfilemgr.R.id.iv_root);
         ImageView backBtn = findViewById(com.aliya.hyfilemgr.R.id.btn_iv_back);
         TextView title = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_title);
         TextView info = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_info);
+        TextView counter = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_counter);
         int mainText = show ? 0xFF1A1A1A : 0xFFFFFFFF;
         int subText = show ? 0x991A1A1A : 0x99FFFFFF;
         int scrim = show ? 0x00000000 : 0x99000000;
@@ -428,11 +529,9 @@ public class ImageViewerActivity extends Activity {
         backBtn.setColorFilter(mainText);
         title.setTextColor(mainText);
         info.setTextColor(subText);
-        findViewById(com.aliya.hyfilemgr.R.id.tv_iv_counter).setBackgroundColor(0x00000000);
-        ((TextView) findViewById(com.aliya.hyfilemgr.R.id.tv_iv_counter)).setTextColor(subText);
+        counter.setTextColor(subText);
         tintBottomButtons(mainText, subText);
-        // 背景渐变过渡：硬切会闪一下，ArgbEvaluator 平滑变白/变黑。
-        // 首次调用（onCreate 尾部）不播动画，直接落位。
+
         android.animation.ValueAnimator bgAnim = android.animation.ValueAnimator.ofObject(
                 new android.animation.ArgbEvaluator(), currentBg, show ? 0xFFFFFFFF : 0xFF000000);
         bgAnim.setDuration(firstApply ? 0 : BG_ANIM_MS);
@@ -442,20 +541,14 @@ public class ImageViewerActivity extends Activity {
         });
         bgAnim.start();
         firstApply = false;
-        // 状态栏底色跟随：白底时状态栏也白、图标深色；黑底时透明、图标浅色。
+
         android.view.Window w = getWindow();
         w.setStatusBarColor(show ? 0xFFFFFFFF : 0x00000000);
         androidx.core.view.WindowCompat.getInsetsController(w, w.getDecorView())
                 .setAppearanceLightStatusBars(show);
-        // 不自动隐藏（用户指示）：栏常驻直到用户再点画面。
     }
 
-    /** onCreate 首次落位不播动画 */
-    private boolean firstApply = true;
-    /** 当前背景色（ArgbEvaluator 动画的起点） */
-    private int currentBg = 0xFF000000;
-
-    /** 底部栏三按钮图标+文字换色（分享/删除/设为背景） */
+    /** 底部栏三按钮图标+文字换色 */
     private void tintBottomButtons(int iconColor, int textColor) {
         int[][] ids = {
                 {com.aliya.hyfilemgr.R.id.btn_iv_share, com.aliya.hyfilemgr.R.id.iv_share_icon},
@@ -470,7 +563,7 @@ public class ImageViewerActivity extends Activity {
         }
     }
 
-    // ── 底部功能栏动作 ──
+    // ══════ 底部功能栏动作 ══════
 
     /** 系统分享：content:// 用原 Uri，本地文件走 FileProvider */
     private void shareImage(String path, String uriStr, boolean isUri) {
@@ -523,13 +616,13 @@ public class ImageViewerActivity extends Activity {
         btns.setGravity(android.view.Gravity.END);
 
         final android.app.Dialog dialog = UiKit.glassDialog(this, box);
-        android.widget.TextView cancel = new android.widget.TextView(this);
+        TextView cancel = new TextView(this);
         cancel.setText("取消");
         cancel.setTextSize(14);
         cancel.setTextColor(0xCCFFFFFF);
         cancel.setPadding(dp(16), dp(8), dp(16), dp(8));
         cancel.setOnClickListener(v -> UiKit.dismissWithAnim(dialog));
-        android.widget.TextView ok = new android.widget.TextView(this);
+        TextView ok = new TextView(this);
         ok.setText("删除");
         ok.setTextSize(14);
         ok.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -549,10 +642,11 @@ public class ImageViewerActivity extends Activity {
         dialog.show();
     }
 
-    /** 设为背景：先选目标（全局 / 文件列表页），确认后回传主界面。
+    /**
+     * 设为背景：先选目标（全局 / 文件列表页），确认后回传主界面。
      *
-     * <p>不用 AlertDialog：framework 主题下它是深底深字，且与玻璃弹窗风格不一致。
-     * 自建 glassDialog + 浅色文字，与暗色沉浸一致。</p> */
+     * <p>不用 AlertDialog：framework 主题下它是深底深字，与暗色沉浸不一致。</p>
+     */
     private void askWallpaperTarget(String path) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -613,77 +707,7 @@ public class ImageViewerActivity extends Activity {
         }
     }
 
-    /** 中央居中显示（初始与双击还原共用） */
-    /**
-     * 图片当前是否处于放大状态（用于判定滑动该切图还是拖图）。
-     *
-     * <p>matrix 的 MSCALE_X 分量与 resetMatrix 后的基准缩放（适应屏幕）
-     * 比对：明显大于基准即视为已放大。阈值 1.1 倍留出浮点误差余量。</p>
-     */
-    private boolean isZoomedIn() {
-        android.graphics.drawable.Drawable d = imageView.getDrawable();
-        if (d == null) return false;
-        int vw = imageView.getWidth(), vh = imageView.getHeight();
-        int dw = d.getIntrinsicWidth(), dh = d.getIntrinsicHeight();
-        if (vw <= 0 || vh <= 0 || dw <= 0 || dh <= 0) return false;
-        float fit = Math.min((float) vw / dw, (float) vh / dh);
-        float[] v = new float[9];
-        matrix.getValues(v);
-        float cur = v[android.graphics.Matrix.MSCALE_X];
-        return cur > fit * 1.1f;
-    }
-
-    private void resetMatrix() {
-        int vw = imageView.getWidth(), vh = imageView.getHeight();
-        android.graphics.drawable.Drawable d = imageView.getDrawable();
-        if (d == null || vw == 0 || vh == 0) {
-            matrix.reset();
-            imageView.setImageMatrix(matrix);
-            return;
-        }
-        float sx = (float) vw / d.getIntrinsicWidth();
-        float sy = (float) vh / d.getIntrinsicHeight();
-        float s = Math.min(sx, sy);           // 完整显示，不裁切
-        float dx = (vw - d.getIntrinsicWidth() * s) / 2f;
-        float dy = (vh - d.getIntrinsicHeight() * s) / 2f;
-        matrix.reset();
-        matrix.postScale(s, s);
-        matrix.postTranslate(dx, dy);
-        imageView.setImageMatrix(matrix);
-    }
-
-    /** 按屏幕尺寸采样解码，避免大图 OOM（高清模式下改为保细节采样 + ARGB_8888） */
-    private Bitmap decodeSampled(String src, boolean isUri) throws Exception {
-        BitmapFactory.Options o = new BitmapFactory.Options();
-        o.inJustDecodeBounds = true;
-        if (isUri) {
-            try (InputStream in = getContentResolver().openInputStream(Uri.parse(src))) {
-                BitmapFactory.decodeStream(in, null, o);
-            }
-        } else {
-            BitmapFactory.decodeFile(src, o);
-        }
-        o.inSampleSize = hdMode ? calcHdSample(o.outWidth, o.outHeight)
-                                : calcSample(o.outWidth, o.outHeight);
-        o.inJustDecodeBounds = false;
-        // RGB_565 省一半内存但会丢色阶（渐变、文字边缘发虚）；
-        // 高清模式用 ARGB_8888 保原色
-        o.inPreferredConfig = hdMode ? Bitmap.Config.ARGB_8888 : Bitmap.Config.RGB_565;
-        if (isUri) {
-            try (InputStream in = getContentResolver().openInputStream(Uri.parse(src))) {
-                return BitmapFactory.decodeStream(in, null, o);
-            }
-        }
-        return BitmapFactory.decodeFile(src, o);
-    }
-
-    private int calcSample(int w, int h) {
-        int reqW = getResources().getDisplayMetrics().widthPixels;
-        int reqH = getResources().getDisplayMetrics().heightPixels;
-        int sample = 1;
-        // 用 || 而非 &&：超宽/超高图（如 12000×3000）在 && 下 sample 恒为 1，
-        // 会全尺寸解码（3000 万像素 ≈ 60MB）。同时加上界防死循环。
-        while ((w / sample > reqW * 2 || h / sample > reqH * 2) && sample < 16) sample *= 2;
-        return Math.max(1, sample);
+    private int dp(int v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
     }
 }
