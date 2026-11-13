@@ -15513,9 +15513,17 @@ public class FileManagerModule extends HyVqModule {
             int slash = rel.indexOf('/');
             // it.isDir：tar/7z 会显式给出目录条目（内容是空的），
             // 不能只靠名称里有没有 / 来判断
-            if (it.isDir || slash >= 0) {
-                String dirName = it.isDir ? rel : rel.substring(0, slash);
-                if (!dirs.containsKey(dirName)) {
+            //
+            // ⚠ 但反过来也不能只信 it.isDir：Windows/WinRAR 打的 zip 里，
+            // 目录条目名可能是「测试A/测试B」（**不带尾部斜杠**），
+            // java.util.zip 的 ZipEntry.isDirectory() 只认尾斜杠，会返回 false
+            // → 被当成文件走下面的 else 分支（或走 slash>=0 但 dirName 取了完整 rel），
+            // 列表里就会出现「测试A/测试B/」这种带斜杠的条目。
+            // 正确做法：只要 rel 里还有斜杠，说明它至少处于更深一层，
+            // 目录名一律取**第一段**。
+            if (slash >= 0) {
+                String dirName = rel.substring(0, slash);
+                if (!dirName.isEmpty() && !dirs.containsKey(dirName)) {
                     String childVirt = p.path + dirName + "/";
                     String dl = dirName.toLowerCase(java.util.Locale.ROOT);
                     boolean nested = dl.endsWith(".zip") || dl.endsWith(".7z")
@@ -15524,6 +15532,20 @@ public class FileManagerModule extends HyVqModule {
                             || dl.endsWith(".bz2") || dl.endsWith(".xz")
                             || dl.endsWith(".zst");
                     dirs.put(dirName, new FileEntry(childVirt, dirName,
+                            FileEntry.Type.VIRTUAL_DIR, 0, 0, true,
+                            nested ? "嵌套压缩包" : "文件夹", false));
+                }
+            } else if (it.isDir) {
+                // 当前层的目录条目（无尾斜杠、也无更深层）——直接当本层目录
+                if (!dirs.containsKey(rel)) {
+                    String childVirt = p.path + rel + "/";
+                    String dl = rel.toLowerCase(java.util.Locale.ROOT);
+                    boolean nested = dl.endsWith(".zip") || dl.endsWith(".7z")
+                            || dl.endsWith(".rar") || dl.endsWith(".tar")
+                            || dl.contains(".tar.") || dl.endsWith(".gz")
+                            || dl.endsWith(".bz2") || dl.endsWith(".xz")
+                            || dl.endsWith(".zst");
+                    dirs.put(rel, new FileEntry(childVirt, rel,
                             FileEntry.Type.VIRTUAL_DIR, 0, 0, true,
                             nested ? "嵌套压缩包" : "文件夹", false));
                 }
