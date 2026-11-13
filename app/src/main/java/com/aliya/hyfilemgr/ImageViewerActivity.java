@@ -560,50 +560,13 @@ public class ImageViewerActivity extends Activity {
      * @return 本地文件路径；失败返回 null
      */
     private String extractZipEntry(String virtPath) {
-        try {
-            String rest = virtPath.substring(ZIP_PREFIX.length());
-            // 从右往左找「.zip/.jar/.apk」作为分隔点（包内路径可能含 .zip 字样，
-            // 但后缀后紧跟 '/' 的这个一定是包边界）
-            int cut = -1;
-            String lower = rest.toLowerCase();
-            for (int i = rest.length() - 1; i >= 0; i--) {
-                if (rest.charAt(i) != '/') continue;
-                String before = lower.substring(0, i);
-                if (before.endsWith(".zip") || before.endsWith(".jar")
-                        || before.endsWith(".apk") || before.endsWith(".epub")
-                        || before.endsWith(".docx") || before.endsWith(".xlsx")) {
-                    cut = i;
-                    break;
-                }
-            }
-            if (cut <= 0) return null;
-            String zipPath = rest.substring(0, cut);
-            String inner = rest.substring(cut + 1);
-            if (inner.isEmpty()) return null;
-
-            File dir = new File(getCacheDir(), "zipview");
-            if (!dir.exists() && !dir.mkdirs()) return null;
-            // 文件名：zip 路径哈希 + 条目扁平名（避免同名冲突）
-            String base = inner.substring(inner.lastIndexOf('/') + 1);
-            // SHA-256 前 16 字符 + 完整内路径（不同子目录同名文件需分开）
-            String key = sha256Hex(zipPath + "\u0000" + inner).substring(0, 16) + "_" + base;
-            File out = new File(dir, key);
-            if (out.isFile() && out.length() > 0) return out.getAbsolutePath();   // 复用缓存
-
-            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(new File(zipPath))) {
-                java.util.zip.ZipEntry ze = zf.getEntry(inner);
-                if (ze == null || ze.isDirectory()) return null;
-                try (InputStream in = zf.getInputStream(ze);
-                     java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
-                    byte[] buf = new byte[16384];
-                    int n;
-                    while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
-                }
-            }
-            return out.getAbsolutePath();
-        } catch (Throwable t) {
-            return null;
-        }
+        String[] parts = com.aliya.hyfilemgr.archive.ZipCache.splitVirtual(virtPath);
+        if (parts == null) return null;
+        // 统一走 ZipCache：它负责 SHA-256 命名、per-archive 追踪、
+        // 总量上限淘汰，并且支持「退出压缩包时清理」（用户要求）。
+        return com.aliya.hyfilemgr.archive.ZipCache.extractPath(
+                this, com.aliya.hyfilemgr.archive.ZipCache.DIR_VIEW,
+                parts[0], parts[1]);
     }
 
     // ══════ 顶/底栏显隐 ══════
@@ -649,6 +612,7 @@ public class ImageViewerActivity extends Activity {
         androidx.core.view.WindowCompat.getInsetsController(w, w.getDecorView())
                 .setAppearanceLightStatusBars(show);
     }
+
 
     /** 底部栏三按钮图标+文字换色 */
     private void tintBottomButtons(int iconColor, int textColor) {

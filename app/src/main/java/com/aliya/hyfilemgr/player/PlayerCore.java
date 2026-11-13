@@ -174,70 +174,16 @@ public final class PlayerCore {
      * <p>缓存名用 SHA-256 前 16 字符 + 条目名——不用 hashCode，
      * 它只有 32 位，碰撞会导致「播到别的视频」。</p>
      */
+    /** ZIP 内媒体条目解出：统一委托 ZipCache（含 per-archive 追踪与退出清理） */
     private static final class ZipMediaCache {
         static String extract(String virtPath) {
-            try {
-                android.content.Context ctx = HOLDER;
-                if (ctx == null) return null;
-                String rest = virtPath.substring("zip://".length());
-                String lower = rest.toLowerCase(java.util.Locale.ROOT);
-                int cut = -1;
-                for (int i = rest.length() - 1; i >= 0; i--) {
-                    if (rest.charAt(i) != '/') continue;
-                    String before = lower.substring(0, i);
-                    if (before.endsWith(".zip") || before.endsWith(".jar")
-                            || before.endsWith(".apk") || before.endsWith(".epub")) {
-                        cut = i;
-                        break;
-                    }
-                }
-                if (cut <= 0) return null;
-                String zipPath = rest.substring(0, cut);
-                String inner = rest.substring(cut + 1);
-                if (inner.isEmpty()) return null;
-
-                File dir = new File(ctx.getCacheDir(), "zipmedia");
-                if (!dir.exists() && !dir.mkdirs()) return null;
-                String base = inner.substring(inner.lastIndexOf('/') + 1);
-                File out = new File(dir, sha256Hex(zipPath + "\u0000" + inner)
-                        .substring(0, 16) + "_" + base);
-                if (out.isFile() && out.length() > 0) return out.getAbsolutePath();
-
-                try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(new File(zipPath))) {
-                    java.util.zip.ZipEntry ze = zf.getEntry(inner);
-                    if (ze == null || ze.isDirectory()) return null;
-                    try (java.io.InputStream in = zf.getInputStream(ze);
-                         java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
-                        byte[] buf = new byte[131072];
-                        int n;
-                        while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
-                    }
-                }
-                return out.getAbsolutePath();
-            } catch (Throwable t) {
-                return null;
-            }
+            android.content.Context ctx = HOLDER;
+            if (ctx == null) return null;
+            String[] parts = com.aliya.hyfilemgr.archive.ZipCache.splitVirtual(virtPath);
+            if (parts == null) return null;
+            return com.aliya.hyfilemgr.archive.ZipCache.extractPath(
+                    ctx, com.aliya.hyfilemgr.archive.ZipCache.DIR_MEDIA,
+                    parts[0], parts[1]);
         }
-
-        static String sha256Hex(String s) {
-            try {
-                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-                byte[] d = md.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                StringBuilder sb = new StringBuilder(d.length * 2);
-                for (byte b : d) {
-                    int v = b & 0xFF;
-                    if (v < 16) sb.append('0');
-                    sb.append(Integer.toHexString(v));
-                }
-                return sb.toString();
-            } catch (Throwable t) {
-                return Integer.toHexString(s.hashCode());
-            }
-        }
-    }
-
-    /** 判断一个播放项是否是网络地址（供 UI 决定是否显示"网络播放"等提示） */
-    public static boolean isNetwork(String path) {
-        return path != null && (path.startsWith("http://") || path.startsWith("https://"));
     }
 }

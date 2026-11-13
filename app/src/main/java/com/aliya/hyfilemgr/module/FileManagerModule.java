@@ -520,6 +520,14 @@ public class FileManagerModule extends HyVqModule {
         boolean dirFadePending;
         /** 同 dirFadePending，逐项 stagger 的消费标志，同样必须在 Pane 上 */
         boolean staggerPending = true;
+        /**
+         * 上次 reload 时所在的压缩包路径（非 zip 时为 null）。
+         *
+         * <p>用于「退出压缩包即清理缓存」：本次 reload 后如果路径不再属于这个包，
+         * 就调 ZipCache.purgeArchive 把它解出的 zipview/zipthumb/zipmedia 删掉。
+         * 必须在 Pane 上（双窗格各自独立），放 Module 级会让两窗互相干扰。</p>
+         */
+        String lastArchivePath;
         /** 进入 SAF 授权目录（content://）前的路径：授权根的".."返回这里 */
         String navPrev;
         final List<FileEntry> entries = new ArrayList<>();
@@ -709,6 +717,12 @@ public class FileManagerModule extends HyVqModule {
         uninstallBackCallback();
         dismissAllPopups();
         persistState();
+        // 应用退出时清空 ZIP 解出缓存（用户要求：退出即销毁）。
+        // per-archive 追踪在退出包时已逐个清，这里是兜底——
+        // 应对「用户一直待在包里就直接杀 App」的场景。
+        try {
+            com.aliya.hyfilemgr.archive.ZipCache.clearAll(ctx);
+        } catch (Throwable ignored) { }
         if (activeInstance == this) activeInstance = null;
         // 释放 Activity 强引用：否则旋转/重建后旧 Activity 被钉住，
         // 整个 View 树泄漏，且延时回调会对已销毁 Activity 调 recreate
@@ -2702,6 +2716,32 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 重新加载单个窗格：AccessRouter 四源路由 → 排序 → 刷新（恢复该目录上次滚动位置） */
+    /**
+     * 离开压缩包时清掉它解出的缓存（图片原图 / 缩略图副本 / 媒体文件）。
+     *
+     * <p><b>为什么放在 reload</b>：reload 是切目录的公共入口（点击、返回、侧边栏跳转、
+     * reloadAll 都会到）。在这里能可靠捕获「从 zip://A/... 走到别处」。
+     * 但仅凭「当前路径不是 zip」还不够——要区分「只是走得更深」还是「真的离开了包」。</p>
+     *
+     * <p>做法：记住每个窗格上次所在的压缩包；本次 reload 后如果
+     * 当前路径不再属于那个包，就清掉那个包的缓存。</p>
+     */
+    private void maybePurgeArchiveCache(Pane p) {
+        try {
+            String curArchive = p.path != null
+                    ? com.aliya.hyfilemgr.archive.ZipCache.archiveOf(p.path) : null;
+            String prevArchive = p.lastArchivePath;
+            if (prevArchive != null && !prevArchive.equals(curArchive)) {
+                long freed = com.aliya.hyfilemgr.archive.ZipCache.purgeArchive(prevArchive);
+                if (freed > 0 && !detached) {
+                    android.util.Log.i("HyZipCache", "退出压缩包，释放缓存 "
+                            + fmtStorageSize(freed) + " ← " + prevArchive);
+                }
+            }
+            p.lastArchivePath = curArchive;
+        } catch (Throwable ignored) { }
+    }
+
     private void reload(Pane p) {
         // 记录最近的真实目录，供终端作工作目录（虚拟路径时回退用它）
         // 只记录**当前激活窗格**的真实路径：reloadAll 会按 L→R 连续调 reload，
@@ -2713,6 +2753,8 @@ public class FileManagerModule extends HyVqModule {
                 && !p.path.startsWith("cat://")) {
             lastRealPath = p.path;
         }
+        // 离开压缩包即清理它解出的缓存（用户要求：退出即销毁）
+        if (p != null) maybePurgeArchiveCache(p);
         if (p == null || p.path == null) return;
         // 不在此 persistState()：persistState 的注释已明确「路径不再保存」，
         // 而 reload 是每次切目录/刷新/操作的公共入口 →
@@ -4866,10 +4908,12 @@ public class FileManagerModule extends HyVqModule {
                     UiKit.toast(ctx, "已清理缩略图缓存");
                 });
         final TextView tvZip = addStorageItemSelectable(box, clearActions, selected,
-                "zip", "ZIP 浏览缓存", () -> {
-                    clearCacheSub("zipview");
-                    clearCacheSub("zipnested");
-                    UiKit.toast(ctx, "已清理 ZIP 缓存");
+                "zip", "ZIP 解出缓存", () -> {
+                    // 走 ZipCache.clearAll：覆盖 zipview / zipthumb / zipmedia / zipnested
+                    // 四个目录。旧实现只清前两个，zipthumb 与 zipmedia 从来没人删，
+                    // 白占大量空间（用户反馈「缓存没清理到」）。
+                    long freed = com.aliya.hyfilemgr.archive.ZipCache.clearAll(ctx);
+                    UiKit.toast(ctx, "已清理 ZIP 缓存 " + fmtStorageSize(freed));
                 });
         final TextView tvUpd = addStorageItemSelectable(box, clearActions, selected,
                 "update", "更新包缓存", () -> {
@@ -4949,8 +4993,7 @@ public class FileManagerModule extends HyVqModule {
                 "清理全部缓存",
                 "缩略图、ZIP 缓存、更新包会被清除。\n草稿、背景图、回收站不受影响。", () -> {
                     clearCacheSub("thumbs");
-                    clearCacheSub("zipview");
-                    clearCacheSub("zipnested");
+                    com.aliya.hyfilemgr.archive.ZipCache.clearAll(ctx);
                     clearUpdateApks();
                     UiKit.toast(ctx, "缓存已全部清理");
                     refreshStoragePage();
@@ -5108,8 +5151,8 @@ public class FileManagerModule extends HyVqModule {
             }
 
             final long thumb = FileOps.dirSize(new File(ctx.getCacheDir(), "thumbs"));
-            final long zip = FileOps.dirSize(new File(ctx.getCacheDir(), "zipview"))
-                    + FileOps.dirSize(new File(ctx.getCacheDir(), "zipnested"));
+            // ZIP 解出缓存：统一口径（四个目录合计），与清理按钮一致
+            final long zip = com.aliya.hyfilemgr.archive.ZipCache.totalSize(ctx);
             final long upd = updateApkSize();
             final long draft = FileOps.dirSize(draftDir());
             final long bg = FileOps.dirSize(bgDir());
@@ -6632,7 +6675,10 @@ public class FileManagerModule extends HyVqModule {
             } catch (Throwable t) {
                 report.append("· 设置清除失败：").append(t).append('\n');
             }
-            String[] caches = {"thumbs", "zipview", "zipnested"};
+            // zip 解出缓存交给 ZipCache（四个目录 + 清空 per-archive 追踪表）
+            com.aliya.hyfilemgr.archive.ZipCache.clearAll(ctx);
+            report.append("· ZIP 解出缓存已清\n");
+            String[] caches = {"thumbs"};
             for (String c : caches) {
                 java.io.File dir = new java.io.File(ctx.getCacheDir(), c);
                 if (deleteDirQuiet(dir)) report.append("· 缓存已清：").append(c).append('\n');

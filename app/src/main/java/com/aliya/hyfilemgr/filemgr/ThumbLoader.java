@@ -412,52 +412,19 @@ public final class ThumbLoader {
      *
      * @return 本地路径；失败 null
      */
+    /**
+     * 解开 zip:// 条目到缩略图缓存目录。
+     *
+     * <p>2026-11-13 起统一走 {@link com.aliya.hyfilemgr.archive.ZipCache}：
+     * 它负责 SHA-256 命名（防 hashCode 碰撞）、per-archive 追踪与
+     * 「退出压缩包即清理」（此前 zipthumb 从来没人删，白占空间）。</p>
+     */
     private static String extractZipEntryForThumb(Context ctx, String virtPath) {
-        try {
-            String rest = virtPath.substring("zip://".length());
-            String lower = rest.toLowerCase(Locale.ROOT);
-            int cut = -1;
-            for (int i = rest.length() - 1; i >= 0; i--) {
-                if (rest.charAt(i) != '/') continue;
-                String before = lower.substring(0, i);
-                if (before.endsWith(".zip") || before.endsWith(".jar")
-                        || before.endsWith(".apk") || before.endsWith(".epub")) {
-                    cut = i;
-                    break;
-                }
-            }
-            if (cut <= 0) return null;
-            String zipPath = rest.substring(0, cut);
-            String inner = rest.substring(cut + 1);
-            if (inner.isEmpty()) return null;
-
-            File dir = new File(ctx.getCacheDir(), "zipthumb");
-            if (!dir.exists() && !dir.mkdirs()) return null;
-            String base = inner.substring(inner.lastIndexOf('/') + 1);
-            // 缓存名用 SHA-256 前 16 字符而非 hashCode：
-            // 本项目自己的 diskFile 就专门注释过 hashCode 只有 32 位、
-            // 按生日逢论约 7.7 万个 key 就有 50% 碰撞，碰撞后果是
-            // 「显示别的图的缩略图」或写入时覆盖别人的缓存。
-            // 同时把 inner 完整路径也编进去——不同子目录下的同名文件
-            // （如 a/cover.jpg 与 b/cover.jpg）必须分开，否则缩略图串位。
-            String key = sha256Hex(zipPath + "\u0000" + inner).substring(0, 16) + "_" + base;
-            File out = new File(dir, key);
-            if (out.isFile() && out.length() > 0) return out.getAbsolutePath();
-
-            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(new File(zipPath))) {
-                java.util.zip.ZipEntry ze = zf.getEntry(inner);
-                if (ze == null || ze.isDirectory()) return null;
-                try (java.io.InputStream in = zf.getInputStream(ze);
-                     FileOutputStream fos = new FileOutputStream(out)) {
-                    byte[] buf = new byte[16384];
-                    int n;
-                    while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
-                }
-            }
-            return out.getAbsolutePath();
-        } catch (Throwable t) {
-            return null;
-        }
+        String[] parts = com.aliya.hyfilemgr.archive.ZipCache.splitVirtual(virtPath);
+        if (parts == null) return null;
+        return com.aliya.hyfilemgr.archive.ZipCache.extractPath(
+                ctx, com.aliya.hyfilemgr.archive.ZipCache.DIR_THUMB,
+                parts[0], parts[1]);
     }
 
     private static Bitmap scaleTo(Bitmap src, int max) {
