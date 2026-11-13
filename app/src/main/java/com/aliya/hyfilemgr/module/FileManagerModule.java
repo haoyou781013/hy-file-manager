@@ -5576,54 +5576,61 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
 
-        // ══════ 头部：图标 + 应用名 + 版本徽标 + 一句话定位 ══════
+        // ══════ 头部：图标在左、应用名+版本在右（左右式）══════
         LinearLayout header = new LinearLayout(ctx);
-        header.setOrientation(LinearLayout.VERTICAL);
-        header.setGravity(Gravity.CENTER_HORIZONTAL);
-        header.setPadding(dp(16), dp(20), dp(16), dp(18));
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(18), dp(18), dp(18), dp(18));
         applyCardSurface(header, 12, true);
         header.setTag(CARD_TAG_KEY, Boolean.TRUE);
         header.setTag(CARD_TAG_HDR_KEY, Boolean.TRUE);
 
         android.widget.ImageView logo = new android.widget.ImageView(ctx);
         logo.setImageResource(R.mipmap.ic_launcher);
-        header.addView(logo, new LinearLayout.LayoutParams(dp(72), dp(72)));
+        LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(dp(60), dp(60));
+        logoLp.rightMargin = dp(14);
+        header.addView(logo, logoLp);
+
+        // 右侧纵列：应用名 → 版本号胶囊 → 一句话定位
+        LinearLayout textCol = new LinearLayout(ctx);
+        textCol.setOrientation(LinearLayout.VERTICAL);
+        textCol.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams colLp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        header.addView(textCol, colLp);
 
         TextView appName = new TextView(ctx);
         appName.setText("HY文件管理");
-        appName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
+        appName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
         appName.setTypeface(null, android.graphics.Typeface.BOLD);
         appName.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
-        appName.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams nameLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        nameLp.topMargin = dp(10);
-        header.addView(appName, nameLp);
+        textCol.addView(appName);
 
+        // 版本号：只显示 vX.Y.Z（不展示 versionCode——那是内部构建号，
+        // 用户看不懂也无需关心；需要时可在下方「应用信息」查到）
         TextView verBadge = new TextView(ctx);
-        verBadge.setText("v" + appVersionName() + "  ·  " + appVersionCode());
-        verBadge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        verBadge.setText("v" + appVersionName());
+        verBadge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         verBadge.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnPrimary));
-        verBadge.setPadding(dp(12), dp(4), dp(12), dp(4));
+        verBadge.setPadding(dp(9), dp(3), dp(9), dp(3));
         verBadge.setBackground(UiKit.rounded(ctx, 999,
                 UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary), 0));
         LinearLayout.LayoutParams vLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        vLp.topMargin = dp(8);
-        header.addView(verBadge, vLp);
+        vLp.topMargin = dp(6);
+        textCol.addView(verBadge, vLp);
 
         TextView tagline = new TextView(ctx);
         tagline.setText("双窗格文件管理器 · 压缩包直读 · 内置编辑器");
-        tagline.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        tagline.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         tagline.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
-        tagline.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams tagLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        tagLp.topMargin = dp(6);
-        header.addView(tagline, tagLp);
+        tagLp.topMargin = dp(5);
+        textCol.addView(tagline, tagLp);
         box.addView(header);
 
         // ══════ 快捷操作：检查更新 / 问题反馈（横向等分）══════
