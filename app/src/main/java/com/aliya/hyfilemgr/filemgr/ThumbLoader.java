@@ -185,23 +185,31 @@ public final class ThumbLoader {
         String low = name == null ? path.toLowerCase(Locale.ROOT)
                 : name.toLowerCase(Locale.ROOT);
         try {
+            // ⓪ ZIP 虚拟路径（zip://包/条目）：先解出单条目到缓存再当普通图片读。
+            // 不解出的话 BitmapFactory 拿到 "zip://…" 字符串会直接失败，
+            // 列表里所有压缩包内图片都只能显示通用图标。
+            String realPath = path;
+            if (path != null && path.startsWith("zip://")) {
+                realPath = extractZipEntryForThumb(ctx, path);
+                if (realPath == null) return null;
+            }
             // ① ICO：Android BitmapFactory 不支持该格式，必须走自研解码器。
             // 放在 isImage 之前——.ico 同时也在 isImage 的扩展名列表里。
             if (low.endsWith(".ico")) {
                 com.aliya.hyfilemgr.icon.IcoDecoder.Result r =
-                        com.aliya.hyfilemgr.icon.IcoDecoder.decode(path, TARGET_PX * 2);
+                        com.aliya.hyfilemgr.icon.IcoDecoder.decode(realPath, TARGET_PX * 2);
                 return r == null ? null : scaleTo(r.bitmap, TARGET_PX);
             }
             // ② Windows PE（exe/dll/mun/cpl）：从 .rsrc 节提取图标
             if (com.aliya.hyfilemgr.icon.PeIconExtractor.supports(low)) {
-                Bitmap bm = com.aliya.hyfilemgr.icon.PeIconExtractor.extractIcon(path, TARGET_PX * 2);
+                Bitmap bm = com.aliya.hyfilemgr.icon.PeIconExtractor.extractIcon(realPath, TARGET_PX * 2);
                 return bm == null ? null : scaleTo(bm, TARGET_PX);
             }
-            if (isImage(low)) return decodeImage(path);
-            if (isVideo(low)) return decodeVideo(path);
+            if (isImage(low)) return decodeImage(realPath);
+            if (isVideo(low)) return decodeVideo(realPath);
             if (low.endsWith(".apk")) {
-                Bitmap bm = decodeApk(path);
-                if (bm == null) bm = decodeApkDirect(path);
+                Bitmap bm = decodeApk(realPath);
+                if (bm == null) bm = decodeApkDirect(realPath);
                 return bm;
             }
         } catch (Throwable ignored) {
@@ -323,6 +331,57 @@ public final class ThumbLoader {
                     r.data, 0, r.data.length, o);
             if (bm == null) return null;
             return scaleTo(bm, TARGET_PX);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * 解开 {@code zip://<包路径>/<条目>} 到 cacheDir/zipthumb 并返回本地路径。
+     *
+     * <p><b>为什么要单独放 zipthumb 目录</b>：ThumbLoader 自己的磁盘缓存是
+     * 「缩略图」（已缩到 96px 的 jpg），而这里解出的是原图，不能混在一起。
+     * 查看器的 zipview 也不共用——那里是给原图看的，尺寸大。
+     * 缩略图用的副本只用一次，靠磁盘空间自然淘汰（不值得加 LRU）。</p>
+     *
+     * @return 本地路径；失败 null
+     */
+    private static String extractZipEntryForThumb(Context ctx, String virtPath) {
+        try {
+            String rest = virtPath.substring("zip://".length());
+            String lower = rest.toLowerCase(Locale.ROOT);
+            int cut = -1;
+            for (int i = rest.length() - 1; i >= 0; i--) {
+                if (rest.charAt(i) != '/') continue;
+                String before = lower.substring(0, i);
+                if (before.endsWith(".zip") || before.endsWith(".jar")
+                        || before.endsWith(".apk") || before.endsWith(".epub")) {
+                    cut = i;
+                    break;
+                }
+            }
+            if (cut <= 0) return null;
+            String zipPath = rest.substring(0, cut);
+            String inner = rest.substring(cut + 1);
+            if (inner.isEmpty()) return null;
+
+            File dir = new File(ctx.getCacheDir(), "zipthumb");
+            if (!dir.exists() && !dir.mkdirs()) return null;
+            String base = inner.substring(inner.lastIndexOf('/') + 1);
+            File out = new File(dir, Integer.toHexString(zipPath.hashCode()) + "_" + base);
+            if (out.isFile() && out.length() > 0) return out.getAbsolutePath();
+
+            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(new File(zipPath))) {
+                java.util.zip.ZipEntry ze = zf.getEntry(inner);
+                if (ze == null || ze.isDirectory()) return null;
+                try (java.io.InputStream in = zf.getInputStream(ze);
+                     FileOutputStream fos = new FileOutputStream(out)) {
+                    byte[] buf = new byte[16384];
+                    int n;
+                    while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
+                }
+            }
+            return out.getAbsolutePath();
         } catch (Throwable t) {
             return null;
         }

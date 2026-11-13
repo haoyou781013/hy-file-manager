@@ -238,7 +238,12 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         h.itemView.setScaleX(checked ? 0.985f : 1f);
         h.itemView.setScaleY(checked ? 0.985f : 1f);
         // 缩略图优先（图片/视频首帧/APK 图标）；无缩略图或开关关闭 → 回退类型图标
-        boolean useThumb = thumbsEnabled && !e.parent && !e.virtual
+        //
+        // ⚠ zip 内部条目（zip://…）在模型上标记为 virtual，但它们是**真实存在的
+        // 包内文件**，缩略图能解（ThumbLoader 会按需解出到缓存）。
+        // 旧逻辑一律 !e.virtual 排除，导致压缩包内所有图片/视频都只显示通用图标。
+        boolean isZipEntry = e.path != null && e.path.startsWith("zip://");
+        boolean useThumb = thumbsEnabled && !e.parent && (!e.virtual || isZipEntry)
                 && !e.isDir() && ThumbLoader.supports(e.name);
         if (useThumb) {
             // 先显示类型图标兜底，解码成功后覆盖；

@@ -132,10 +132,13 @@ public class ImageViewerActivity extends Activity {
         findViewById(com.aliya.hyfilemgr.R.id.btn_iv_back).setOnClickListener(v -> finish());
 
         // ── 底部功能栏 ──
+        // zip 虚拟路径（zip://…）既不能删除也不能设为背景（无真实文件、
+        // 删除会破坏包结构），但可以分享（解出后分享临时文件）
+        final boolean inZip = currentPath != null && currentPath.startsWith(ZIP_PREFIX);
         View del = findViewById(com.aliya.hyfilemgr.R.id.btn_iv_delete);
         View wp = findViewById(com.aliya.hyfilemgr.R.id.btn_iv_wallpaper);
-        del.setVisibility(!isUri ? View.VISIBLE : View.GONE);
-        wp.setVisibility(!isUri ? View.VISIBLE : View.GONE);
+        del.setVisibility(!isUri && !inZip ? View.VISIBLE : View.GONE);
+        wp.setVisibility(!isUri && !inZip ? View.VISIBLE : View.GONE);
         // 用 currentPath 间接引用：翻页后按钮作用对象要跟着变
         del.setOnClickListener(v -> confirmDelete(currentPath));
         wp.setOnClickListener(v -> askWallpaperTarget(currentPath));
@@ -165,12 +168,47 @@ public class ImageViewerActivity extends Activity {
                 currentPath = p;
                 currentIsUri = false;
                 currentUriStr = null;
-                updateTitleAndCounter(new File(p).getName());
+                updateTitleAndCounter(displayNameOf(p));
                 // 翻页后重置新页缩放，避免继承上一页的放大状态
                 View page = findPage(position);
                 if (page instanceof ImagePage) ((ImagePage) page).resetZoom();
+                // 按钮可用性跟随当前路径：zip 虚拟路径不能删/设背景
+                refreshBottomButtons();
             }
         });
+    }
+
+    /** 底栏按钮可用性：zip 虚拟路径不能删除/设背景（无真实文件），但可分享 */
+    private void refreshBottomButtons() {
+        boolean inZip = currentPath != null && currentPath.startsWith(ZIP_PREFIX);
+        findViewById(com.aliya.hyfilemgr.R.id.btn_iv_delete)
+                .setVisibility(!currentIsUri && !inZip ? View.VISIBLE : View.GONE);
+        findViewById(com.aliya.hyfilemgr.R.id.btn_iv_wallpaper)
+                .setVisibility(!currentIsUri && !inZip ? View.VISIBLE : View.GONE);
+    }
+
+    /** 显示名称：zip://… 取包内条目名 */
+    private String displayNameOf(String path) {
+        if (path == null) return "图片";
+        if (path.startsWith(ZIP_PREFIX)) {
+            String rest = path.substring(ZIP_PREFIX.length());
+            int cut = rest.lastIndexOf('/');
+            // 去掉最后一段包内条目后的剩余，取条目名本身
+            String inner = rest;
+            String lower = rest.toLowerCase();
+            for (int i = rest.length() - 1; i >= 0; i--) {
+                if (rest.charAt(i) != '/') continue;
+                String before = lower.substring(0, i);
+                if (before.endsWith(".zip") || before.endsWith(".jar")
+                        || before.endsWith(".apk") || before.endsWith(".epub")) {
+                    inner = rest.substring(i + 1);
+                    break;
+                }
+            }
+            int slash = inner.lastIndexOf('/');
+            return slash >= 0 ? inner.substring(slash + 1) : inner;
+        }
+        return new File(path).getName();
     }
 
     /** 取当前 ViewPager2 内部 RecyclerView 中承载指定 position 的页 View */
@@ -481,8 +519,14 @@ public class ImageViewerActivity extends Activity {
         return Math.max(1, sample);
     }
 
-    /** 按目标尺寸采样解码，避免大图 OOM */
+    /** 按目标尺寸采样解码，避免大图 OOM。zip:// 虚拟路径会先解出到缓存再读。 */
     private Bitmap decodeSampled(String src, boolean isUri) throws Exception {
+        // zip 虚拟路径：先解出到 cacheDir/zipview（查看器页每次只解当前页）
+        if (src != null && src.startsWith(ZIP_PREFIX)) {
+            src = extractZipEntry(src);
+            if (src == null) return null;
+            isUri = false;
+        }
         BitmapFactory.Options o = new BitmapFactory.Options();
         o.inJustDecodeBounds = true;
         if (isUri) {
@@ -502,6 +546,63 @@ public class ImageViewerActivity extends Activity {
             }
         }
         return BitmapFactory.decodeFile(src, o);
+    }
+
+    /** ZIP 虚拟路径前缀（与模块 PREFIX_ZIP 一致） */
+    private static final String ZIP_PREFIX = "zip://";
+
+    /**
+     * 解开 {@code zip://<zip绝对路径>/<包内条目>}，把条目写到 cacheDir/zipview 并返回本地路径。
+     *
+     * <p>缓存文件名带「zip 路径哈希 + 条目名」前缀，避免不同压缩包内同名条目互相覆盖。
+     * 已解出过则直接复用（同一个包反复翻页不重复解）。</p>
+     *
+     * @return 本地文件路径；失败返回 null
+     */
+    private String extractZipEntry(String virtPath) {
+        try {
+            String rest = virtPath.substring(ZIP_PREFIX.length());
+            // 从右往左找「.zip/.jar/.apk」作为分隔点（包内路径可能含 .zip 字样，
+            // 但后缀后紧跟 '/' 的这个一定是包边界）
+            int cut = -1;
+            String lower = rest.toLowerCase();
+            for (int i = rest.length() - 1; i >= 0; i--) {
+                if (rest.charAt(i) != '/') continue;
+                String before = lower.substring(0, i);
+                if (before.endsWith(".zip") || before.endsWith(".jar")
+                        || before.endsWith(".apk") || before.endsWith(".epub")
+                        || before.endsWith(".docx") || before.endsWith(".xlsx")) {
+                    cut = i;
+                    break;
+                }
+            }
+            if (cut <= 0) return null;
+            String zipPath = rest.substring(0, cut);
+            String inner = rest.substring(cut + 1);
+            if (inner.isEmpty()) return null;
+
+            File dir = new File(getCacheDir(), "zipview");
+            if (!dir.exists() && !dir.mkdirs()) return null;
+            // 文件名：zip 路径哈希 + 条目扁平名（避免同名冲突）
+            String base = inner.substring(inner.lastIndexOf('/') + 1);
+            String key = Integer.toHexString(zipPath.hashCode()) + "_" + base;
+            File out = new File(dir, key);
+            if (out.isFile() && out.length() > 0) return out.getAbsolutePath();   // 复用缓存
+
+            try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(new File(zipPath))) {
+                java.util.zip.ZipEntry ze = zf.getEntry(inner);
+                if (ze == null || ze.isDirectory()) return null;
+                try (InputStream in = zf.getInputStream(ze);
+                     java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
+                    byte[] buf = new byte[16384];
+                    int n;
+                    while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
+                }
+            }
+            return out.getAbsolutePath();
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     // ══════ 顶/底栏显隐 ══════
@@ -565,16 +666,24 @@ public class ImageViewerActivity extends Activity {
 
     // ══════ 底部功能栏动作 ══════
 
-    /** 系统分享：content:// 用原 Uri，本地文件走 FileProvider */
+    /** 系统分享：content:// 用原 Uri，本地文件走 FileProvider，zip 条目先解出 */
     private void shareImage(String path, String uriStr, boolean isUri) {
         try {
+            String realPath = path;
+            if (path != null && path.startsWith(ZIP_PREFIX)) {
+                realPath = extractZipEntry(path);
+                if (realPath == null) {
+                    UiKit.toast(this, "解出失败，无法分享");
+                    return;
+                }
+            }
             Uri uri;
             String name;
             if (isUri) {
                 uri = Uri.parse(uriStr);
                 name = "image";
             } else {
-                File f = new File(path);
+                File f = new File(realPath);
                 uri = androidx.core.content.FileProvider.getUriForFile(
                         this, getPackageName() + ".fileprovider", f);
                 name = f.getName();

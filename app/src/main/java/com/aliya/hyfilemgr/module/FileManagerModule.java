@@ -15801,11 +15801,70 @@ public class FileManagerModule extends HyVqModule {
                     UiKit.toast(ctx, "该条目不是文件");
                 } else if (isTextFile(fOut.getName())) {
                     openTextEditor(fOut);
+                } else if (IMAGE_EXTS.contains(extOf(fOut.getName()))) {
+                    // 图片：不走 openFile（那只会开单图），
+                    // 而是传「同包内所有图片」的 zip:// 列表给查看器，
+                    // 才能像普通目录一样左右滑看下一张。
+                    openZipImageGallery(zipPath, inner, e.name);
                 } else {
                     openFile(fOut);
                 }
             });
         }, "HyVqZipEntry").start();
+    }
+
+    /**
+     * 打开 ZIP 内的图片，并把同包内其它图片一起作为图集传给查看器。
+     *
+     * <p><b>为什么必须专门处理</b>：普通目录可以用 {@link #collectImages} 从窗格里
+     * 收集相邻图片；但 zip 内部是虚拟路径（{@code zip://包/条目}），
+     * 查看器只认真实文件路径——把虚拟路径塞进图集，滑到下一张就会解码失败
+     * （表现为「切下一张出不来，退出重点才能看」）。</p>
+     *
+     * <p>做法：传给查看器的列表全部是 {@code zip://} 虚拟路径，
+     * 查看器自己按需解出（见 ImageViewerActivity 的 zip 分支）。</p>
+     */
+    private void openZipImageGallery(String zipPath, String currentInner, String name) {
+        java.util.ArrayList<String> list = new java.util.ArrayList<>();
+        try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(new File(zipPath))) {
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
+            while (en.hasMoreElements()) {
+                java.util.zip.ZipEntry ze = en.nextElement();
+                if (ze.isDirectory()) continue;
+                String nm = ze.getName();
+                // 只在当前条目所在目录内收集（与文件管理器「同目录」语义一致）
+                String dir = currentInner.contains("/")
+                        ? currentInner.substring(0, currentInner.lastIndexOf('/') + 1) : "";
+                if (!nm.startsWith(dir)) continue;
+                if (nm.substring(dir.length()).contains("/")) continue;   // 排除更深层
+                if (!IMAGE_EXTS.contains(extOf(nm))) continue;
+                list.add(PREFIX_ZIP + zipPath + "/" + nm);
+            }
+        } catch (Throwable ignored) { }
+
+        String cur = PREFIX_ZIP + zipPath + "/" + currentInner;
+        if (!list.contains(cur)) list.add(0, cur);
+
+        try {
+            Intent i = new Intent(ctx, com.aliya.hyfilemgr.ImageViewerActivity.class);
+            i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_PATH, cur);
+            i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_TITLE, name);
+            if (list.size() > 1) {
+                i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_LIST,
+                        list.toArray(new String[0]));
+                i.putExtra(com.aliya.hyfilemgr.ImageViewerActivity.EXTRA_INDEX,
+                        Math.max(0, list.indexOf(cur)));
+            }
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (hostActivity != null) {
+                viewerPendingPath = cur;
+                hostActivity.startActivityForResult(i, REQ_VIEWER);
+            } else {
+                ctx.startActivity(i);
+            }
+        } catch (Throwable t) {
+            UiKit.alert(ctx, "无法打开图片查看器：" + t.getMessage());
+        }
     }
 
     /** 检测 ZIP 条目是否加密。
