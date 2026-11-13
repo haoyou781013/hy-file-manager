@@ -5457,52 +5457,79 @@ public class FileManagerModule extends HyVqModule {
      * 一级/二级标题用加粗+主题色，列表项带「·」缩进，正文常规字号。
      * 仍然不是完整 Markdown 解析器 —— 更新说明是我们自己写的，只用到这几种标记。</p>
      */
-    private void renderReleaseNotes(LinearLayout parent, String md) {
-        boolean inList = false;
-        for (String raw : md.split("\n", -1)) {
-            String line = raw;
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) {
-                inList = false;
-                continue;
-            }
-            if (trimmed.matches("^-{3,}$")) continue;   // 分隔线不渲染
+    /**
+     * 更新说明渲染（2026-11-12 改为真 Markdown）。
+     *
+     * <p>此前是「按小标题分段塞多个 TextView」，只能处理 # 与列表，
+     * 表格、代码块、引用、链接、粗体都不认——用户看到的是带符号的原文。</p>
+     *
+     * <p>现在复用项目已有的零依赖渲染器 {@link com.aliya.hyfilemgr.util.MarkdownUtils}
+     * （文本编辑器预览用的同一套），转成 HTML 后用 WebView 展示。
+     * 与编辑器预览一致：**不开 JavaScript**——更新说明来自网上清单，
+     * 不应给它任何脚本执行入口；也不加载外部资源（baseURL 传 null）。</p>
+     *
+     * <p>高度：给一个固定上限（约 320dp）内部滚动，避免一张超长说明把
+     * 下载按钮挤出屏幕；说明短时 WebView 自身高度自适应。</p>
+     */
+    private android.webkit.WebView renderReleaseNotes(LinearLayout parent, String md) {
+        LinearLayout wrap = new LinearLayout(ctx);
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setPadding(dp(10), dp(8), dp(10), dp(8));
+        wrap.setBackground(UiKit.rounded(ctx, 8,
+                UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerLow),
+                UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
 
-            int hash = 0;
-            while (hash < trimmed.length() && trimmed.charAt(hash) == '#') hash++;
-            if (hash > 0 && hash < trimmed.length() && trimmed.charAt(hash) == ' ') {
-                // 标题
-                TextView h = new TextView(ctx);
-                h.setText(trimmed.substring(hash + 1).trim());
-                h.setTextSize(TypedValue.COMPLEX_UNIT_SP, hash <= 2 ? 13 : 12);
-                h.setTypeface(null, android.graphics.Typeface.BOLD);
-                h.setTextColor(UiKit.color(ctx,
-                        hash <= 2 ? com.google.android.material.R.attr.colorPrimary
-                                  : com.google.android.material.R.attr.colorOnSurface));
-                LinearLayout.LayoutParams hLp = new LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                hLp.topMargin = dp(10);
-                hLp.bottomMargin = dp(3);
-                parent.addView(h, hLp);
-                inList = false;
-                continue;
-            }
+        String css = "<style>body{font-family:sans-serif;margin:0;padding:2px;"
+                + "line-height:1.55;font-size:13px;color:"
+                + hexColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface))
+                + ";background:transparent;}"
+                + "h1,h2{font-size:15px;margin:10px 0 4px;color:"
+                + hexColor(UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary)) + ";}"
+                + "h3,h4{font-size:13px;margin:8px 0 3px;color:"
+                + hexColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface)) + ";}"
+                + "p{margin:6px 0;}ul,ol{margin:6px 0;padding-left:18px;}"
+                + "li{margin:2px 0;}code{background:"
+                + hexColor(UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHigh))
+                + ";padding:1px 4px;border-radius:3px;font-size:12px;}"
+                + "pre{background:"
+                + hexColor(UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHigh))
+                + ";padding:8px;border-radius:6px;overflow-x:auto;}"
+                + "pre code{background:transparent;padding:0;}"
+                + "table{border-collapse:collapse;margin:6px 0;}"
+                + "td,th{border:1px solid "
+                + hexColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant))
+                + ";padding:4px 8px;font-size:12px;}"
+                + "blockquote{border-left:3px solid "
+                + hexColor(UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary))
+                + ";margin:6px 0;padding:2px 10px;color:"
+                + hexColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant))
+                + ";}a{color:"
+                + hexColor(UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary))
+                + ";}hr{border:0;border-top:1px solid "
+                + hexColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant))
+                + ";margin:10px 0;}</style>";
 
-            boolean isItem = trimmed.startsWith("- ") || trimmed.startsWith("* ");
-            TextView tv = new TextView(ctx);
-            String text = isItem ? trimmed.substring(2) : trimmed;
-            tv.setText(isItem ? "·  " + text : text);
-            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            tv.setTextColor(UiKit.color(ctx,
-                    com.google.android.material.R.attr.colorOnSurfaceVariant));
-            tv.setLineSpacing(dp(2), 1f);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.leftMargin = isItem ? dp(4) : 0;
-            lp.topMargin = isItem ? dp(2) : dp(3);
-            parent.addView(tv, lp);
-            inList = isItem;
-        }
+        String body = com.aliya.hyfilemgr.util.MarkdownUtils.toHtml(md == null ? "" : md);
+        String html = "<html><head><meta charset=\"utf-8\">"
+                + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                + css + "</head><body>" + body + "</body></html>";
+
+        android.webkit.WebView wv = new android.webkit.WebView(ctx);
+        wv.setBackgroundColor(android.graphics.Color.TRANSPARENT);
+        wv.getSettings().setJavaScriptEnabled(false);       // 不执行任何脚本
+        wv.getSettings().setAllowFileAccess(false);          // 不读本地文件
+        wv.getSettings().setAllowContentAccess(false);
+        wv.getSettings().setBlockNetworkLoads(true);         // 不请求任何外部资源
+        wv.setVerticalScrollBarEnabled(false);
+        wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
+
+        int maxH = dp(320);
+        wrap.addView(wv, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, maxH));
+        LinearLayout.LayoutParams wrapLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        parent.addView(wrap, wrapLp);
+        return wv;
     }
 
     /** 解析出的更新信息 */
@@ -7649,6 +7676,105 @@ public class FileManagerModule extends HyVqModule {
      * <p>复用现有的 AccessRouter 列举能力，所以 SAF 授权目录、root 路径、
      * 外部存储都能进去。仅显示图片扩展名 + 目录，避免用户在一堆 txt 里找图。</p>
      */
+    /**
+     * 侧边栏「文本编辑器」入口：弹一个单列文件选择器。
+     *
+     * <p>编辑器本身是内嵌 Dialog（多标签/草稿/行号/预览都已就绪），
+     * 缺的只是「怎么从一个空入口打开它」——文件列表里点文本文件也能进，
+     * 但用户在侧边栏找不到入口。这里复用背景图浏览器的单列风格：
+     * 只列目录 + 文本类文件，点开即进编辑器。</p>
+     */
+    private void showEditorFilePicker() {
+        final String[] curPath = { active != null && active.path != null
+                ? active.path : android.os.Environment.getExternalStorageDirectory().getAbsolutePath() };
+
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(sectionHeaderInCard("选择要编辑的文件"));
+
+        final TextView pathLabel = new TextView(ctx);
+        pathLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        pathLabel.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        pathLabel.setSingleLine(true);
+        pathLabel.setEllipsize(android.text.TextUtils.TruncateAt.START);
+        pathLabel.setPadding(dp(4), 0, dp(4), dp(6));
+        box.addView(pathLabel);
+
+        final LinearLayout listBox = new LinearLayout(ctx);
+        listBox.setOrientation(LinearLayout.VERTICAL);
+        android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+        sv.addView(listBox);
+        box.addView(sv, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(340)));
+
+        final android.app.Dialog d = UiKit.glassDialog(ctx, box);
+
+        final Runnable[] reload = new Runnable[1];
+        reload[0] = () -> {
+            pathLabel.setText(curPath[0]);
+            listBox.removeAllViews();
+            new Thread(() -> {
+                java.util.List<String[]> items = new java.util.ArrayList<>();
+                try {
+                    AccessResult r = com.aliya.hyfilemgr.access.AccessRouter.list(ctx, curPath[0]);
+                    if (r != null && r.entries != null) {
+                        for (FileEntry e : r.entries) {
+                            if (e.name == null || e.name.startsWith(".")) continue;
+                            if (e.isDir()) {
+                                items.add(new String[]{ e.name, e.path, "d" });
+                            } else if (isTextFile(e.name)) {
+                                items.add(new String[]{ e.name, e.path, "f" });
+                            }
+                        }
+                    }
+                } catch (Throwable t) {
+                    android.util.Log.w("HYEditor", "browse failed", t);
+                }
+                handler.post(() -> {
+                    if (detached) return;
+                    java.io.File up = new java.io.File(curPath[0]).getParentFile();
+                    if (up != null) {
+                        listBox.addView(buildSimpleRow("⬆ 上级目录", up.getAbsolutePath(), v -> {
+                            curPath[0] = up.getAbsolutePath();
+                            reload[0].run();
+                        }));
+                    }
+                    if (items.isEmpty()) {
+                        TextView empty = new TextView(ctx);
+                        empty.setText("（这里没有可编辑的文本文件）");
+                        empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                        empty.setTextColor(UiKit.color(ctx,
+                                com.google.android.material.R.attr.colorOnSurfaceVariant));
+                        empty.setPadding(dp(8), dp(16), dp(8), dp(16));
+                        listBox.addView(empty);
+                    }
+                    java.util.List<String> dirs = new java.util.ArrayList<>();
+                    java.util.List<String> files = new java.util.ArrayList<>();
+                    for (String[] it : items) {
+                        (it[2].equals("d") ? dirs : files).add(it[0] + "\u0000" + it[1]);
+                    }
+                    for (String it : dirs) {
+                        String[] p = it.split("\u0000", 2);
+                        listBox.addView(buildSimpleRow("📁 " + p[0], "目录", v -> {
+                            curPath[0] = p[1];
+                            reload[0].run();
+                        }));
+                    }
+                    for (String it : files) {
+                        String[] p = it.split("\u0000", 2);
+                        listBox.addView(buildSimpleRow("📄 " + p[0], "点击编辑", v -> {
+                            UiKit.dismissWithAnim(d);
+                            openTextEditor(new java.io.File(p[1]));
+                        }));
+                    }
+                });
+            }, "HyEditorPick").start();
+        };
+        reload[0].run();
+        d.show();
+    }
+
     private void showBgFileBrowser() {
         final String[] curPath = { active != null && active.path != null
                 ? active.path : Environment.getExternalStorageDirectory().getAbsolutePath() };
@@ -9020,6 +9146,14 @@ public class FileManagerModule extends HyVqModule {
                 "按扫描路径浏览相册图片",
                 R.drawable.ic_img, v -> {
                     closeNavSidebarThen(this::openGallery);
+                }));
+
+        // 文本编辑器：弹一个文件选择器（复用自建浏览器的单列风格），
+        // 选中后走现有 openTextEditor 链路（多标签/草稿/行号/预览都已就绪）
+        toolsBody.addView(buildToolCard("文本编辑器",
+                "浏览并编辑文本/代码文件",
+                R.drawable.ic_doc, v -> {
+                    closeNavSidebarThen(this::showEditorFilePicker);
                 }));
 
 
