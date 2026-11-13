@@ -310,6 +310,8 @@ public class MediaPlayerActivity extends Activity {
         idx = Math.max(0, Math.min(startIdx, playlist.length - 1));
 
         // ── 创建统一内核（headers 在这里生效，作用于播放列表与全部分片请求）──
+        // zip 虚拟路径需要 cacheDir 解出，先注入 Application context
+        PlayerCore.init(getApplicationContext());
         player = PlayerCore.create(this, headers);
         playerView.setPlayer(player);
         player.addListener(new Player.Listener() {

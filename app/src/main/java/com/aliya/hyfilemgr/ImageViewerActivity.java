@@ -585,7 +585,8 @@ public class ImageViewerActivity extends Activity {
             if (!dir.exists() && !dir.mkdirs()) return null;
             // 文件名：zip 路径哈希 + 条目扁平名（避免同名冲突）
             String base = inner.substring(inner.lastIndexOf('/') + 1);
-            String key = Integer.toHexString(zipPath.hashCode()) + "_" + base;
+            // SHA-256 前 16 字符 + 完整内路径（不同子目录同名文件需分开）
+            String key = sha256Hex(zipPath + "\u0000" + inner).substring(0, 16) + "_" + base;
             File out = new File(dir, key);
             if (out.isFile() && out.length() > 0) return out.getAbsolutePath();   // 复用缓存
 
@@ -813,6 +814,23 @@ public class ImageViewerActivity extends Activity {
             case "webp": return "image/webp";
             case "bmp": return "image/bmp";
             default: return null;
+        }
+    }
+
+    /** SHA-256 前若干 hex（用于缓存文件名，防碰撞） */
+    private static String sha256Hex(String s) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] d = md.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(d.length * 2);
+            for (byte b : d) {
+                int v = b & 0xFF;
+                if (v < 16) sb.append('0');
+                sb.append(Integer.toHexString(v));
+            }
+            return sb.toString();
+        } catch (Throwable t) {
+            return Integer.toHexString(s.hashCode());
         }
     }
 

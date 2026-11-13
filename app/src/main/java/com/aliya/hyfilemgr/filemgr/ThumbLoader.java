@@ -230,25 +230,91 @@ public final class ThumbLoader {
         return BitmapFactory.decodeFile(path, o);
     }
 
+    /**
+     * 视频首帧缩略图。
+     *
+     * <p><b>为什么不取 timeUs=0</b>：大量视频开头有 0.3～1 秒黑场（导演/编码器习惯），
+     * 取 0 时刻就得到一张纯黑图（用户反馈的「部分视频缩略图纯黑」）。
+     * 也不能只靠「取到非黑帧就换」的启发式（老视频可能中间也有黑场）。</p>
+     *
+     * <p>做法：按视频时长取 <b>10%</b> 位置（封顶 3 秒），避开片头黑场；
+     * 取不到时长就回退到 1 秒处；仍失败才回退 0 时刻。
+     * 同时遇到「像素全黑」的结果再往后找一次，兼顾黑场位置异常的视频。</p>
+     */
     private static Bitmap decodeVideo(String path) {
         MediaMetadataRetriever r = new MediaMetadataRetriever();
         try {
             r.setDataSource(path);
-            // API 27+ 有 scaled 重载；低版本取全帧再缩
-            Bitmap f = null;
-            if (android.os.Build.VERSION.SDK_INT >= 27) {
-                f = r.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
-                        TARGET_PX, TARGET_PX);
+            long durMs = 0;
+            try {
+                String d = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+                if (d != null) durMs = Long.parseLong(d);
+            } catch (Throwable ignored) { }
+
+            // 目标时刻：时长的 10%，封顶 3 秒；拿不到时长则用 1 秒
+            long tMs = durMs > 0 ? Math.min(3000L, durMs / 10) : 1000L;
+            Bitmap f = frameAt(r, tMs);
+            // 全黑（片头黑场比预期长）→ 再往后找一次
+            if (isAllBlack(f) && durMs > 0) {
+                Bitmap f2 = frameAt(r, Math.min(10000L, durMs / 4));
+                if (f2 != null && !isAllBlack(f2)) {
+                    if (f != null && !f.isRecycled()) f.recycle();
+                    f = f2;
+                }
             }
-            if (f == null) {
-                f = r.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
-            }
+            // 最后兑底：0 时刻（至少比没有强）
+            if (f == null) f = frameAt(r, 0);
             return f == null ? null : scaleTo(f, TARGET_PX);
+        } catch (Throwable t) {
+            return null;
         } finally {
             try {
                 r.release();
             } catch (Throwable ignored) {
             }
+        }
+    }
+
+    /** 取指定时刻的帧（API 27+ 用 scaled 重载省内存） */
+    private static Bitmap frameAt(MediaMetadataRetriever r, long timeMs) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 27) {
+                Bitmap b = r.getScaledFrameAtTime(timeMs * 1000L,
+                        MediaMetadataRetriever.OPTION_CLOSEST_SYNC, TARGET_PX, TARGET_PX);
+                if (b != null) return b;
+            }
+            return r.getFrameAtTime(timeMs * 1000L,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * 判断帧是否几乎全黑（片头黑场的典型表现）。
+     *
+     * <p>采样而非常遍历：缩略图只需判断大概，抽样 200 个点足够快；
+     * 逐像素在 4K 帧上会是几十毫秒级开销，而缩略图加载是列表批量并发。</p>
+     */
+    private static boolean isAllBlack(Bitmap b) {
+        if (b == null || b.isRecycled()) return true;
+        try {
+            int w = b.getWidth(), h = b.getHeight();
+            if (w <= 0 || h <= 0) return true;
+            int stepX = Math.max(1, w / 20), stepY = Math.max(1, h / 10);
+            long sum = 0;
+            int n = 0;
+            for (int y = 0; y < h; y += stepY) {
+                for (int x = 0; x < w; x += stepX) {
+                    int p = b.getPixel(x, y);
+                    int lum = ((p >> 16 & 0xFF) * 299 + (p >> 8 & 0xFF) * 587 + (p & 0xFF) * 114) / 1000;
+                    sum += lum;
+                    n++;
+                }
+            }
+            return n > 0 && (sum / n) < 12;   // 平均亮度 < 12/255 视为黑
+        } catch (Throwable t) {
+            return false;
         }
     }
 
@@ -368,7 +434,14 @@ public final class ThumbLoader {
             File dir = new File(ctx.getCacheDir(), "zipthumb");
             if (!dir.exists() && !dir.mkdirs()) return null;
             String base = inner.substring(inner.lastIndexOf('/') + 1);
-            File out = new File(dir, Integer.toHexString(zipPath.hashCode()) + "_" + base);
+            // 缓存名用 SHA-256 前 16 字符而非 hashCode：
+            // 本项目自己的 diskFile 就专门注释过 hashCode 只有 32 位、
+            // 按生日逢论约 7.7 万个 key 就有 50% 碰撞，碰撞后果是
+            // 「显示别的图的缩略图」或写入时覆盖别人的缓存。
+            // 同时把 inner 完整路径也编进去——不同子目录下的同名文件
+            // （如 a/cover.jpg 与 b/cover.jpg）必须分开，否则缩略图串位。
+            String key = sha256Hex(zipPath + "\u0000" + inner).substring(0, 16) + "_" + base;
+            File out = new File(dir, key);
             if (out.isFile() && out.length() > 0) return out.getAbsolutePath();
 
             try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(new File(zipPath))) {

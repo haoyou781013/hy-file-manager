@@ -12533,6 +12533,21 @@ public class FileManagerModule extends HyVqModule {
                 if (ok && e.path != null && !e.path.isEmpty()) out.add(e.path);
             }
         }
+        // ⚠ 兑底：当前播放的文件不在窗格里时（典型场景：压缩包内的视频被解出到
+        // cacheDir 后用真实路径打开，而 active.entries 里是 zip:// 虚拟路径），
+        // 不能无脑 add 到列表——那会让播放器显示「1/2」：实际只有一个视频，
+        // 列表里却是「虚拟路径列表 + 当前真实路径」两项。
+        //
+        // 判据：当前窗格**已经在压缩包内**（path 以 zip:// 开头）且入参是真实路径
+        // → 说明列表里的虚拟路径与当前项不是同一个东西，直接用单项列表。
+        boolean inArchive = p != null && p.path != null && p.path.startsWith(PREFIX_ZIP);
+        boolean curIsReal = curPath != null && !curPath.startsWith(PREFIX_ZIP)
+                && !curPath.startsWith("content://");
+        if (inArchive && curIsReal) {
+            out.clear();
+            out.add(curPath);
+            return out;
+        }
         if (out.isEmpty() && curPath != null) out.add(curPath);
         return out;
     }
@@ -13821,6 +13836,16 @@ public class FileManagerModule extends HyVqModule {
                 if (IMAGE_EXTS.contains(extOf(e.name))
                         && e.path != null && !e.path.isEmpty()) out.add(e.path);
             }
+        }
+        // 与 collectPlayable 同款兑底：压缩包内条目被解出为真实路径后打开时，
+        // 窗格里是 zip:// 虚拟路径列表，与当前真实路径不是同一个东西，
+        // 不能把它们拼成一个图集（会出现「同一张图算两项」与无法解码的项）。
+        boolean inArchive = p != null && p.path != null && p.path.startsWith(PREFIX_ZIP);
+        boolean curIsReal = curPath != null && !curPath.startsWith(PREFIX_ZIP);
+        if (inArchive && curIsReal) {
+            out.clear();
+            out.add(curPath);
+            return out;
         }
         if (!out.contains(curPath)) out.add(0, curPath);
         return out;
@@ -15828,6 +15853,12 @@ public class FileManagerModule extends HyVqModule {
                     // 而是传「同包内所有图片」的 zip:// 列表给查看器，
                     // 才能像普通目录一样左右滑看下一张。
                     openZipImageGallery(zipPath, inner, e.name);
+                } else if (VIDEO_ONLY_EXTS.contains(extOf(fOut.getName()))
+                        || AUDIO_ONLY_EXTS.contains(extOf(fOut.getName()))) {
+                    // 音视频：同样传 zip:// 虚拟路径图集，而不是刚解出的临时文件。
+                    // 否则播放器会显示「1/2」——列表里是窗格虚拟路径 + 当前临时文件两项
+                    // （实际同包同级只有一个媒体文件）。
+                    openZipMediaGallery(zipPath, inner, e.name);
                 } else {
                     openFile(fOut);
                 }
@@ -15886,6 +15917,57 @@ public class FileManagerModule extends HyVqModule {
             }
         } catch (Throwable t) {
             UiKit.alert(ctx, "无法打开图片查看器：" + t.getMessage());
+        }
+    }
+
+    /**
+     * 打开 ZIP 内的音视频，同包同目录的媒体组成播放列表。
+     *
+     * <p><b>为什么不传刚解出的临时文件</b>：播放器会自己去 collectPlayable
+     * 收集同目录文件，而窗格里都是 zip:// 虚拟路径，与临时文件真实路径对不上，
+     * 于是 list.add(0, path) 多添一项 → 界面显示「1/2"（实际只有 1 个媒体）。</p>
+     *
+     * <p>做法与图片一致：全部传 zip:// 虚拟路径，播放器按需解出。</p>
+     */
+    private void openZipMediaGallery(String zipPath, String currentInner, String name) {
+        boolean isAudio = AUDIO_ONLY_EXTS.contains(extOf(currentInner));
+        java.util.Set<String> wanted = isAudio ? AUDIO_ONLY_EXTS : VIDEO_ONLY_EXTS;
+
+        java.util.ArrayList<String> list = new java.util.ArrayList<>();
+        String dir = currentInner.contains("/")
+                ? currentInner.substring(0, currentInner.lastIndexOf('/') + 1) : "";
+        try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(new File(zipPath))) {
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
+            while (en.hasMoreElements()) {
+                java.util.zip.ZipEntry ze = en.nextElement();
+                if (ze.isDirectory()) continue;
+                String nm = ze.getName();
+                if (!nm.startsWith(dir)) continue;
+                if (nm.substring(dir.length()).contains("/")) continue;   // 排除更深层
+                if (!wanted.contains(extOf(nm))) continue;
+                list.add(PREFIX_ZIP + zipPath + "/" + nm);
+            }
+        } catch (Throwable ignored) { }
+
+        String cur = PREFIX_ZIP + zipPath + "/" + currentInner;
+        if (!list.contains(cur)) list.add(0, cur);
+        int idx = Math.max(0, list.indexOf(cur));
+
+        try {
+            if (isAudio) {
+                showAudioPlayerDialog(list, idx, false);   // 音频：弹窗式播放
+            } else {
+                Intent i = new Intent(ctx, com.aliya.hyfilemgr.MediaPlayerActivity.class);
+                i.putExtra(com.aliya.hyfilemgr.MediaPlayerActivity.EXTRA_LIST,
+                        list.toArray(new String[0]));
+                i.putExtra(com.aliya.hyfilemgr.MediaPlayerActivity.EXTRA_INDEX, idx);
+                i.putExtra(com.aliya.hyfilemgr.MediaPlayerActivity.EXTRA_IS_URI, false);
+                i.putExtra(com.aliya.hyfilemgr.MediaPlayerActivity.EXTRA_TITLE, name);
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(i);
+            }
+        } catch (Throwable t) {
+            UiKit.alert(ctx, "无法打开播放器：" + t.getMessage());
         }
     }
 

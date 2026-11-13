@@ -121,13 +121,39 @@ public final class PlayerCore {
     }
 
     /**
-     * 把「路径 / content:// / http(s) URL」统一成 MediaItem。
+     * 应用 Context（zip 虚拟路径解出时需要 cacheDir）。
+     *
+     * <p>用 Application context，不会泄漏 Activity。由 MediaPlayerActivity /
+     * 音频弹窗在首次播放前调用 {@link #init}。</p>
+     */
+    private static volatile Context HOLDER;
+
+    /** 首次使用前调用一次（传 Application context） */
+    public static void init(Context app) {
+        HOLDER = app == null ? null : app.getApplicationContext();
+    }
+
+    /**
+     * 把「路径 / content:// / http(s) URL / zip:// 虚拟路径」统一成 MediaItem。
+     *
+     * <p><b>zip:// 必须在此处就解出</b>：ExoPlayer 需要一个可 seek 的真实文件或 URI，
+     * 它不认识本项目自定义的 zip:// 协议。传进去会得到
+     * {@code UnrecognizedInputFormatException} 或直接文件不存在。
+     * 调用方（FileManagerModule）已保证传入的 zip:// 条目能被解出，
+     * 这里解到 cacheDir/zipmedia 后走普通文件路径。</p>
      *
      * @param isUri 路径是否已经是 URI 字符串（SAF 的 content:// 或网络地址）
      */
     public static MediaItem mediaItem(String path, boolean isUri) {
         if (path == null) {
             return null;
+        }
+        // zip 虚拟路径：先解出到缓存再当普通文件播
+        if (path.startsWith("zip://")) {
+            String real = ZipMediaCache.extract(path);
+            if (real == null) return null;
+            path = real;
+            isUri = false;
         }
         Uri uri;
         if (isUri || path.startsWith("http://") || path.startsWith("https://")
@@ -137,6 +163,77 @@ public final class PlayerCore {
             uri = Uri.fromFile(new File(path));
         }
         return MediaItem.fromUri(uri);
+    }
+
+    /**
+     * ZIP 内媒体条目解出缓存。
+     *
+     * <p>与图片的 zipview / zipthumb 分开放在 zipmedia：
+     * 媒体文件通常几十 MB，混在一起不利于按类型清理（设置里的存储管理按目录清）。</p>
+     *
+     * <p>缓存名用 SHA-256 前 16 字符 + 条目名——不用 hashCode，
+     * 它只有 32 位，碰撞会导致「播到别的视频」。</p>
+     */
+    private static final class ZipMediaCache {
+        static String extract(String virtPath) {
+            try {
+                android.content.Context ctx = HOLDER;
+                if (ctx == null) return null;
+                String rest = virtPath.substring("zip://".length());
+                String lower = rest.toLowerCase(java.util.Locale.ROOT);
+                int cut = -1;
+                for (int i = rest.length() - 1; i >= 0; i--) {
+                    if (rest.charAt(i) != '/') continue;
+                    String before = lower.substring(0, i);
+                    if (before.endsWith(".zip") || before.endsWith(".jar")
+                            || before.endsWith(".apk") || before.endsWith(".epub")) {
+                        cut = i;
+                        break;
+                    }
+                }
+                if (cut <= 0) return null;
+                String zipPath = rest.substring(0, cut);
+                String inner = rest.substring(cut + 1);
+                if (inner.isEmpty()) return null;
+
+                File dir = new File(ctx.getCacheDir(), "zipmedia");
+                if (!dir.exists() && !dir.mkdirs()) return null;
+                String base = inner.substring(inner.lastIndexOf('/') + 1);
+                File out = new File(dir, sha256Hex(zipPath + "\u0000" + inner)
+                        .substring(0, 16) + "_" + base);
+                if (out.isFile() && out.length() > 0) return out.getAbsolutePath();
+
+                try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(new File(zipPath))) {
+                    java.util.zip.ZipEntry ze = zf.getEntry(inner);
+                    if (ze == null || ze.isDirectory()) return null;
+                    try (java.io.InputStream in = zf.getInputStream(ze);
+                         java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
+                        byte[] buf = new byte[131072];
+                        int n;
+                        while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
+                    }
+                }
+                return out.getAbsolutePath();
+            } catch (Throwable t) {
+                return null;
+            }
+        }
+
+        static String sha256Hex(String s) {
+            try {
+                java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+                byte[] d = md.digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                StringBuilder sb = new StringBuilder(d.length * 2);
+                for (byte b : d) {
+                    int v = b & 0xFF;
+                    if (v < 16) sb.append('0');
+                    sb.append(Integer.toHexString(v));
+                }
+                return sb.toString();
+            } catch (Throwable t) {
+                return Integer.toHexString(s.hashCode());
+            }
+        }
     }
 
     /** 判断一个播放项是否是网络地址（供 UI 决定是否显示"网络播放"等提示） */
