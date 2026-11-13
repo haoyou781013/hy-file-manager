@@ -5234,81 +5234,275 @@ public class FileManagerModule extends HyVqModule {
         return card;
     }
 
+    /**
+     * 软件更新页（2026-11-12 重构）。
+     *
+     * <p><b>改了什么</b>：
+     * <ul>
+     *   <li>视觉：当前版本卡 → 状态卡 → 操作区，版本号/发布日期/大小分行显示，
+     *       不再是「当前版本\nv1.0.4（versionCode 9）」这种挤在一起的一坨</li>
+     *   <li>检测结果直接在本页展开一张「新版本卡」，不用先弹窗再看一遍</li>
+     *   <li>更新说明按 Markdown 小标题分段渲染（标题加粗、列表带项目符号），
+     *       比整段 stripMarkdown 后一坨文字好读</li>
+     *   <li>下载支持多源兜底 + 可取消 + 先下/总量/速度/剩余时间</li>
+     * </ul></p>
+     */
     private View showUpdatePageBody() {
-        LinearLayout box = new LinearLayout(ctx);
+        final LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
 
-        String cur = appVersionName();
-        int curCode = appVersionCode();
+        final String cur = appVersionName();
+        final int curCode = appVersionCode();
 
-        LinearLayout card = new LinearLayout(ctx);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(14), dp(14), dp(14), dp(14));
-        // 走 cardSurface，跟其它卡片同一个不透明度旋钮。
-        // 原来这里硬编码 colorSurfaceContainerLow + 6dp 圆角，
-        // 调卡片透明度时它不会跟着变，会是一块实心板。
-        applyCardSurface(card, 10, false);
-        card.setTag(CARD_TAG_KEY, Boolean.TRUE);
+        // ══════ 当前版本卡 ══════
+        LinearLayout curCard = new LinearLayout(ctx);
+        curCard.setOrientation(LinearLayout.HORIZONTAL);
+        curCard.setGravity(Gravity.CENTER_VERTICAL);
+        curCard.setPadding(dp(16), dp(16), dp(16), dp(16));
+        applyCardSurface(curCard, 12, true);
+        curCard.setTag(CARD_TAG_KEY, Boolean.TRUE);
+        curCard.setTag(CARD_TAG_HDR_KEY, Boolean.TRUE);
 
-        TextView tvCur = new TextView(ctx);
-        tvCur.setText("当前版本\n" + cur + "  （versionCode " + curCode + "）");
-        tvCur.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        tvCur.setTextColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurface));
-        tvCur.setLineSpacing(dp(2), 1f);
-        card.addView(tvCur);
+        LinearLayout curTexts = new LinearLayout(ctx);
+        curTexts.setOrientation(LinearLayout.VERTICAL);
+        curCard.addView(curTexts, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        TextView tvState = new TextView(ctx);
-        tvState.setText("点下方按钮检查更新");
-        tvState.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        tvState.setTextColor(UiKit.color(ctx,
+        TextView curLabel = new TextView(ctx);
+        curLabel.setText("当前版本");
+        curLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        curLabel.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
-        tvState.setPadding(0, dp(10), 0, 0);
-        card.addView(tvState);
-        box.addView(card);
+        curTexts.addView(curLabel);
+
+        TextView curVer = new TextView(ctx);
+        curVer.setText("v" + cur);
+        curVer.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        curVer.setTypeface(null, android.graphics.Typeface.BOLD);
+        curVer.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurface));
+        LinearLayout.LayoutParams cvLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cvLp.topMargin = dp(2);
+        curTexts.addView(curVer, cvLp);
+
+        // 右侧状态标记：最新 / 有新版本
+        final TextView stateBadge = new TextView(ctx);
+        stateBadge.setText("未检查");
+        stateBadge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        stateBadge.setPadding(dp(10), dp(4), dp(10), dp(4));
+        stateBadge.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        stateBadge.setBackground(UiKit.rounded(ctx, 999,
+                UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHigh),
+                UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant)));
+        curCard.addView(stateBadge);
+        box.addView(curCard);
+
+        // ══════ 检查更新按钮 ══════
+        TextView checkBtn = textButton("检查更新", null);
+        checkBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        checkBtn.setPadding(dp(14), dp(14), dp(14), dp(14));
+        checkBtn.setBackground(UiKit.rounded(ctx, 10,
+                UiKit.color(ctx, com.google.android.material.R.attr.colorPrimaryContainer), 0));
+        LinearLayout.LayoutParams cbLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cbLp.topMargin = dp(8);
+        box.addView(checkBtn, cbLp);
+
+        // ══════ 结果区（动态填充）══════
+        final LinearLayout resultArea = new LinearLayout(ctx);
+        resultArea.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams raLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        raLp.topMargin = dp(8);
+        box.addView(resultArea, raLp);
+
+        // 下载状态区（下载中显示进度条与取消按钮）
+        final LinearLayout dlArea = new LinearLayout(ctx);
+        dlArea.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams dlLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        dlLp.topMargin = dp(8);
+        box.addView(dlArea, dlLp);
 
         box.addView(buildAutoCheckCard());
 
-        LinearLayout btns = new LinearLayout(ctx);
-        btns.setOrientation(LinearLayout.HORIZONTAL);
-        btns.setGravity(Gravity.END);
-        btns.setPadding(0, dp(14), 0, 0);
-
         final boolean[] checking = {false};
-        var checkBtnHolder = new Object() { TextView v; };
-
-        checkBtnHolder.v = textButton("检查更新", v -> {
+        checkBtn.setOnClickListener(v -> {
             if (checking[0]) return;
             checking[0] = true;
-            tvState.setText("正在检查…");
+            checkBtn.setText("正在检查…");
+            checkBtn.setAlpha(0.6f);
+            resultArea.removeAllViews();
+            stateBadge.setText("检查中");
             new Thread(() -> {
-                UpdateInfo info = fetchLatestUpdate();
+                final UpdateInfo info = fetchLatestUpdate();
                 handler.post(() -> {
                     if (detached) return;
                     checking[0] = false;
+                    checkBtn.setText("检查更新");
+                    checkBtn.setAlpha(1f);
                     if (info == null) {
-                        tvState.setText("检查失败：无法连接更新服务器\n"
-                                + "国内网络可优先访问 Gitee 仓库手动下载：\n"
-                                + REPO_GITEE);
+                        setStateBadge(stateBadge, "检查失败", false);
+                        TextView err = new TextView(ctx);
+                        err.setText("无法连接更新服务器。\n国内网络可访问 Gitee 仓库手动下载：\n" + REPO_GITEE);
+                        err.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+                        err.setTextColor(UiKit.color(ctx,
+                                com.google.android.material.R.attr.colorError));
+                        err.setLineSpacing(dp(2), 1f);
+                        err.setPadding(dp(6), dp(8), dp(6), dp(8));
+                        resultArea.addView(err);
                         return;
                     }
                     if (info.code <= curCode) {
-                        tvState.setText("已是最新版本（最新 " + info.ver
-                                + " / versionCode " + info.code + "）\n"
-                                + "发布日期：" + fmtPublishDate(info.date));
+                        setStateBadge(stateBadge, "已是最新", true);
+                        addUpdateResultCard(resultArea, info, false);
                     } else {
-                        tvState.setText("发现新版本 " + info.ver
-                                + "（versionCode " + info.code + "）\n"
-                                + "发布日期：" + fmtPublishDate(info.date));
-                        showUpdateDetailDialog(info);
+                        setStateBadge(stateBadge, "有新版本", true);
+                        addUpdateResultCard(resultArea, info, true);
                     }
                 });
             }, "HyUpdateCheck").start();
         });
-        btns.addView(checkBtnHolder.v);
-        box.addView(btns);
 
         return box;
+    }
+
+    /** 更新状态徽标：最新=主题色，有新版本=强调色，失败=错误色 */
+    private void setStateBadge(TextView badge, String text, boolean ok) {
+        badge.setText(text);
+        if (!ok) {
+            badge.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorError));
+            badge.setBackground(UiKit.rounded(ctx, 999,
+                    UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHigh),
+                    UiKit.color(ctx, com.google.android.material.R.attr.colorError)));
+        } else if ("已是最新".equals(text)) {
+            badge.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary));
+            badge.setBackground(UiKit.rounded(ctx, 999,
+                    UiKit.color(ctx, com.google.android.material.R.attr.colorPrimaryContainer), 0));
+        } else {
+            badge.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnPrimary));
+            badge.setBackground(UiKit.rounded(ctx, 999,
+                    UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary), 0));
+        }
+    }
+
+    /**
+     * 检测结果卡：版本号 / 发布日期 / 说明（按小标题分段）/ 下载按钮。
+     *
+     * @param hasNew true = 有新版本（显示下载按钮），false = 已是最新（只展示信息）
+     */
+    private void addUpdateResultCard(LinearLayout parent, final UpdateInfo info, boolean hasNew) {
+        LinearLayout card = new LinearLayout(ctx);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(14), dp(14), dp(14));
+        applyCardSurface(card, 12, false);
+        card.setTag(CARD_TAG_KEY, Boolean.TRUE);
+
+        // 头部：版本号 + 日期
+        LinearLayout head = new LinearLayout(ctx);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView ver = new TextView(ctx);
+        ver.setText("v" + info.ver);
+        ver.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+        ver.setTypeface(null, android.graphics.Typeface.BOLD);
+        ver.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+        head.addView(ver);
+
+        View sp = new View(ctx);
+        head.addView(sp, new LinearLayout.LayoutParams(0, 1, 1f));
+
+        TextView date = new TextView(ctx);
+        date.setText(fmtPublishDate(info.date));
+        date.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        date.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        head.addView(date);
+        card.addView(head);
+
+        // 更新说明：按小标题分段渲染（替代整段 stripMarkdown）
+        if (info.body != null && !info.body.isEmpty()) {
+            LinearLayout noteBox = new LinearLayout(ctx);
+            noteBox.setOrientation(LinearLayout.VERTICAL);
+            LinearLayout.LayoutParams nbLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            nbLp.topMargin = dp(10);
+            card.addView(noteBox, nbLp);
+            renderReleaseNotes(noteBox, info.body);
+        }
+
+        if (hasNew) {
+            TextView dl = textButton("下载并安装", null);
+            dl.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            dl.setPadding(dp(12), dp(12), dp(12), dp(12));
+            dl.setBackground(UiKit.rounded(ctx, 8,
+                    UiKit.color(ctx, com.google.android.material.R.attr.colorPrimaryContainer), 0));
+            LinearLayout.LayoutParams dlLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            dlLp.topMargin = dp(12);
+            card.addView(dl, dlLp);
+            dl.setOnClickListener(v -> downloadAndInstall(info, card));
+        }
+
+        parent.addView(card);
+    }
+
+    /**
+     * 把更新说明按 Markdown 小标题分段渲染。
+     *
+     * <p>比原来的 {@link #stripMarkdown} 整段处理后塞进一个 TextView 好读：
+     * 一级/二级标题用加粗+主题色，列表项带「·」缩进，正文常规字号。
+     * 仍然不是完整 Markdown 解析器 —— 更新说明是我们自己写的，只用到这几种标记。</p>
+     */
+    private void renderReleaseNotes(LinearLayout parent, String md) {
+        boolean inList = false;
+        for (String raw : md.split("\n", -1)) {
+            String line = raw;
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) {
+                inList = false;
+                continue;
+            }
+            if (trimmed.matches("^-{3,}$")) continue;   // 分隔线不渲染
+
+            int hash = 0;
+            while (hash < trimmed.length() && trimmed.charAt(hash) == '#') hash++;
+            if (hash > 0 && hash < trimmed.length() && trimmed.charAt(hash) == ' ') {
+                // 标题
+                TextView h = new TextView(ctx);
+                h.setText(trimmed.substring(hash + 1).trim());
+                h.setTextSize(TypedValue.COMPLEX_UNIT_SP, hash <= 2 ? 13 : 12);
+                h.setTypeface(null, android.graphics.Typeface.BOLD);
+                h.setTextColor(UiKit.color(ctx,
+                        hash <= 2 ? com.google.android.material.R.attr.colorPrimary
+                                  : com.google.android.material.R.attr.colorOnSurface));
+                LinearLayout.LayoutParams hLp = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                hLp.topMargin = dp(10);
+                hLp.bottomMargin = dp(3);
+                parent.addView(h, hLp);
+                inList = false;
+                continue;
+            }
+
+            boolean isItem = trimmed.startsWith("- ") || trimmed.startsWith("* ");
+            TextView tv = new TextView(ctx);
+            String text = isItem ? trimmed.substring(2) : trimmed;
+            tv.setText(isItem ? "·  " + text : text);
+            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            tv.setTextColor(UiKit.color(ctx,
+                    com.google.android.material.R.attr.colorOnSurfaceVariant));
+            tv.setLineSpacing(dp(2), 1f);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.leftMargin = isItem ? dp(4) : 0;
+            lp.topMargin = isItem ? dp(2) : dp(3);
+            parent.addView(tv, lp);
+            inList = isItem;
+        }
     }
 
     /** 解析出的更新信息 */
@@ -5413,83 +5607,285 @@ public class FileManagerModule extends HyVqModule {
      *
      * <p>下载到 cacheDir：不需要存储权限，装完能干净删掉。</p>
      */
-    private void downloadAndInstall(final UpdateInfo info) {
-        final String url = (info.apkUrl != null && !info.apkUrl.isEmpty())
-                ? info.apkUrl
-                : REPO_GITHUB + "/releases/download/v" + info.ver
-                  + "/HYFileManager-" + info.ver + ".apk";
+    /**
+     * 下载并安装新版本（2026-11-12 重构）。
+     *
+     * <p><b>多源兜底</b>：按 [apkUrl → gh-proxy 代理 → GitHub 原始] 顺序尝试。
+     * 实测本机网络 Gitee 562KB/s、gh-proxy 79KB/s、GitHub 直连 21KB/s，
+     * 所以 Gitee 优先，但单源挂了要能自动换下一个而不是让用户手动去网页下。</p>
+     *
+     * <p><b>可取消</b>：下载中在设置页显示进度卡（已下/总量、速度、剩余时间）
+     * 与「取消」按钮；取消通过 volatile 标记 + 关闭连接实现（只置标记不关连接
+     * 会让 read() 阻塞到超时）。</p>
+     */
+    private void downloadAndInstall(final UpdateInfo info, final LinearLayout dlArea) {
+        downloadAndInstall(info, dlArea, null);
+    }
 
+    /**
+     * 下载并安装（带完成回调：临时进度弹窗需要知道自己何时关闭）。
+     *
+     * @param onDone 下载结束（成功或失败或取消）时回调，可为 null
+     */
+    private void downloadAndInstall(final UpdateInfo info, final LinearLayout dlArea,
+                                    final Runnable onDone) {
         if (!canRequestInstall()) {
-            // 记下来：用户在系统设置里授权完回来，onResume 会自动续上
             pendingInstallInfo = info;
             askInstallPermission();
             return;
         }
         pendingInstallInfo = null;
 
-        final android.app.ProgressDialog pd = new android.app.ProgressDialog(ctx);
-        pd.setMessage("正在下载 " + info.ver + "…");
-        pd.setCancelable(false);
-        pd.show();
+        final java.util.List<String> sources = buildDownloadSources(info);
+
+        // ── 进度卡 ──
+        dlArea.removeAllViews();
+        LinearLayout card = new LinearLayout(ctx);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setPadding(dp(14), dp(14), dp(14), dp(14));
+        applyCardSurface(card, 12, false);
+        card.setTag(CARD_TAG_KEY, Boolean.TRUE);
+
+        TextView title = new TextView(ctx);
+        title.setText("正在下载 v" + info.ver);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        title.setTypeface(null, android.graphics.Typeface.BOLD);
+        title.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+        card.addView(title);
+
+        final android.widget.ProgressBar bar = new android.widget.ProgressBar(
+                ctx, null, android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(100);
+        bar.setProgress(0);
+        LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(6));
+        barLp.topMargin = dp(10);
+        card.addView(bar, barLp);
+
+        final TextView progressText = new TextView(ctx);
+        progressText.setText("准备中…");
+        progressText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        progressText.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        progressText.setLineSpacing(dp(2), 1f);
+        LinearLayout.LayoutParams ptLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        ptLp.topMargin = dp(6);
+        card.addView(progressText, ptLp);
+
+        final TextView cancelBtn = textButton("取消下载", null);
+        cancelBtn.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorError));
+        LinearLayout.LayoutParams cLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cLp.topMargin = dp(6);
+        card.addView(cancelBtn, cLp);
+
+        dlArea.addView(card);
+
+        // ── 取消标记（volatile：下载线程读，UI 线程写）──
+        final java.util.concurrent.atomic.AtomicBoolean cancelled =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        final java.util.concurrent.atomic.AtomicReference<java.net.HttpURLConnection>
+                activeConn = new java.util.concurrent.atomic.AtomicReference<>();
+
+        cancelBtn.setOnClickListener(v -> {
+            cancelled.set(true);
+            java.net.HttpURLConnection c = activeConn.get();
+            if (c != null) try { c.disconnect(); } catch (Throwable ignored) { }
+            progressText.setText("已取消");
+            cancelBtn.setVisibility(View.GONE);
+        });
 
         new Thread(() -> {
             final File out = new File(ctx.getCacheDir(), "update_" + info.ver + ".apk");
-            java.net.HttpURLConnection conn = null;
-            java.io.InputStream in = null;
-            try {
-                java.net.URL u = new java.net.URL(url);
-                conn = (java.net.HttpURLConnection) u.openConnection();
-                conn.setConnectTimeout(15000);
-                conn.setReadTimeout(60000);
-                conn.setInstanceFollowRedirects(true);
-                conn.setRequestProperty("User-Agent", "HYFileManager/" + appVersionName());
-                int code = conn.getResponseCode();
-                if (code != 200) throw new java.io.IOException("服务器返回 " + code);
-                final long total = conn.getContentLengthLong();
-                in = conn.getInputStream();
-                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
-                    byte[] buf = new byte[16384];
-                    long got = 0;
-                    int r;
-                    int lastPct = -1;
-                    while ((r = in.read(buf)) > 0) {
-                        fos.write(buf, 0, r);
-                        got += r;
-                        if (total > 0) {
-                            final int pct = (int) (got * 100 / total);
-                            if (pct != lastPct) {
-                                lastPct = pct;
-                                handler.post(() -> pd.setMessage(
-                                        "正在下载 " + info.ver + "… " + pct + "%"));
-                            }
-                        }
-                    }
-                }
-                final long size = out.length();
+            String lastError = null;
+            boolean ok = false;
+
+            for (int si = 0; si < sources.size() && !ok; si++) {
+                if (cancelled.get()) break;
+                final String url = sources.get(si);
+                final int srcIdx = si;
                 handler.post(() -> {
-                    pd.dismiss();
                     if (detached) return;
-                    if (size <= 0) {
-                        UiKit.alert(ctx, "下载失败：文件为空");
+                    if (srcIdx > 0) {
+                        title.setText("正在下载 v" + info.ver + "（源 " + (srcIdx + 1) + "/"
+                                + sources.size() + "）");
+                    }
+                    progressText.setText("连接中…");
+                    bar.setProgress(0);
+                });
+
+                long[] net = downloadOne(url, out, cancelled, activeConn,
+                        bar, progressText, info.ver);
+                if (cancelled.get()) break;
+                if (net != null && net[0] > 0) {
+                    ok = true;
+                    cancelBtn.setVisibility(View.GONE);
+                    handler.post(() -> {
+                        if (detached) return;
+                        bar.setProgress(100);
+                        progressText.setText("下载完成，正在安装…");
+                    });
+                    final String apk = out.getAbsolutePath();
+                    handler.post(() -> {
+                        if (detached) return;
+                        dlArea.removeAllViews();
+                        if (onDone != null) onDone.run();
+                        doInstall(apk, false);
+                    });
+                } else {
+                    lastError = (net == null) ? "网络异常" : "下载失败";
+                    //noinspection ResultOfMethodCallIgnored
+                    out.delete();
+                }
+            }
+
+            if (!ok) {
+                final String err = lastError;
+                handler.post(() -> {
+                    if (detached) return;
+                    dlArea.removeAllViews();
+                    if (onDone != null) onDone.run();
+                    if (cancelled.get()) {
+                        UiKit.toast(ctx, "已取消下载");
                         return;
                     }
-                    doInstall(out.getAbsolutePath(), false);
+                    LinearLayout failCard = new LinearLayout(ctx);
+                    failCard.setOrientation(LinearLayout.VERTICAL);
+                    failCard.setPadding(dp(14), dp(14), dp(14), dp(14));
+                    applyCardSurface(failCard, 12, false);
+                    failCard.setTag(CARD_TAG_KEY, Boolean.TRUE);
+                    TextView tv = new TextView(ctx);
+                    tv.setText("下载失败" + (err == null ? "" : "：" + err)
+                            + "\n\n已尝试 " + sources.size() + " 个下载源。\n"
+                            + "可稍后重试，或到仓库页面手动下载：\n" + REPO_GITEE);
+                    tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+                    tv.setTextColor(UiKit.color(ctx,
+                            com.google.android.material.R.attr.colorError));
+                    tv.setLineSpacing(dp(2), 1f);
+                    failCard.addView(tv);
+                    TextView retry = textButton("重试", null);
+                    retry.setOnClickListener(v -> downloadAndInstall(info, dlArea));
+                    failCard.addView(retry);
+                    dlArea.addView(failCard);
                 });
-            } catch (Throwable t) {
-                //noinspection ResultOfMethodCallIgnored
-                out.delete();
-                final String why = msgOf(t);
-                handler.post(() -> {
-                    pd.dismiss();
-                    if (detached) return;
-                    UiKit.alert(ctx, "下载失败：" + why
-                            + "\n\n可到仓库页面手动下载：\n" + REPO_GITEE);
-                });
-            } finally {
-                try { if (in != null) in.close(); } catch (Throwable ignored) { }
-                try { if (conn != null) conn.disconnect(); } catch (Throwable ignored) { }
             }
         }, "HyUpdateDownload").start();
+    }
+
+    /** 组装下载源顺序：apkUrl（Gitee，实测最快）→ gh-proxy 代理 → GitHub 原始 */
+    private java.util.List<String> buildDownloadSources(UpdateInfo info) {
+        java.util.List<String> list = new java.util.ArrayList<>();
+        String ghName = "HYFileManager-" + info.ver + ".apk";
+        if (info.apkUrl != null && !info.apkUrl.isEmpty() && info.apkUrl.startsWith("http")) {
+            list.add(info.apkUrl);
+        }
+        String ghUrl = REPO_GITHUB + "/releases/download/v" + info.ver + "/" + ghName;
+        list.add("https://gh-proxy.com/" + ghUrl);
+        list.add(ghUrl);
+        return list;
+    }
+
+    /**
+     * 从单个 URL 下载到 out。
+     *
+     * @return 成功返回 {已下载字节数, 耗时毫秒}；失败返回 null
+     */
+    private long[] downloadOne(String url, File out,
+                               java.util.concurrent.atomic.AtomicBoolean cancelled,
+                               java.util.concurrent.atomic.AtomicReference<java.net.HttpURLConnection> activeConn,
+                               android.widget.ProgressBar bar, TextView progressText, String ver) {
+        java.net.HttpURLConnection conn = null;
+        java.io.InputStream in = null;
+        final long startMs = System.currentTimeMillis();
+        try {
+            java.net.URL u = new java.net.URL(url);
+            conn = (java.net.HttpURLConnection) u.openConnection();
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(30000);
+            conn.setInstanceFollowRedirects(true);
+            conn.setRequestProperty("User-Agent", "HYFileManager/" + appVersionName());
+            activeConn.set(conn);
+            int code = conn.getResponseCode();
+            if (code != 200) throw new java.io.IOException("HTTP " + code);
+            final long total = conn.getContentLengthLong();
+            in = conn.getInputStream();
+            long got = 0;
+            long lastPost = 0;
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
+                byte[] buf = new byte[16384];
+                int r;
+                while ((r = in.read(buf)) > 0) {
+                    if (cancelled.get()) return null;
+                    fos.write(buf, 0, r);
+                    got += r;
+                    long now = System.currentTimeMillis();
+                    // 每 250ms 刷一次 UI，避免频繁 post 拖慢下载
+                    if (now - lastPost >= 250) {
+                        lastPost = now;
+                        final long fGot = got;
+                        final long elapsed = now - startMs;
+                        handler.post(() -> {
+                            if (detached) return;
+                            int pct = total > 0 ? (int) (fGot * 100 / total) : 0;
+                            bar.setProgress(pct);
+                            progressText.setText(formatDownloadProgress(fGot, total, elapsed));
+                        });
+                    }
+                }
+            }
+            return new long[]{got, System.currentTimeMillis() - startMs};
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            activeConn.set(null);
+            try { if (in != null) in.close(); } catch (Throwable ignored) { }
+            try { if (conn != null) conn.disconnect(); } catch (Throwable ignored) { }
+        }
+    }
+
+    /** 进度文本：已下/总量 · 速度 · 剩余时间 */
+    private static String formatDownloadProgress(long got, long total, long elapsedMs) {
+        String now = FileOps.formatSize(got);
+        if (total <= 0) {
+            return now + " · 速度未知（服务器未给总大小）";
+        }
+        String all = FileOps.formatSize(total);
+        long speed = elapsedMs > 0 ? got * 1000L / elapsedMs : 0;
+        StringBuilder sb = new StringBuilder();
+        sb.append(now).append(" / ").append(all)
+          .append("（").append(got * 100 / total).append("%）");
+        if (speed > 0) {
+            sb.append("\n").append(FileOps.formatSize(speed)).append("/s");
+            long remain = total - got;
+            long secs = remain * 1000L / speed;
+            if (secs > 0 && secs < 3600) {
+                sb.append(" · 剩余 ").append(secs >= 60
+                        ? (secs / 60) + " 分 " + (secs % 60) + " 秒"
+                        : secs + " 秒");
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 下载并安装（兼容旧调用点：权限授权回来后自动续上）。
+     *
+     * <p>这种场景没有「设置页里的进度卡」可填，故自建一个临时挂在
+     * 当前窗口上的进度区 —— downloadAndInstall 需要容器才能显示进度与取消。</p>
+     */
+    private void downloadAndInstall(final UpdateInfo info) {
+        // 造一个临时容器：宿主是设置的对话框内容区或 Activity 的 DecorView
+        LinearLayout host = new LinearLayout(ctx);
+        host.setOrientation(LinearLayout.VERTICAL);
+        // 授权后续下载是后台行为，进度卡直接弹一个玻璃弹窗承载
+        final android.app.Dialog progressDialog =
+                UiKit.glassDialog(ctx, host, false);
+        progressDialog.setCancelable(false);
+        progressDialog.show();
+        downloadAndInstall(info, host, () -> {
+            try { UiKit.dismissWithAnim(progressDialog); } catch (Throwable ignored) { }
+        });
     }
 
     /** 有新版本时的详情弹窗 */
