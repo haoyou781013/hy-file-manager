@@ -4796,18 +4796,51 @@ public class FileManagerModule extends HyVqModule {
         tvDetail.setPadding(dp(14), 0, dp(14), dp(10));
         addToSettingsGroup(box, tvDetail);
 
-        // 分段彩色条：自绘 View（ProgressBar 只能单色/单 drawable）
-        final SegmentedBar segBar = new SegmentedBar(ctx);
+        // ══════ 条 1：设备存储（已用 vs 总量）══════
+        //
+        // ⚠ 为什么拆成两条（用户反馈）：单条分段条里「本应用占用」是
+        // 几百 MB 量级，而设备动辄 200 GB —— 分段宽度只剩亚像素，
+        // 整条渲染出来几乎全是「其它」的浅色，看着就像一根纯白条，
+        // 没有任何信息量。改为：
+        //   条 1 表达「设备用了多少」（与设备容量同尺度）
+        //   条 2 表达「本应用占用都由什么构成」（基数换成应用自身总量，
+        //        与设备多大无关，永远看得清）
+        final SegmentedBar devBar = new SegmentedBar(ctx);
         LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(10));
         barLp.leftMargin = dp(14);
         barLp.rightMargin = dp(14);
-        addToSettingsGroup(box, segBar, barLp);
+        addToSettingsGroup(box, devBar, barLp);
 
-        // 图例：颜色与分段一一对应
+        final TextView devBarLabel = new TextView(ctx);
+        devBarLabel.setText("");
+        devBarLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        devBarLabel.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        devBarLabel.setPadding(dp(14), dp(4), dp(14), dp(2));
+        addToSettingsGroup(box, devBarLabel);
+
+        // ══════ 条 2：本应用占用构成 ══════
+        final SegmentedBar appBar = new SegmentedBar(ctx);
+        LinearLayout.LayoutParams bar2Lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(10));
+        bar2Lp.leftMargin = dp(14);
+        bar2Lp.rightMargin = dp(14);
+        bar2Lp.topMargin = dp(10);
+        addToSettingsGroup(box, appBar, bar2Lp);
+
+        final TextView appBarLabel = new TextView(ctx);
+        appBarLabel.setText("");
+        appBarLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        appBarLabel.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        appBarLabel.setPadding(dp(14), dp(4), dp(14), dp(2));
+        addToSettingsGroup(box, appBarLabel);
+
+        // 图例：颜色与「条 2」的分段一一对应
         final LinearLayout legend = new LinearLayout(ctx);
         legend.setOrientation(LinearLayout.VERTICAL);
-        legend.setPadding(dp(14), dp(8), dp(14), dp(4));
+        legend.setPadding(dp(14), dp(6), dp(14), dp(4));
         addToSettingsGroup(box, legend);
 
         // 未被分段覆盖的「其它占用」说明（系统 + 其它应用），避免用户以为统计漏了
@@ -4925,7 +4958,8 @@ public class FileManagerModule extends HyVqModule {
 
         refresh.setOnClickListener(v -> refreshStoragePage());
 
-        loadStorageStatsV2(storePath, tvTotal, tvDetail, segBar, legend, tvOther,
+        loadStorageStatsV2(storePath, tvTotal, tvDetail, devBar, devBarLabel,
+                appBar, appBarLabel, legend, tvOther,
                 tvThumb, tvZip, tvUpd, tvDraft, tvBg, tvTrash, tvApp, tvAllClearable);
 
         return box;
@@ -5053,7 +5087,9 @@ public class FileManagerModule extends HyVqModule {
     /** 存储统计（分段版）：算出各部分占比，喂给 SegmentedBar，并刷新图例与各项大小 */
     private void loadStorageStatsV2(String storePath,
                                     TextView tvTotal, TextView tvDetail,
-                                    SegmentedBar bar, LinearLayout legend, TextView tvOther,
+                                    SegmentedBar devBar, TextView devBarLabel,
+                                    SegmentedBar appBar, TextView appBarLabel,
+                                    LinearLayout legend, TextView tvOther,
                                     TextView tvThumb, TextView tvZip, TextView tvUpd,
                                     TextView tvDraft, TextView tvBg, TextView tvTrash,
                                     TextView tvApp, TextView tvAllClearable) {
@@ -5091,29 +5127,42 @@ public class FileManagerModule extends HyVqModule {
                             + " / " + fmtStorageSize(fTotal));
                     tvDetail.setText(pct + "% 已用 · 可用 " + fmtStorageSize(fAvail));
 
-                    // 分段：缓存 / 应用数据 / 回收站 / 其它（占「已用」的比例）
                     int cCache = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
                     int cApp = 0xFF66BB6A;      // 绿：应用数据
                     int cTrash = 0xFFFFA726;    // 橙：回收站
-                    int cOther = UiKit.color(ctx,
-                            com.google.android.material.R.attr.colorSurfaceContainerHighest);
-                    float fCache = used > 0 ? (float) cacheAll / used : 0;
-                    float fApp = used > 0 ? (float) appData / used : 0;
-                    float fTrash = used > 0 ? (float) trash / used : 0;
-                    float sum = Math.min(1f, fCache + fApp + fTrash);
-                    bar.setSegments(new float[]{fCache, fApp, fTrash, 1f - sum},
-                            new int[]{cCache, cApp, cTrash, cOther});
 
-                    // 图例
+                    // ── 条 1：设备存储（已用 vs 空闲）──
+                    // 两段就够：已用（主题色）+ 空闲（浅槽）。不再细分「谁的占用」——
+                    // 本应用在 200GB 设备上的占比亚像素，细分只会糊成一条纯色。
+                    float usedFr = (float) used / fTotal;
+                    devBar.setSegments(new float[]{usedFr, 1f - usedFr},
+                            new int[]{cCache, UiKit.color(ctx,
+                                    com.google.android.material.R.attr.colorSurfaceContainerHighest)});
+                    devBarLabel.setText("设备存储：已用 " + fmtStorageSize(used)
+                            + " · 空闲 " + fmtStorageSize(fAvail));
+
+                    // ── 条 2：本应用占用构成（基数是应用自身总量）──
+                    // 这样无论设备 200GB 还是 8GB，各段宽度都按同一比例展开，永远可读。
+                    long appBase = Math.max(1, cacheAll + appData + trash);
+                    float fCache = (float) cacheAll / appBase;
+                    float fApp = (float) appData / appBase;
+                    float fTrash = (float) trash / appBase;
+                    float sum = Math.min(1f, fCache + fApp + fTrash);
+                    appBar.setSegments(new float[]{fCache, fApp, fTrash, 1f - sum},
+                            new int[]{cCache, cApp, cTrash,
+                                    UiKit.color(ctx,
+                                            com.google.android.material.R.attr.colorSurfaceContainerHighest)});
+                    appBarLabel.setText("本应用占用构成（合计 " + fmtStorageSize(appBase) + "）");
+
+                    // 图例对应「条 2」
                     legend.removeAllViews();
                     addLegendRow(legend, cCache, "应用缓存", cacheAll);
                     addLegendRow(legend, cApp, "应用数据", appData);
                     addLegendRow(legend, cTrash, "回收站", trash);
-                    addLegendRow(legend, cOther, "其它（系统与其它应用）",
-                            Math.max(0, used - cacheAll - appData - trash));
 
-                    tvOther.setText("分段只统计本应用可清理的部分；"
-                            + "「其它」是系统、其它应用与你自己的文件。");
+                    tvOther.setText("说明：上条按设备总量算（本应用占比极小，"
+                            + "几乎看不出宽度）；下条按本应用自身总量算，"
+                            + "所以各段宽度可读。");
                 } else {
                     tvTotal.setText("存储空间不可用");
                     tvDetail.setText("无法读取容量信息（可能权限不足）");
