@@ -170,15 +170,18 @@ public class MainActivity extends AppCompatActivity {
             win.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
             // API 30+ 用 WindowInsetsController，以下用兼容库
             androidx.core.view.WindowCompat.setDecorFitsSystemWindows(win, false);
-            // ⚠ 图标明暗**不在这里**定：状态栏底色由模块的 statusBarAlpha 控制，
-            // 模块那边 applyStatusBarAlpha() 会按实际 alpha 重新决定图标明暗。
-            // 这里只设一个安全初值（透明底 → 浅色图标），避免首帧闪一下深色图标。
-            androidx.core.view.WindowInsetsControllerCompat ctl =
-                    androidx.core.view.WindowCompat.getInsetsController(win, win.getDecorView());
-            if (ctl != null) {
-                ctl.setAppearanceLightStatusBars(false);
-                ctl.setAppearanceLightNavigationBars(false);
-            }
+            // ⚠ 状态栏底色与图标明暗**都交给模块**（见 FileManagerModule.applyStatusBarAlpha）。
+            //
+            // 这里曾经写过 setAppearanceLightStatusBars(false) 作为「安全初值」，
+            // 但本方法在 module.createMainView() **之后**执行 —— 模块已经按用户设置
+            // 设好了底色与图标，这段又把图标改回浅色，直接覆盖掉正确结果。
+            // 后果（用户反馈「状态栏看不清」）：
+            //   用户把 statusBarAlpha 设为 0（透明），模块判定「无背景图 → 按不透明
+            //   浅色底 + 深色图标」；但这里强设 lightBars=false，变成白图标压浅底，
+            //   时间电量几乎看不见，观感上还像顶栏上方多了一条白带。
+            //
+            // 只保留 setDecorFitsSystemWindows(false)（内容延伸到状态栏后面），
+            // 明暗交由模块在 applyStatusBarAlpha 里按实际底色亮度决定。
         } catch (Throwable ignored) {
         }
     }

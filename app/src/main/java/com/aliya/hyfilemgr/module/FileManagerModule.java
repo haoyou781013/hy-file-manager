@@ -16832,19 +16832,40 @@ public class FileManagerModule extends HyVqModule {
 
             int base = UiKit.color(ctx,
                     com.google.android.material.R.attr.colorSurfaceContainer);
-            int a = Math.round(255f * statusBarAlpha / 100f);
-            win.setStatusBarColor((base & 0x00FFFFFF) | (a << 24));
+
+            // ⚠ 没有背景图时不能真把状态栏设成透明（用户反馈「状态栏看不清」）：
+            // 透明只是让它「不画底色」，透上来的是浅色主题背景 —— 而透明分支
+            // 又要求浅色图标，于是白图标压浅底，时间电量几乎看不见，
+            // 观感上还像顶栏上方多了一条白带。
+            // 有背景图时才是「背景图铺到状态栏后面」的真实需求。
+            boolean hasBg = fmActiveBgFile() != null && fmActiveBgFile().isFile();
+            int effectiveAlpha = hasBg ? statusBarAlpha : 100;
+
+            // 最终呈现色 = 主题色按 effectiveAlpha 叠加。
+            // 图标明暗由**这个最终色的实际亮度**决定，而不是靠猜，
+            // 因为背景图也可能是一张纯浅色图片。
+            int a = Math.round(255f * effectiveAlpha / 100f);
+            int finalColor = (base & 0x00FFFFFF) | (a << 24);
+            win.setStatusBarColor(finalColor);
 
             androidx.core.view.WindowInsetsControllerCompat ctl =
                     androidx.core.view.WindowCompat.getInsetsController(
                             win, win.getDecorView());
             if (ctl != null) {
-                boolean nightMode = (ctx.getResources().getConfiguration().uiMode
-                        & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
-                        == android.content.res.Configuration.UI_MODE_NIGHT_YES;
-                boolean lightBars = !nightMode;
-                // 底色几乎透明时，底图多为照片，浅色图标（lightBars=false）对比度更好
-                if (statusBarAlpha < 30) lightBars = false;
+                // 与系统相同的判据：底色够不透明就按它自己的亮度定图标明暗；
+                // 几乎透明时下面透出的是不确定内容（壁纸/背景图），
+                // 沿用「浅色图标」这一保守选择。
+                boolean lightBars;
+                if (a >= 128) {
+                    // 半透明以上：算底色亮度（WCAG 相对亮度公式的整数近似）
+                    int r = (finalColor >> 16) & 0xFF;
+                    int g = (finalColor >> 8) & 0xFF;
+                    int b = finalColor & 0xFF;
+                    int lum = (r * 299 + g * 587 + b * 114) / 1000;
+                    lightBars = lum > 128;   // 亮底 → 深色图标
+                } else {
+                    lightBars = false;       // 透明底 → 浅色图标
+                }
                 ctl.setAppearanceLightStatusBars(lightBars);
             }
         } catch (Throwable ignored) {
