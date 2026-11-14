@@ -519,7 +519,37 @@ public final class UiKit {
             // 仍保留 copy 是为了不改动 captureBlurredBackground 的返回对象
             // （它可能被同一帧内多处复用）。
             android.graphics.Bitmap base = blurredOf(bg);
-            android.graphics.Bitmap lifted = liftBrightness(base, 0.18f);
+
+            // ⚠ 裁掉截图顶部的状态栏高度。
+            //
+            // 截图从屏幕 y=0 开始（含状态栏），而**弹窗窗口从状态栏下方开始** ——
+            // 状态栏由系统绘制在最上层，弹窗盖不住它（即使加了
+            // FLAG_LAYOUT_IN_SCREEN + setDecorFitsSystemWindows(false)，
+            // 实测 ColorOS 上状态栏仍是系统窗口，弹窗内容从其下方起）。
+            // 于是「整张含状态栏的图」从窗口顶部开始画 → 窗口顶部显示的是
+            // 主界面状态栏那一段（浅色）→ 就是用户看到的白带。
+            //
+            // 正确做法：按状态栏高度裁掉图片顶部，让「状态栏下方的内容」
+            // 对齐到窗口顶部。
+            int sbH = statusBarPx(context);
+            if (sbH > 0 && base != null && base.getHeight() > sbH * 2) {
+                // base 是 1/4 尺寸，状态栏高度也要按同比例缩
+                int cut = Math.max(1, sbH / 4);
+                try {
+                    android.graphics.Bitmap cropped = android.graphics.Bitmap.createBitmap(
+                            base, 0, cut, base.getWidth(), base.getHeight() - cut);
+                    if (cropped != base && !base.isRecycled()) base.recycle();
+                    base = cropped;
+                } catch (Throwable ignored) { }
+            }
+
+            // 提亮量按底色亮度自适应：
+            //   底色偏暗（深色主题/深色照片）→ 提亮 0.18，避免面板淡入时「先黑后亮」
+            //   底色已经偏亮（浅色主题）→ 不提亮反而**压暗**一点，
+            //   否则整屏泛白、与弹窗面板糊成一片（浅色主题下实测对比度不足）
+            float avgLum = averageLuminance(base);
+            float lift = avgLum < 0.5f ? 0.18f : -0.08f;
+            android.graphics.Bitmap lifted = liftBrightness(base, lift);
             android.graphics.Bitmap finalBmp = lifted != null ? lifted : base;
             // 关键：把 density 置为 DENSITY_NONE（=0），让 BitmapDrawable 按
             // 「1 像素对 1 像素」看待这个位图。配合 Gravity.FILL 由系统直接拉伸
@@ -610,6 +640,13 @@ public final class UiKit {
      * @param ratio 0~1，0.18 约等于把整体亮度抬高 18%
      * @return 新位图；失败返回 null（调用方回退原图）
      */
+    /**
+     * 调整整体亮度：ratio 为正 → 叠白色提亮；为负 → 叠黑色压暗。
+     *
+     * <p>为什么要支持压暗：浅色主题下截图本身就接近白，再提亮会让
+     * 模糊背景与弹窗面板糊成一片（对比度不足）。此时应当压暗一点，
+     * 让面板浮起来、边界可辨。</p>
+     */
     private static android.graphics.Bitmap liftBrightness(
             android.graphics.Bitmap src, float ratio) {
         if (src == null || src.isRecycled()) return null;
@@ -618,11 +655,37 @@ public final class UiKit {
                     android.graphics.Bitmap.Config.ARGB_8888, true);
             if (out == null) return null;
             android.graphics.Canvas c = new android.graphics.Canvas(out);
-            int a = Math.max(0, Math.min(255, (int) (ratio * 255)));
-            c.drawColor(android.graphics.Color.argb(a, 255, 255, 255));
+            int a = Math.max(0, Math.min(255, (int) (Math.abs(ratio) * 255)));
+            // ratio>0 → 白（提亮）；ratio<0 → 黑（压暗）
+            int rgb = ratio >= 0 ? 255 : 0;
+            c.drawColor(android.graphics.Color.argb(a, rgb, rgb, rgb));
             return out;
         } catch (Throwable t) {
             return null;
+        }
+    }
+
+    /** 位图平均亮度 0~1（抽样，够快）；失败返回 0.5 */
+    private static float averageLuminance(android.graphics.Bitmap b) {
+        if (b == null || b.isRecycled()) return 0.5f;
+        try {
+            int w = b.getWidth(), h = b.getHeight();
+            if (w <= 0 || h <= 0) return 0.5f;
+            int stepX = Math.max(1, w / 24), stepY = Math.max(1, h / 24);
+            long sum = 0;
+            int n = 0;
+            for (int y = 0; y < h; y += stepY) {
+                for (int x = 0; x < w; x += stepX) {
+                    int p = b.getPixel(x, y);
+                    int lum = (((p >> 16) & 0xFF) * 299 + ((p >> 8) & 0xFF) * 587
+                            + (p & 0xFF) * 114) / 1000;
+                    sum += lum;
+                    n++;
+                }
+            }
+            return n > 0 ? (sum / (float) n) / 255f : 0.5f;
+        } catch (Throwable t) {
+            return 0.5f;
         }
     }
 
@@ -669,6 +732,60 @@ public final class UiKit {
     }
 
     /**
+     * 用 PixelCopy 抓取窗口真实像素（含状态栏、系统栏与所有合成图层）。
+     *
+     * <p><b>为什么不用 decor.draw()</b>：它只画 View 树自己的内容，
+     * 状态栏是系统在另一层画的，decor 在那里是透明的。透明区模糊后仍透明，
+     * 被 liftBrightness 提亮后就成了白带。</p>
+     *
+     * <p><b>为什么在主线程阻塞等待</b>：PixelCopy 是异步回调，而 applyBlur
+     * 必须在设置窗口背景前同步拿到结果（否则先显示纯黑再跳成模糊）。
+     * 抓一帧通常 5~20ms，且发生在弹窗创建瞬间，用户无感。
+     * 上限 50ms，超时就走回退路径，绝不卡界面。</p>
+     *
+     * @return 位图；API<26、超时或失败返回 null（调用方回退）
+     */
+    private static Bitmap captureByPixelCopy(android.app.Activity activity, int w, int h) {
+        if (android.os.Build.VERSION.SDK_INT < 26 || w <= 0 || h <= 0) return null;
+        Bitmap out = null;
+        try {
+            out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            final java.util.concurrent.CountDownLatch latch =
+                    new java.util.concurrent.CountDownLatch(1);
+            final boolean[] ok = {false};
+            // ⚠ 回调 Handler 必须绑**非主线程**的 Looper。
+            // PixelCopy 的结果回调通过 Handler 投递；如果绑主线程，
+            // 而本方法又在主线程 await 阻塞 —— 主线程永远空闲不下来去执行回调，
+            // 必然超时（死等 50ms 后失败，白浪费一帧时间）。
+            // 用一个临时 HandlerThread 接回调，await 期间它照常运行。
+            final android.os.HandlerThread cbThread =
+                    new android.os.HandlerThread("hy-pixelcopy-cb");
+            cbThread.start();
+            try {
+                android.view.PixelCopy.request(activity.getWindow(), out,
+                        result -> {
+                            ok[0] = (result == android.view.PixelCopy.SUCCESS);
+                            latch.countDown();
+                        },
+                        new android.os.Handler(cbThread.getLooper()));
+                boolean done = latch.await(80, java.util.concurrent.TimeUnit.MILLISECONDS);
+                if (done && ok[0]) return out;
+                return null;
+            } finally {
+                try {
+                    cbThread.quitSafely();
+                } catch (Throwable ignored) { }
+            }
+        } catch (Throwable t) {
+            return null;
+        } finally {
+            if (out != null && (out.isRecycled() || !out.isMutable())) {
+                // 已回收或不可变就不动它；成功返回时调用方负责使用
+            }
+        }
+    }
+
+    /**
      * 截取当前界面内容并高斯模糊，作为弹窗背景（主线程调用）。
      * 截图失败（非 Activity 上下文/尺寸无效）返回 null，由调用方走兜底方案。
      */
@@ -687,29 +804,30 @@ public final class UiKit {
             int dw = decor.getWidth();
             int dh = decor.getHeight();
 
-            // 直接按 decor 自身尺寸截图，不做任何坐标补偿。
+            // ⚠️ 不要用 decor.draw(canvas) 截图。
             //
-            // 旧实现用 getLocationInWindow 取 decorLoc 并在顶部补 extraTop 像素，
-            // 试图「补上状态栏那一截」——但 decor 本身就是整屏（含状态栏）的，
-            // getLocationInWindow 相对窗口而非屏幕，返回值随实现漂移，
-            // 补出来的 extraTop 恰好是一个状态栏高度，于是状态栏下方多出
-            // 一条空白模糊带，再往下才是真实顶栏内容。
+            // decor.draw() 只能画 **View 树自己**的内容。本项目的状态栏区域是
+            // 「窗口透明 + 系统在另一层画状态栏」，decor 在那块是透明的；
+            // 顶栏上方还可能有 inset 留白（setDecorFitsSystemWindows(false) 后
+            // 各页面自己加 padding）。结果：截图顶部是透明/空白，模糊后仍透明，
+            // 再被 liftBrightness(+0.18) 提亮 → 成为一条近白带
+            // （用户反馈「顶栏上方白带」，实测 224px）。
             //
-            // 正确做法：decor 多大就截多大。
-            Bitmap shot = Bitmap.createBitmap(dw, dh, Bitmap.Config.ARGB_8888);
-            Canvas canvas = new Canvas(shot);
+            // 改用 PixelCopy 抓窗口 Surface 的**真实合成像素**（含状态栏与所有图层）。
+            Bitmap shot = null;
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                shot = captureByPixelCopy(activity, dw, dh);
+            }
+            if (shot == null) {
+                // 回退：decor.draw（旧行为，可能带白带，但比没有背景好）
+                shot = Bitmap.createBitmap(dw, dh, Bitmap.Config.ARGB_8888);
+                decor.draw(new Canvas(shot));
+            }
             // ⚠ 关键：decor.draw() 不包含状态栏的像素。
             // 状态栏由 WindowManager 在另一层绘制，decor 在那一块是透明的。
             // 透明区模糊后仍是透明，再被 liftBrightness(+0.18) 提亮 ——
             // 就变成一条近白实心带（用户反馈的「顶栏位置空白」）。
             // 先把顶部状态栏高度区域填成状态栏实际颜色，再画 decor。
-            int sbH = statusBarPx(context);
-            if (sbH > 0 && sbH <= dh) {
-                android.graphics.Paint fill = new android.graphics.Paint();
-                fill.setColor(statusBarColorOf(activity, context));
-                canvas.drawRect(0, 0, dw, sbH, fill);
-            }
-            decor.draw(canvas);
             // 模糊半径 3：三趟 box blur（水平+垂直）已足够柔和；过高的半径（如 6）
             // 会让背景糊成一团，文字/内容观感发虚（实测反馈"模糊度过高"）。
             Bitmap blurred = boxBlur(shot, 3);
