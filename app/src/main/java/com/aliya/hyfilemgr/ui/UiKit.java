@@ -439,6 +439,31 @@ public final class UiKit {
     }
 
     /**
+     * 修正位图密度，让 {@code Gravity.FILL} 真正铺满窗口而不是居中裁切。
+     *
+     * <p><b>为什么需要</b>：{@code BitmapDrawable} 按「位图 density ÷ 目标显示密度」
+     * 算缩放比。{@link #boxBlur} 把截图缩到了 1/4 像素尺寸但<b>沿用了原图的 density</b>
+     * → 铺回全屏时按错误比例缩放，叠上 {@code Gravity.FILL} 的居中规整，
+     * 视觉上就是「整张模糊背景偏移了」（本机约一个状态栏高）。
+     * （用户反馈：弹窗模糊背景整体下移一个状态栏高。）</p>
+     *
+     * <p><b>两种粒度怎么选</b>：
+     * <ul>
+     *   <li>{@code DENSITY_NONE} = 1 像素对 1 像素不缩放 —— 这是错的，图只有 1/4 大</li>
+     *   <li><b>设为显示密度</b> = 让位图按 dp 解释，FILL 再把它拉伸到填满 —— 正确</li>
+     * </ul>
+     * 必须两者配合：density 对齐 + FILL。</p>
+     */
+    private static void BitmapUseDensity(android.graphics.Bitmap bmp, Context context) {
+        if (bmp == null || context == null) return;
+        try {
+            int d = context.getResources().getDisplayMetrics().densityDpi;
+            bmp.setDensity(d > 0 ? d : android.graphics.Bitmap.DENSITY_NONE);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
      * 浮窗背景模糊（规范：所有浮窗/对话框统一走本方法）。
      * <p>采用网络通用方案（Blurry/BlurView 同原理，全设备可靠）：
      * <ul>
@@ -487,6 +512,13 @@ public final class UiKit {
             // 只用 LAYOUT_IN_SCREEN（允许覆盖状态栏区域，但不越界）。
             window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
                     | WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            // ⚠ 关键：让 DECOR 内容也铺到状态栏/导航栏区域。
+            // 只加 FLAG_LAYOUT_IN_SCREEN 是不够的——窗口矩形虽然从 y=0 算，
+            // 但其内容区仍会被系统 inset（高度 = 屏高 - 状态栏 - 导航栏），
+            // 配 setGravity(CENTER) 会被垂直居中 → 模糊背景整体下移一个状态栏高
+            // （用户反馈的就是这个）。setDecorFitsSystemWindows(false) 才能让
+            // 内容区真正铺满整个窗口矩形。
+            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false);
             // 状态栏透明：模糊图要铺到状态栏下方
             try {
                 window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
@@ -513,11 +545,20 @@ public final class UiKit {
             // （它可能被同一帧内多处复用）。
             android.graphics.Bitmap base = blurredOf(bg);
             android.graphics.Bitmap lifted = liftBrightness(base, 0.18f);
+            // ⚠ BitmapDrawable 默认用图片自身密度缩放，而 boxBlur 把图缩到了
+            // 1/4 尺寸却没同步密度 → 铺回全屏时按「原尺寸÷目标密度」算，
+            // 比例对不上就会居中裁切，表现为「模糊背景整体下移一个状态栏高」
+            // （用户反馈）。正确做法：把图的 density 设成目标密度，
+            // 让 1dp 对应 1px，Gravity.FILL 才是真正的拉伸铺满。
+            BitmapUseDensity(lifted != null ? lifted : base, window.getContext());
             android.graphics.drawable.BitmapDrawable windowBg =
                     new android.graphics.drawable.BitmapDrawable(
                             window.getContext().getResources(),
                             lifted != null ? lifted : base);
             windowBg.setGravity(Gravity.FILL);
+            // 抗锯齿：低分辨率图拉伸后必须开启，否则边缘发硬
+            windowBg.setFilterBitmap(true);
+            windowBg.setDither(true);
             window.setBackgroundDrawable(windowBg);
 
             if (!centerContent) return;
