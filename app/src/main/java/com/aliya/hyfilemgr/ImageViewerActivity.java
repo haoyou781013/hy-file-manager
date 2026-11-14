@@ -157,7 +157,9 @@ public class ImageViewerActivity extends Activity {
         pager.setAdapter(adapter);
         // 单页时禁止滑动，避免误以为能拖
         pager.setUserInputEnabled(gallery != null && gallery.length > 1);
-        // 预加载相邻页：翻页时不用现解码（提升跟手感）
+        // 不预加载相邻页：压缩包内每页都要从 zip 解出，预加载会一次性
+        // 解出 2~3 张（用户要求「点击一张才解一张」）。
+        // 代价是翻页时需要现解，配合下面的「加载中」提示可接受。
         pager.setOffscreenPageLimit(1);
         pager.setCurrentItem(galleryIndex, false);
 
@@ -171,7 +173,12 @@ public class ImageViewerActivity extends Activity {
                 updateTitleAndCounter(displayNameOf(p));
                 // 翻页后重置新页缩放，避免继承上一页的放大状态
                 View page = findPage(position);
-                if (page instanceof ImagePage) ((ImagePage) page).resetZoom();
+                if (page instanceof ImagePage) {
+                    ImagePage ip = (ImagePage) page;
+                    // 只解当前这张（相邻页不在 onBindViewHolder 里解码）
+                    ip.ensureLoaded();
+                    ip.resetZoom();
+                }
                 // 按钮可用性跟随当前路径：zip 虚拟路径不能删/设背景
                 refreshBottomButtons();
             }
@@ -249,7 +256,16 @@ public class ImageViewerActivity extends Activity {
         }
 
         @Override public void onBindViewHolder(@NonNull VH holder, int position) {
-            ((ImagePage) holder.itemView).bind(gallery[position]);
+            // 只记录路径，**不在此解码**。
+            //
+            // ViewPager2 会预创建相邻页（offscreenPageLimit 最小为 1），
+            // 在这里调用 bind 就会连带把相邻页也解出来 —— 压缩包场景下
+            // 等于「看一张，解三张」（用户要求：点击一张才解一张）。
+            // 真正的解码由 onPageSelected（当前页）和首屏初始化触发。
+            ((ImagePage) holder.itemView).setPendingPath(gallery[position]);
+            if (position == galleryIndex) {
+                ((ImagePage) holder.itemView).ensureLoaded();
+            }
         }
 
         @Override public int getItemCount() {
@@ -343,6 +359,21 @@ public class ImageViewerActivity extends Activity {
         }
 
         /** 绑定路径：解码并展示（同路径已解码则跳过） */
+        /** 目标路径（可能还没解码）；null 表示尚未绑定 */
+        private String pendingPath;
+
+        /** 只记录目标路径，不解码（供 onBindViewHolder 用） */
+        void setPendingPath(String path) {
+            pendingPath = path;
+        }
+
+        /** 当前页被选中/初始化时调用：真正解出这一张 */
+        void ensureLoaded() {
+            if (pendingPath != null && !pendingPath.equals(boundPath)) {
+                bind(pendingPath);
+            }
+        }
+
         void bind(String path) {
             if (path == null || path.equals(boundPath)) return;
             boundPath = path;
@@ -473,6 +504,38 @@ public class ImageViewerActivity extends Activity {
         root.post(() -> applyInsets.onClick(null));
         androidx.core.view.WindowCompat.getInsetsController(w, w.getDecorView())
                 .setAppearanceLightStatusBars(false);
+    }
+
+    /**
+     * 退出查看器：销毁本次用到的压缩包缓存。
+     *
+     * <p><b>为什么在这里清</b>（用户要求「不管是否在预览界面，退出就销毁」）：
+     * 查看器是独立 Activity，不在文件管理器的 reload 链路上 ——
+     * 只在 FileManagerModule.maybePurgeArchiveCache 里清的话，
+     * 用户看完压缩包内的图片、直接按返回退出查看器、再退出文件管理器，
+     * 这批缓存要到「离开压缩包路径」那一刻才轮到清，中间一直占着空间。</p>
+     *
+     * <p>只清**本页用到的那几个包**（从 gallery 的 zip:// 路径里提取），
+     * 不动用户在别的压缩包里开的缓存。</p>
+     */
+    @Override protected void onDestroy() {
+        super.onDestroy();
+        try {
+            java.util.Set<String> archives = new java.util.HashSet<>();
+            if (gallery != null) {
+                for (String p : gallery) {
+                    String a = com.aliya.hyfilemgr.archive.ZipCache.archiveOf(p);
+                    if (a != null) archives.add(a);
+                }
+            }
+            long freed = 0;
+            for (String a : archives) {
+                freed += com.aliya.hyfilemgr.archive.ZipCache.purgeArchive(a);
+            }
+            if (freed > 0) {
+                android.util.Log.i("HyZipCache", "退出查看器，释放 " + freed + " 字节");
+            }
+        } catch (Throwable ignored) { }
     }
 
     // ══════ 高清模式 ══════

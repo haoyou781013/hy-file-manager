@@ -5281,6 +5281,54 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /**
+     * 「正在处理」提示弹窗：替代原来的 toast。
+     *
+     * <p><b>为什么改弹窗</b>（用户要求）：压缩包内解出大文件可能耗时数秒，
+     * toast 2 秒就消失、用户不知道还要等多久，也看不出操作是否还在进行。
+     * 弹窗带不确定进度条 + 可读文案，结束由调用方 dismiss。</p>
+     *
+     * <p>不可取消：解出过程中取消会留下半截缓存文件；要比取消体验，
+     * 就得让解出支持中断（超出本次范围）。</p>
+     *
+     * @param message 文案，如「正在解出图片…」
+     * @return 已 show 的弹窗，调用方在完成后 {@code dismiss()}
+     */
+    /** 安全关闭弹窗（未 show / 已 dismiss / Activity 已销毁都不抛） */
+    private static void dismissQuiet(android.app.Dialog d) {
+        if (d == null) return;
+        try {
+            if (d.isShowing()) d.dismiss();
+        } catch (Throwable ignored) { }
+    }
+
+    private android.app.Dialog showLoadingDialog(String message) {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.HORIZONTAL);
+        box.setGravity(Gravity.CENTER_VERTICAL);
+        box.setPadding(dp(6), dp(6), dp(6), dp(6));
+
+        android.widget.ProgressBar pb = new android.widget.ProgressBar(
+                ctx, null, android.R.attr.progressBarStyleSmall);
+        LinearLayout.LayoutParams pbLp = new LinearLayout.LayoutParams(dp(22), dp(22));
+        pbLp.rightMargin = dp(12);
+        box.addView(pb, pbLp);
+
+        TextView tv = new TextView(ctx);
+        tv.setText(message);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        tv.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
+        box.addView(tv);
+
+        android.app.Dialog d = UiKit.glassDialog(ctx, box, false);
+        d.setCancelable(false);
+        d.setCanceledOnTouchOutside(false);
+        try {
+            d.show();
+        } catch (Throwable ignored) { }
+        return d;
+    }
+
+    /**
      * 把任意视图塞进当前设置分组卡片（没有分组时退回 parent）。
      *
      * <p><b>为什么需要这个</b>：分组机制只有 addSettingsRow / addInfoRow /
@@ -15705,7 +15753,7 @@ public class FileManagerModule extends HyVqModule {
             return;
         }
 
-        UiKit.toast(ctx, "解出中…");
+        final android.app.Dialog loading = showLoadingDialog("正在解出…");
         new Thread(() -> {
             String err = null;
             String outName = null;
@@ -15730,6 +15778,7 @@ public class FileManagerModule extends HyVqModule {
             }
             final String fErr = err, fOut = outName;
             handler.post(() -> {
+                dismissQuiet(loading);
                 UiKit.toast(ctx, fErr != null ? "解出失败：" + fErr : "已解出：" + fOut);
                 if (fErr == null) reload(other);
             });
@@ -15828,7 +15877,7 @@ public class FileManagerModule extends HyVqModule {
                 UiKit.alert(ctx, "密码不能为空");
                 return;
             }
-            UiKit.toast(ctx, "解出中…");
+            final android.app.Dialog loading = showLoadingDialog("正在解出…");
             new Thread(() -> {
                 File out = null;
                 String err = null;
@@ -15840,6 +15889,7 @@ public class FileManagerModule extends HyVqModule {
                 final File fOut = out;
                 final String fErr = err;
                 handler.post(() -> {
+                    dismissQuiet(loading);
                     if (fErr != null) {
                         UiKit.alert(ctx, "解出失败：" + fErr);
                     } else if (fOut == null) {
@@ -15880,7 +15930,7 @@ public class FileManagerModule extends HyVqModule {
             showZipPasswordDialog(zipPath, inner, e.name);
             return;
         }
-        UiKit.toast(ctx, "解出中…");
+        final android.app.Dialog loading = showLoadingDialog("正在解出…");
         new Thread(() -> {
             File out = null;
             String err = null;
@@ -15908,6 +15958,7 @@ public class FileManagerModule extends HyVqModule {
             final File fOut = out;
             final String fErr = err;
             handler.post(() -> {
+                dismissQuiet(loading);
                 if (fErr != null) {
                     UiKit.alert(ctx, "解出失败：" + fErr);
                 } else if (fOut == null) {
