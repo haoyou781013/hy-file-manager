@@ -1084,6 +1084,14 @@ public class FileManagerModule extends HyVqModule {
         bar.setGravity(Gravity.CENTER_VERTICAL);
         topBar = bar;
         bar.setBackground(topBarSurface());
+        // 顶栏固定高度 46dp。
+        // 旧实现完全靠子 View 撑高：工具图标容器 48dp + padding 3×2 = 54dp，
+        // 用户反馈「共享顶栏有点大」。现在图标容器 40dp + padding 3×2 = 46dp。
+        // 固定高度的另一个好处：路径区域的 MATCH_PARENT 有了确定参照，
+        // 点击区能真正撑满整条顶栏。
+        int barH = dp(46);
+        bar.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, barH));
         int pad = dp(3);
         bar.setPadding(pad, pad, pad, pad);
 
@@ -1102,38 +1110,50 @@ public class FileManagerModule extends HyVqModule {
         // 中部区域：文件模式显示面包屑，终端模式显示「终端 | pwd」。
         // 用一个 FrameLayout 承载，两种内容互斥显示，共享同一个顶栏。
         FrameLayout centerSlot = new FrameLayout(ctx);
+        // MATCH_PARENT 高度：让内部的路径点击区能撑满整条顶栏
         LinearLayout.LayoutParams slotLp = new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                ViewGroup.LayoutParams.MATCH_PARENT, 1f);
         slotLp.setMarginStart(dp(6));
         bar.addView(centerSlot, slotLp);
         topBarCenterSlot = centerSlot;
 
         // 面包屑路径（MaterialFiles 风格：点击弹出层级列表，可跳任意上级目录）
+        //
+        // ⚠ 点击区域必须撑满顶栏高度（用户反馈「目录点击范围较小」）：
+        // 旧实现 crumb 是 WRAP_CONTENT，只有 17dp 左右高（12sp 文字），
+        // 而工具图标容器把整栏撑到 54dp → 路径上下大片空白但不可点。
+        // 现在 crumb 与 centerSlot 都 MATCH_PARENT 高度，整块都可点。
         LinearLayout crumb = new LinearLayout(ctx);
         crumb.setOrientation(LinearLayout.HORIZONTAL);
         crumb.setGravity(Gravity.CENTER_VERTICAL);
         crumb.setClickable(true);
+        // ripple 反馈：点击区域变大后需要明确的可点提示
+        crumb.setBackgroundResource(com.aliya.hyfilemgr.R.drawable.bg_ripple);
+        crumb.setPadding(dp(6), 0, dp(2), 0);
         crumb.setOnClickListener(v -> showPathCrumbs());
         centerSlot.addView(crumb, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT));
+                FrameLayout.LayoutParams.MATCH_PARENT));
         topBarCrumbView = crumb;
 
         pathText = new TextView(ctx);
-        pathText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        // 13sp：顶栏现在 46dp 高，12sp 显得发虚（用户反馈路径字偏小）
+        pathText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         pathText.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
         pathText.setSingleLine(true);
         pathText.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
+        pathText.setGravity(Gravity.CENTER_VERTICAL);
         crumb.addView(pathText, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                ViewGroup.LayoutParams.MATCH_PARENT, 1f));
 
         // 路径右侧下拉箭头（提示可点击展开层级）
         TextView caret = new TextView(ctx);
         caret.setText("▾");
-        caret.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        caret.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        caret.setGravity(Gravity.CENTER_VERTICAL);
         caret.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
         LinearLayout.LayoutParams caretLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT);
         caretLp.setMarginStart(dp(3));
         caretLp.setMarginEnd(dp(4));
         crumb.addView(caret, caretLp);
@@ -6874,7 +6894,7 @@ public class FileManagerModule extends HyVqModule {
 
         topBarCenterSlot.addView(title, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT));
+                FrameLayout.LayoutParams.MATCH_PARENT));
         topBarSettingsTitleView = title;
 
         if (topBarFileActions != null) topBarFileActions.setVisibility(View.GONE);
@@ -16758,15 +16778,20 @@ public class FileManagerModule extends HyVqModule {
 
     private ImageView toolIcon(int res, View.OnClickListener onClick) {
         ImageView iv = new ImageView(ctx);
-        // 视觉：图标内容 22dp；判定：容器 48dp —— Material 建议最小触摸目标 48dp。
-        // 原来是 36dp 且上下各 -3dp 负边距，实际可点区约 30dp，
-        // 顶栏一排图标挤在一起时很容易点错。
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(48), dp(48));
+        // 视觉：图标内容 22dp；判定：容器 40dp。
+        //
+        // 尺寸历史：36dp（可点区约 30dp，太挤）→ 48dp（Material 建议值，
+        // 但把整条顶栏扰到 54dp，用户反馈「共享顶栏有点大」）→ 40dp。
+        // 40dp 仍然超过 Android 推荐的 40dp 最小热区下限
+        // （Material 的 48dp 是理想值，顶栏这种高频低精度场景 40dp 够用），
+        // 同时把顶栏高度控到 46dp。
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(40), dp(40));
         lp.setMarginStart(dp(1));
         iv.setLayoutParams(lp);
         iv.setImageResource(res);
-        // 上下左右各 7dp 内边距 → 可见图标 36-14 = 22dp
-        iv.setPadding(dp(7), dp(7), dp(7), dp(7));
+        // 上下左右各 6dp 内边距 → 可见图标 40-12 = 28dp
+        // （原来是 22dp，配合 40dp 容器显得画得更大，观感更平衡）
+        iv.setPadding(dp(6), dp(6), dp(6), dp(6));
         iv.setColorFilter(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
         iv.setOnClickListener(onClick);
         return iv;
