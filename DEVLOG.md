@@ -8,126 +8,11 @@
 
 ---
 
-## 待发布（v1.0.4 之后，共 6 个提交）
+## 待发布
 
-### 修复：音频文件点开即崩溃（5f7946f）
+（暂无。1.0.5 的内容已汇总进 `versions.json` + `CHANGELOG.md`，见其 1.0.5 章节。）
 
-**现象**：点任何音频 → 立即闪退。
-**根因**：`showAudioPlayerDialog` 里写着 `final ExoPlayer p = null;` 然后紧接着
-`p.addListener(...)`。周边逻辑（状态监听、切歌、进度、循环、错误处理、按钮绑定）
-全部写好，唯独「创建播放器」这一步留成桩代码没替换。
-**改动**：
-- 改用 `PlayerCore.create(ctx)` 真正创建（全项目唯一 ExoPlayer 出口，
-  自带 audio focus 与耳机拔出自动暂停）
-- 切歌前释放旧实例（`stop()` + `release()`），否则每切一首多占一个 codec
-- 弹窗入口补 `PlayerCore.init(ctx)`——音频弹窗不经过 MediaPlayerActivity，
-  zip 虚拟路径解出需要 cacheDir
-**影响面**：`FileManagerModule.showAudioPlayerDialog`。
-
-### 加固：reloadAll 双层异常隔离（5f7946f 附带）
-
-`reloadAll` 是「点击 → 刷新」的公共出口，任一窗格 NPE 会崩整个 App。
-改为外层 try-catch + 逐窗格独立 try-catch，单个窗格失败只记 `HyReload` 日志。
-（起因是排查一个 R8 混淆堆栈时的防御性改动，非本次崩溃的真因。）
-
-### 新增：文件列表下拉刷新（a16eb22）
-
-`buildPane` 返回值从 `RecyclerView` 改为外包的 `SwipeRefreshLayout`。
-
-- 触发距离 **96dp**（默认 64dp 偏灵敏，轻微下拉就转圈；
-  96dp ≈ 1.5 个列表行高，需要明确的下拉意图）
-- `setOnChildScrollUpCallback` 显式接管「只有滚到顶部才允许下拉」，
-  否则往下滑列表会误触刷新
-- 双窗格各有独立的刷新容器，只刷新本窗格
-- 压缩包内刷新先清 `archiveItemsCache`，否则读到旧目录树
-- 刷新后 400ms 收起转圈（`reload` 是同步 `listFiles`，无完成回调）
-- 新增 `Pane.swipeRefresh` 字段
-
-**新依赖**：`androidx.swiperefreshlayout:swiperefreshlayout:1.1.0`（此前未引入）。
-
-### 变更：压缩包内图片改为按需解出 + 退出即清（2b2c5f4）
-
-**① 点击哪张解哪张**
-`ViewPager2` 的 `offscreenPageLimit` 最小为 1（设 0 也会当 1），
-而 `onBindViewHolder` 在页面被预创建时就调 `bind()` 解码 ——
-这是「看一张解三张」的根源。
-改法：`onBindViewHolder` 只 `setPendingPath()` 记路径不解码；
-真正解码由 `onPageSelected`（用户翻到该页）与首屏初始化触发 `ensureLoaded()`。
-
-**② 退出销毁本次缓存（不管是否还在预览界面）**
-此前只在 `maybePurgeArchiveCache`（离开 `zip://` 路径时）清。
-用户「从压缩包看图 → 退出查看器 → 退出文件管理器」这条路径上，
-缓存会一直留到「离开压缩包」那一刻。
-新增 `ImageViewerActivity.onDestroy()`：从 `gallery` 的 `zip://` 路径
-提取涉及的包逐个 `purgeArchive`。只清本次用到的包，不影响别的压缩包。
-
-**③「解出中」toast 改弹窗**
-新增 `showLoadingDialog(message)`：不确定进度条 + 文案，不可取消
-（解出中取消会留半截缓存文件，支持中断超出本次范围）。
-三处替换：解到对侧（`HyVqZipToOther`）、加密条目解密解出（`HyVqZipEnc`）、
-打开压缩包内条目（`HyVqZipEntry`）。完成后统一 `dismissQuiet(loading)`
-（未 show / 已 dismiss / Activity 已销毁都不抛）。
-
-### 修复：状态栏看不清 + 顶栏上方白带（638d100）
-
-用户两个反馈，各一个根因：
-
-**① 状态栏看不清**
-`MainActivity` 在 `module.createMainView()` **之后**执行一段
-`setAppearanceLightStatusBars(false)`，把模块刚按用户设置算好的图标明暗
-覆盖回浅色。用户 `statusBarAlpha=0`（透明）时，模块判定「无背景图 →
-不透明浅色底 + 深色图标」，紧接着被改成浅色图标 → 白图标压浅底。
-修法：删掉那段覆盖，明暗全权交给模块。
-
-**② 顶栏上方白带**
-与 ① 同源：模块原逻辑「`statusBarAlpha < 30` 就切浅色图标」，
-但没考虑**没有背景图**时 alpha=0 意味着「不画底色、透出浅色主题背景」，
-而非「透出照片」。修法：
-- 无背景图时按不透明处理（`effectiveAlpha = 100`）
-- 图标明暗改由**最终底色的实际亮度**决定（WCAG 整数近似），
-  不再靠「有没有背景图」猜 —— 背景图也可能是一张纯浅色图片
-- 保留「底色确实透明时用浅色图标」的保守分支
-
-### 修复：弹窗模糊背景白带（bb65261 + f846a19 + 599cf46）
-
-这条白带查了三轮，每轮根因不同，三个修复叠加才彻底解决：
-
-**① 模糊图整体下移一个状态栏高（599cf46）**
-只加 `FLAG_LAYOUT_IN_SCREEN` 不够——窗口矩形从 y=0 算，但内容区仍被系统
-inset（高度 = 屏高 - 状态栏 - 导航栏），配 `setGravity(CENTER)` 会垂直居中。
-必须 `setDecorFitsSystemWindows(window, false)` 让内容区铺满整个窗口矩形。
-
-**② `BitmapDrawable + Gravity.FILL` 不等于拉伸（f846a19）**
-FILL 在宽高比与窗口不一致时按「填满」规整（等价 `CENTER_CROP`），
-横向先填满、纵向超出部分居中裁掉 —— 实测顶部被切约 100px，
-表现为顶栏只露下半截。改为自定义 Drawable 顶部对齐等比填充。
-
-**③ `decor.draw()` 拿不到状态栏像素（bb65261）**
-`decor.draw()` 只画 View 树自己，状态栏是系统在另一层画的，decor 那里透明。
-透明区模糊后仍透明，被 `liftBrightness` 提亮 → 成品白带（实测 224px）。
-改用 `PixelCopy` 抓窗口真实合成像素。**关键坑**：PixelCopy 回调若绑主线程
-Handler，而调用方又在主线程 `await` 阻塞 —— 主线程永远空闲不下来执行回调，
-必然超时。必须绑独立 `HandlerThread`。80ms 超时回退 `decor.draw`。
-
-另：`liftBrightness` 支持负值（压暗）。浅色主题下截图近白，
-再提亮会与弹窗面板糊成一片；改为按底色平均亮度自适应
-（暗底 +0.18 提亮，亮底 -0.08 压暗）。
-
-### 修复：共享顶栏降高（40943ce）
-
-54dp → 46dp，路径点击区撑满、字号 12 → 13sp。
-
-### 修复：ZIP 相关一批（7238586 / c7984e0 / cff0ca4 / 6771ff0）
-
-- 压缩包内目录层级错误，并列显示「测试A」「测试A/测试B」
-- 压缩包内图片可滑动切换 + 列表显示缩略图
-- 压缩包内视频播放器显示「1/2」（窗格虚拟路径 + 当前临时文件两项）
-- 视频缩略图黑帧：取 10% 时长 + `isAllBlack` 检测
-- 缓存名碰撞
-- 新增 `archive/ZipCache.java` 统一管理解出缓存，
-  退出压缩包 / 退出应用即销毁
-
-### 待办（未完成）
+### 下一步待办
 
 - 文本编辑器重构（预览/编辑双模式、语法高亮、快捷输入栏、编码切换、
   查找替换增强、Markdown/HTML/JSON·XML 预览、HTML 可切工作目录）
@@ -135,6 +20,7 @@ Handler，而调用方又在主线程 `await` 阻塞 —— 主线程永远空�
 - 图片隐藏式压缩包（合体制作 + 检测提取）
 
 ---
+
 ## 1.0.4（2026-11-12 已发布）
 
 本批全部改动已汇总：面向用户 → `versions.json` 的 1.0.4 条目；面向开发者 → `CHANGELOG.md` 的 1.0.4 章节。以下保留实现细节存档。
