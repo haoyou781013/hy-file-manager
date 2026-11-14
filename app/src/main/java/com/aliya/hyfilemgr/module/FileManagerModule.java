@@ -2777,11 +2777,29 @@ public class FileManagerModule extends HyVqModule {
             handler.post(this::reloadAll);
             return;
         }
-        // 写操作/刷新后目录内容可能变化：清空全部窗格目录缓存（强制重新 listFiles）
-        for (Pane p : panes) {
-            if (p.dirCache != null) p.dirCache.clear();
+        // ⚠ 整体 try-catch + 逐窗格 try-catch：
+        // 这是「点击 → 刷新」链路的公共出口，任何一处 NPE 都会崩掉整个 App
+        // （用户实测崩溃堆栈落在本方法的 Runnable 里）。
+        // 刷新失败不应让应用消失 —— 记日志、跳过该窗格即可。
+        try {
+            // 写操作/刷新后目录内容可能变化：清空全部窗格目录缓存（强制重新 listFiles）
+            for (Pane p : panes) {
+                if (p == null) continue;
+                try {
+                    if (p.dirCache != null) p.dirCache.clear();
+                } catch (Throwable ignored) { }
+            }
+            for (Pane p : panes) {
+                if (p == null) continue;
+                try {
+                    reload(p);
+                } catch (Throwable t) {
+                    android.util.Log.w("HyReload", "reloadAll: 单窗格刷新失败", t);
+                }
+            }
+        } catch (Throwable t) {
+            android.util.Log.e("HyReload", "reloadAll 失败", t);
         }
-        for (Pane p : panes) reload(p);
     }
 
     /** 重新加载单个窗格：AccessRouter 四源路由 → 排序 → 刷新（恢复该目录上次滚动位置） */
@@ -13603,6 +13621,9 @@ public class FileManagerModule extends HyVqModule {
     private void showAudioPlayerDialog(final java.util.ArrayList<String> playlist,
                                        int startIndex, final boolean isUri) {
         releaseAudioPlayer();
+        // zip 虚拟路径需要 cacheDir 解出（PlayerCore.mediaItem 用它）。
+        // 音频弹窗不经过 MediaPlayerActivity，得在这里自己注入一次。
+        com.aliya.hyfilemgr.player.PlayerCore.init(ctx);
         if (playlist == null || playlist.isEmpty()) {
             UiKit.toast(ctx, "无可用音频");
             return;
@@ -13767,9 +13788,20 @@ public class FileManagerModule extends HyVqModule {
             btnPrev.setColorFilter(idx[0] > 0 ? tintDim : tintDim);
             btnNext.setColorFilter(idx[0] < playlist.size() - 1 ? tintDim : tintDim);
 
-            // Media3 是异步准备，不再需要后台线程；也不会阻塞主线程
+            // ⚠ 这里原本是 `final ExoPlayer p = null;` —— 桩代码漏了创建，
+            // 但下面紧接着就 `p.addListener(...)`，于是任何音频一点就崩
+            // （NPE: invoke addListener on a null object reference，用户实测）。
+            // 现在统一走 PlayerCore（全项目唯一的 ExoPlayer 出口），
+            // 顺带获得音频焦点管理与耳机拔出自动暂停。
             final androidx.media3.exoplayer.ExoPlayer p =
-                    null;
+                    com.aliya.hyfilemgr.player.PlayerCore.create(ctx);
+            // 切换曲目时释放上一实例，否则 ExoPlayer 越积越多（每个都持有 codec）
+            if (audioPlayer != null && audioPlayer != p) {
+                try {
+                    audioPlayer.stop();
+                    audioPlayer.release();
+                } catch (Throwable ignored) { }
+            }
             audioPlayer = p;
             p.addListener(new androidx.media3.common.Player.Listener() {
                 @Override public void onPlaybackStateChanged(int state) {
