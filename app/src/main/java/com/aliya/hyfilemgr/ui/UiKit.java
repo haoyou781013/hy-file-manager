@@ -439,31 +439,6 @@ public final class UiKit {
     }
 
     /**
-     * 修正位图密度，让 {@code Gravity.FILL} 真正铺满窗口而不是居中裁切。
-     *
-     * <p><b>为什么需要</b>：{@code BitmapDrawable} 按「位图 density ÷ 目标显示密度」
-     * 算缩放比。{@link #boxBlur} 把截图缩到了 1/4 像素尺寸但<b>沿用了原图的 density</b>
-     * → 铺回全屏时按错误比例缩放，叠上 {@code Gravity.FILL} 的居中规整，
-     * 视觉上就是「整张模糊背景偏移了」（本机约一个状态栏高）。
-     * （用户反馈：弹窗模糊背景整体下移一个状态栏高。）</p>
-     *
-     * <p><b>两种粒度怎么选</b>：
-     * <ul>
-     *   <li>{@code DENSITY_NONE} = 1 像素对 1 像素不缩放 —— 这是错的，图只有 1/4 大</li>
-     *   <li><b>设为显示密度</b> = 让位图按 dp 解释，FILL 再把它拉伸到填满 —— 正确</li>
-     * </ul>
-     * 必须两者配合：density 对齐 + FILL。</p>
-     */
-    private static void BitmapUseDensity(android.graphics.Bitmap bmp, Context context) {
-        if (bmp == null || context == null) return;
-        try {
-            int d = context.getResources().getDisplayMetrics().densityDpi;
-            bmp.setDensity(d > 0 ? d : android.graphics.Bitmap.DENSITY_NONE);
-        } catch (Throwable ignored) {
-        }
-    }
-
-    /**
      * 浮窗背景模糊（规范：所有浮窗/对话框统一走本方法）。
      * <p>采用网络通用方案（Blurry/BlurView 同原理，全设备可靠）：
      * <ul>
@@ -545,20 +520,62 @@ public final class UiKit {
             // （它可能被同一帧内多处复用）。
             android.graphics.Bitmap base = blurredOf(bg);
             android.graphics.Bitmap lifted = liftBrightness(base, 0.18f);
-            // ⚠ BitmapDrawable 默认用图片自身密度缩放，而 boxBlur 把图缩到了
-            // 1/4 尺寸却没同步密度 → 铺回全屏时按「原尺寸÷目标密度」算，
-            // 比例对不上就会居中裁切，表现为「模糊背景整体下移一个状态栏高」
-            // （用户反馈）。正确做法：把图的 density 设成目标密度，
-            // 让 1dp 对应 1px，Gravity.FILL 才是真正的拉伸铺满。
-            BitmapUseDensity(lifted != null ? lifted : base, window.getContext());
-            android.graphics.drawable.BitmapDrawable windowBg =
-                    new android.graphics.drawable.BitmapDrawable(
-                            window.getContext().getResources(),
-                            lifted != null ? lifted : base);
-            windowBg.setGravity(Gravity.FILL);
-            // 抗锯齿：低分辨率图拉伸后必须开启，否则边缘发硬
-            windowBg.setFilterBitmap(true);
-            windowBg.setDither(true);
+            android.graphics.Bitmap finalBmp = lifted != null ? lifted : base;
+            // 关键：把 density 置为 DENSITY_NONE（=0），让 BitmapDrawable 按
+            // 「1 像素对 1 像素」看待这个位图。配合 Gravity.FILL 由系统直接拉伸
+            // 到窗口尺寸，不做任何按 dp 的二次换算。
+            //
+            // 为什么不设成显示密度：那样 BitmapDrawable 会先按 dp 解释
+            // （318px→318dp→~1113px），再被 FILL 拉伸到 1272px，两次缩放
+            // 叠加会带偏移。DENSITY_NONE + FILL 才是单次、可预期的拉伸。
+            try {
+                finalBmp.setDensity(android.graphics.Bitmap.DENSITY_NONE);
+            } catch (Throwable ignored) { }
+            // ⚠ 不用 BitmapDrawable + Gravity.FILL：FILL 在宽高比与窗口
+            // 不完全一致时会按「填满」规整（等价 CENTER_CROP），横向先填满后
+            // 纵向超出部分被居中裁掉 —— 实测顶部被切掉约 100px，
+            // 表现为主界面顶栏只露出下半截、上半截成为一条近白带
+            // （用户反馈「顶栏位置空出一条」）。
+            //
+            // 改用自定义 Drawable 在 setBounds 里**严格拉伸到 bounds**，
+            // 宽高各自独立缩放，不裁切、不留白。
+            android.graphics.drawable.Drawable windowBg = new android.graphics.drawable.Drawable() {
+                private final android.graphics.Paint paint = new android.graphics.Paint(
+                        android.graphics.Paint.FILTER_BITMAP_FLAG
+                                | android.graphics.Paint.DITHER_FLAG);
+
+                @Override public void draw(@androidx.annotation.NonNull Canvas c) {
+                    android.graphics.Rect b = getBounds();
+                    if (b.width() <= 0 || b.height() <= 0) return;
+                    if (finalBmp.isRecycled()) return;
+                    // 保持比例填满（CENTER_CROP 语义），但**以顶部对齐**：
+                    // 纯 FILL 会把宽高各自独立缩放导致画面横向拉扁/纵向压扁
+                    // （实测模糊的汉堡图标变宽变形）；而居中裁切的 CENTER_CROP
+                    // 又会切掉顶部顶栏。
+                    // 这里手动算：按 bounds 的宽高比取「较大的缩放比」，
+                    // 再从 y=0 开始画（垂直方向多出的部分从底部溢出，不影响顶部内容）。
+                    float sx = (float) b.width() / finalBmp.getWidth();
+                    float sy = (float) b.height() / finalBmp.getHeight();
+                    float scale = Math.max(sx, sy);
+                    float drawW = finalBmp.getWidth() * scale;
+                    float drawH = finalBmp.getHeight() * scale;
+                    android.graphics.RectF dst = new android.graphics.RectF(
+                            b.left + (b.width() - drawW) / 2f,   // 水平居中
+                            b.top,                              // 顶部对齐（关键）
+                            b.left + (b.width() + drawW) / 2f,
+                            b.top + drawH);
+                    android.graphics.Rect src = new android.graphics.Rect(
+                            0, 0, finalBmp.getWidth(), finalBmp.getHeight());
+                    c.drawBitmap(finalBmp, src, dst, paint);
+                }
+
+                @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); }
+
+                @Override public void setColorFilter(
+                        android.graphics.ColorFilter cf) { paint.setColorFilter(cf); }
+
+                @Override public int getOpacity() { return android.graphics.PixelFormat.OPAQUE; }
+            };
             window.setBackgroundDrawable(windowBg);
 
             if (!centerContent) return;
@@ -617,6 +634,40 @@ public final class UiKit {
         return null;
     }
 
+    /** 状态栏像素高度：优先 WindowInsets，回退资源值（与模块 statusBarHeight 同策略） */
+    private static int statusBarPx(Context context) {
+        try {
+            if (context instanceof android.app.Activity) {
+                View decor = ((android.app.Activity) context).getWindow().getDecorView();
+                androidx.core.view.WindowInsetsCompat ins =
+                        androidx.core.view.ViewCompat.getRootWindowInsets(decor);
+                if (ins != null) {
+                    return ins.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top;
+                }
+            }
+            int id = context.getResources().getIdentifier("status_bar_height", "dimen", "android");
+            if (id > 0) return context.getResources().getDimensionPixelSize(id);
+        } catch (Throwable ignored) { }
+        return 0;
+    }
+
+    /**
+     * 状态栏当前颜色：取 Activity 窗口实际设置的值。
+     *
+     * <p>注意：本项目主界面把状态栏设为**透明**（背景图铺到状态栏后面），
+     * 此时 {@code getStatusBarColor()} 返回 0（透明）。透明填充等于没填，
+     * 所以透明时退到主题的 surfaceContainer —— 与弹窗自身顶栏底色一致，
+     * 视觉上不会突兀。</p>
+     */
+    private static int statusBarColorOf(android.app.Activity activity, Context context) {
+        try {
+            int c = activity.getWindow().getStatusBarColor();
+            if ((c >>> 24) != 0) return c;   // 非全透明才用
+        } catch (Throwable ignored) { }
+        // 透明状态栏：用主题卡片色兜底，模糊后会与下方内容自然过渡
+        return color(context, com.google.android.material.R.attr.colorSurfaceContainer);
+    }
+
     /**
      * 截取当前界面内容并高斯模糊，作为弹窗背景（主线程调用）。
      * 截图失败（非 Activity 上下文/尺寸无效）返回 null，由调用方走兜底方案。
@@ -644,9 +695,20 @@ public final class UiKit {
             // 补出来的 extraTop 恰好是一个状态栏高度，于是状态栏下方多出
             // 一条空白模糊带，再往下才是真实顶栏内容。
             //
-            // 正确做法：decor 多大就截多大，BitmapDrawable 铺满弹窗即可。
+            // 正确做法：decor 多大就截多大。
             Bitmap shot = Bitmap.createBitmap(dw, dh, Bitmap.Config.ARGB_8888);
             Canvas canvas = new Canvas(shot);
+            // ⚠ 关键：decor.draw() 不包含状态栏的像素。
+            // 状态栏由 WindowManager 在另一层绘制，decor 在那一块是透明的。
+            // 透明区模糊后仍是透明，再被 liftBrightness(+0.18) 提亮 ——
+            // 就变成一条近白实心带（用户反馈的「顶栏位置空白」）。
+            // 先把顶部状态栏高度区域填成状态栏实际颜色，再画 decor。
+            int sbH = statusBarPx(context);
+            if (sbH > 0 && sbH <= dh) {
+                android.graphics.Paint fill = new android.graphics.Paint();
+                fill.setColor(statusBarColorOf(activity, context));
+                canvas.drawRect(0, 0, dw, sbH, fill);
+            }
             decor.draw(canvas);
             // 模糊半径 3：三趟 box blur（水平+垂直）已足够柔和；过高的半径（如 6）
             // 会让背景糊成一团，文字/内容观感发虚（实测反馈"模糊度过高"）。
