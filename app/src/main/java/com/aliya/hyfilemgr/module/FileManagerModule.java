@@ -536,6 +536,8 @@ public class FileManagerModule extends HyVqModule {
         int dragRangeStart = -1;
         AccessResult lastResult = AccessResult.empty("None");
         RecyclerView list;
+        /** 下拉刷新容器（buildPane 里创建；刷新完成时用它收起转圈） */
+        androidx.swiperefreshlayout.widget.SwipeRefreshLayout swipeRefresh;
         FileListAdapter adapter;
         /** ⭐8 目录滚动位置记忆（参考 MaterialFiles FileListFragment）：按路径缓存
          *  RecyclerView 布局状态（含像素偏移），切换目录保存上一个、返回时恢复 */
@@ -1627,7 +1629,54 @@ public class FileManagerModule extends HyVqModule {
         });
         // 轻点窗格任意位置（含空白）即切焦点 —— 同步键高亮依赖 active
         attachSwipeToSelect(rv, p);
-        return rv;
+
+        // ══════ 下拉刷新 ══════
+        //
+        // 用 SwipeRefreshLayout 包一层：向下拖超过阈值（默认约 64dp 触发距离，
+        // 松手才刷新）即重新加载当前目录。适合手机存储被其它应用改动后
+        // 手动同步（外接 U 盘、其它 App 刚下载完的文件）。
+        //
+        // 三个要处理的坑：
+        //  ① 只有**滚到顶部**时才允许下拉，否则往下滑列表会误触刷新
+        //     （setOnChildScrollUpCallback 显式接管，比默认行为可靠）
+        //  ② 双窗格各有自己的 SwipeRefreshLayout，刷新只针对本窗格
+        //  ③ 压缩包内（zip://）刷新要清 archiveItemsCache，否则读到旧目录树
+        final androidx.swiperefreshlayout.widget.SwipeRefreshLayout refresh =
+                new androidx.swiperefreshlayout.widget.SwipeRefreshLayout(ctx);
+        refresh.setColorSchemeColors(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorPrimary));
+        // 触发距离：默认 64dp 偏灵敏（手指轻微下拉就出转圈）。
+        // 用户要求「向下拉动超过一定距离」才刷新，调到 96dp ——
+        // 相当于约 1.5 个列表行高，需要明确的下拉意图。
+        refresh.setDistanceToTriggerSync(dp(96));
+        refresh.setOnChildScrollUpCallback((parent, child) ->
+                rv.canScrollVertically(-1));
+        refresh.addView(rv, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        refresh.setOnRefreshListener(() -> {
+            try {
+                // 压缩包内：丢掉条目缓存，强制重新读中央目录
+                if (p.path != null && p.path.startsWith(PREFIX_ZIP)) {
+                    String[] zp = splitZipPath(p.path);
+                    if (zp != null && zp.length > 0) {
+                        archiveItemsCache.remove(zp[0]);
+                    }
+                }
+                reload(p);
+            } catch (Throwable ignored) {
+            }
+            // 刷新是同步读目录（几十 ms 内完成），下一帧就收起转圈。
+            // 不在 reload 回调里收是因为 reload 没有完成回调，
+            // 而文件列表本身就是同步 listFiles —— 延后一帧足够。
+            refresh.postDelayed(() -> {
+                try {
+                    refresh.setRefreshing(false);
+                } catch (Throwable ignored) {
+                }
+            }, 400);
+        });
+        p.swipeRefresh = refresh;
+        return refresh;
     }
 
     /** 横滑进入多选的触发阈值（dp） */

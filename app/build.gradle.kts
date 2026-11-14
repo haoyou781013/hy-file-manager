@@ -67,6 +67,8 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     // 图片查看器分页滑动（跟手拖动 + 相邻图可见，与主流相册一致）
     implementation("androidx.viewpager2:viewpager2:1.1.0")
+    // 文件列表下拉刷新
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
 
     // 文件管理内置播放器（从 HY_VQ 剥离）
     implementation("androidx.media3:media3-exoplayer:1.11.1")
