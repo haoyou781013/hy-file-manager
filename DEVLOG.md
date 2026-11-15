@@ -10,7 +10,45 @@
 
 ## 待发布
 
-（暂无。1.0.5 的内容已汇总进 `versions.json` + `CHANGELOG.md`，见其 1.0.5 章节。）
+### 代码审查修复（2026-11-15，代码审查报告见 `docs/CODE-REVIEW-1.0.5.md`）
+
+1. **四处缓存加上限**（`FileManagerModule`）
+   `dirCache` / `scrollStateByDir` 原来是无界 `HashMap`，每浏览一个新目录就 +1。
+   其中 `dirCache` 的 value 是**整目录条目快照**，万级目录单条就几万个对象，
+   浏览上百目录后内存常驻几十万对象。
+   改法：照同文件 `archiveItemsCache` 的写法换成 `LinkedHashMap(accessOrder=true)` LRU，
+   `DIR_CACHE_MAX=24`、`SCROLL_STATE_MAX=20`。
+   `backStack` / `fwdStack` 加 `pushHistory()` 辅助方法，超 `HISTORY_MAX=50` 丢最旧项
+   （4 处 `push` 调用全部收口到该方法）。
+
+2. **下拉刷新失败不再静默**（`FileManagerModule`）
+   原 `catch (Throwable ignored) {}` 整个吞掉。`reload` 里含 `AccessRouter.list` /
+   `listFiles` / SAF 查询 / 权限判定，任一失败（权限被撤、目录被删、路径失效），
+   用户只看到转圈消失但列表没变，且零提示。
+   改为 `Log.w("HyRefresh", ...)` + toast 显示异常类型与消息。
+
+3. **移除 5 处调试 `Log.d` 并配置 R8 剥离**
+   位置：`syncByFocus`、`setActive`、`HYOpenWith`、`loadZip path=`、`loadZip result`。
+   其中 `loadZip path=` 在**每次进入压缩包**时拼接 `p.path`（用户真实路径）+
+   `inner` + `items.size()`，既是热路径开销也是隐私泄露。
+   `proguard-rules.pro` 追加 `-assumenosideeffects class android.util.Log { d; v; }`。
+   **注意保留 `Log.w` / `Log.e`** —— 排障依赖它们。
+   实测验证：反编译 dex，`syncByFocus`/`HYFM`/`loadZip path=` 全部消失，
+   而 `HyReload`/`HyRefresh`/`HyZipCache`/`HyArchive` 仍在。
+
+4. **`maybePurgeArchiveCache` 加日志**
+   该方法整个被 `catch (Throwable ignored)` 包住，但它负责**释放压缩包解出的磁盘缓存**。
+   失败时缓存白占空间，用户只会看到存储莫名变少。改为 `Log.w("HyZipCache", ...)`。
+
+5. **清理 2 处未使用导入**
+   `ZipCache.java` 的 `java.util.Enumeration`、`IcoDecoder.java` 的 `java.io.File`。
+
+**未修（审查中识别但按用户要求跳过）**：
+- Manifest 缩进错乱（UI 声明文件）
+- `reload()` 主线程同步 IO（架构级改动，风险大；作者已用目录指纹缓存缓解）
+- 目录缓存指纹「mtime + 子项数」在文件内容被外部改写时不刷新的固有取舍
+
+**验证**：`assembleRelease` 通过（1m13s），装机后主界面双窗格渲染正常，logcat 无崩溃。
 
 ### 下一步待办
 

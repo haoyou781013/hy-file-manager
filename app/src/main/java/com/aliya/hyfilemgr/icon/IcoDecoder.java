@@ -3,7 +3,6 @@ package com.aliya.hyfilemgr.icon;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 
-import java.io.File;
 import java.io.RandomAccessFile;
 
 /**

@@ -56,3 +56,18 @@
 
 # 直接裁掉整个 harmony 包（pack200 / 类文件解析，与压缩包处理无关）
 -dontwarn org.apache.commons.compress.harmony.pack200.**
+
+# ═══════════════════════════════════════════════════════════════
+# 剥掉调试日志
+#
+# 为什么：Log.d/Log.v 在 release 包里仍会执行字符串拼接（热路径上
+# 每次进压缩包都要拼 p.path + inner + items.size()），且 p.path 是
+# 用户真实文件路径，logcat 任何有日志权限的应用都能读。
+#
+# 注意：Log.w / Log.e 必须保留（崩溃排查与故障诊断依赖它们）。
+# ═══════════════════════════════════════════════════════════════
+-assumenosideeffects class android.util.Log {
+    public static int d(...);
+    public static int v(...);
+    public static boolean isLoggable(java.lang.String, int);
+}

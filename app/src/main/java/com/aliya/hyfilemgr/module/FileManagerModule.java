@@ -540,16 +540,35 @@ public class FileManagerModule extends HyVqModule {
         androidx.swiperefreshlayout.widget.SwipeRefreshLayout swipeRefresh;
         FileListAdapter adapter;
         /** ⭐8 目录滚动位置记忆（参考 MaterialFiles FileListFragment）：按路径缓存
-         *  RecyclerView 布局状态（含像素偏移），切换目录保存上一个、返回时恢复 */
-        final Map<String, android.os.Parcelable> scrollStateByDir = new HashMap<>();
+         *  RecyclerView 布局状态（含像素偏移），切换目录保存上一个、返回时恢复。
+         *  <b>必须有上限</b>：旧实现用无界 HashMap，每浏览一个新目录就 +1，
+         *  长期使用只涨不降。15 相当于「最近往返的十几个目录」，够日常用。 */
+        final Map<String, android.os.Parcelable> scrollStateByDir =
+                new java.util.LinkedHashMap<String, android.os.Parcelable>(16, 0.75f, true) {
+                    @Override
+                    protected boolean removeEldestEntry(
+                            java.util.Map.Entry<String, android.os.Parcelable> eldest) {
+                        return size() > SCROLL_STATE_MAX;
+                    }
+                };
         /** 最近一次加载的路径：reload 离开前据此把旧目录状态存入 scrollStateByDir */
         String lastLoadedPath;
 
         /** ⭐ 目录缓存（仿 ZhuFiler DirCache）：路径 → 条目快照 + 目录指纹（mtime/子项数）。
-         *  切换回未变化目录直接复用快照，避免重复 listFiles（大目录性能提升明显）。 */
-        final Map<String, DirSnapshot> dirCache = new HashMap<>();
+         *  切换回未变化目录直接复用快照，避免重复 listFiles（大目录性能提升明显）。
+         *  <b>必须有上限</b>：value 是整目录的条目快照，万级目录单条就是几万个对象。
+         *  旧实现无界，浏览上百目录后内存常驻几十万对象。这里照 archiveItemsCache 做 LRU。 */
+        final Map<String, DirSnapshot> dirCache =
+                new java.util.LinkedHashMap<String, DirSnapshot>(16, 0.75f, true) {
+                    @Override
+                    protected boolean removeEldestEntry(
+                            java.util.Map.Entry<String, DirSnapshot> eldest) {
+                        return size() > DIR_CACHE_MAX;
+                    }
+                };
 
-        /** ⭐ 底部栏：后退历史栈（点击目录/输入路径时压栈，后退时弹出） */
+        /** ⭐ 底部栏：后退历史栈（点击目录/输入路径时压栈，后退时弹出）。
+         *  用户来回前进后退会无限增长，超过 HISTORY_MAX 丢弃最旧项。 */
         final java.util.Deque<String> backStack = new java.util.ArrayDeque<>();
         /** ⭐ 底部栏：前进历史栈（后退时把当前路径压到这里，前进时弹回） */
         final java.util.Deque<String> fwdStack = new java.util.ArrayDeque<>();
@@ -585,6 +604,15 @@ public class FileManagerModule extends HyVqModule {
     /** SAF 系统文件选择器授权请求码 */
     private static final int REQ_SAF_MOUNT = 1005;
     private int sortMode = SORT_NAME;
+
+    // ── 每个窗格的内存上限：防止长期使用后缓存无限增长 ──
+    /** 目录快照缓存上限：value 是整目录条目列表，万级目录单条就很大 */
+    private static final int DIR_CACHE_MAX = 24;
+    /** 滚动位置缓存上限：对应「最近往返的二十来个目录」 */
+    private static final int SCROLL_STATE_MAX = 20;
+    /** 前进/后退历史栈上限：用户来回跳转时防无界增长 */
+    private static final int HISTORY_MAX = 50;
+
     /** 双窗格共用的 ViewHolder 回收池（两栏 item 布局一致，可安全共享） */
     private androidx.recyclerview.widget.RecyclerView.RecycledViewPool sharedViewPool;
 
@@ -1663,7 +1691,12 @@ public class FileManagerModule extends HyVqModule {
                     }
                 }
                 reload(p);
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                // 不能默默吞掉：reload 里含 AccessRouter.list / listFiles / SAF 查询 / 权限判定，
+                // 任一失败（权限被撤、目录被删、路径失效）用户只会看到转圈消失但列表没变。
+                android.util.Log.w("HyRefresh", "下拉刷新失败 path=" + p.path, t);
+                UiKit.toast(ctx, "刷新失败：" + t.getClass().getSimpleName()
+                        + (t.getMessage() != null ? " - " + t.getMessage() : ""));
             }
             // 刷新是同步读目录（几十 ms 内完成），下一帧就收起转圈。
             // 不在 reload 回调里收是因为 reload 没有完成回调，
@@ -2237,8 +2270,6 @@ public class FileManagerModule extends HyVqModule {
      */
     private void syncByFocus() {
         boolean leftToRight = (active == paneL);
-        android.util.Log.d("HYFM", "syncByFocus: active=" + (leftToRight ? "LEFT" : "RIGHT")
-                + " → " + (leftToRight ? "左→右" : "右→左"));
         syncPath(leftToRight);
     }
 
@@ -2250,9 +2281,8 @@ public class FileManagerModule extends HyVqModule {
             UiKit.toast(ctx, "两边已经是同一目录");
             return;
         }
-        dst.backStack.push(dst.path);
+        pushHistory(dst.backStack, dst.path);
         dst.fwdStack.clear();
-        dst.path = src.path;
         reload(dst);
         refreshNavButtons();
         UiKit.toast(ctx, (leftToRight ? "左 → 右" : "右 → 左") + " 已同步");
@@ -2308,8 +2338,6 @@ public class FileManagerModule extends HyVqModule {
         if (p == null) return;
         if (active == p) { refreshSyncButton(); return; }   // 已是焦点也要刷新高亮
         active = p;
-        android.util.Log.d("HYFM", "setActive: " + (p == paneL ? "LEFT" : "RIGHT")
-                + "  path=" + p.path);
         if (pathText != null) {
             pathText.setText(displayPath(p.path));
         }
@@ -2418,10 +2446,26 @@ public class FileManagerModule extends HyVqModule {
 
     // ══════ 底部栏导航：历史栈 ══════
 
+    /**
+     * 压入前进/后退历史栈，超过 HISTORY_MAX 时丢弃最旧项。
+     *
+     * <p>为什么需要：用户反复进入目录 / 前进后退会无限往栈里塞路径，
+     * 旧实现直接用 {@code Deque.push} 无上限，长期使用只涨不降。
+     * 成对的两个栈（back/fwd）各自限制，总是保留最近的路径。</p>
+     */
+    private static void pushHistory(java.util.Deque<String> stack, String path) {
+        if (stack == null || path == null) return;
+        stack.push(path);
+        // push 后如果超限，把最旧的（栈尾）丢到
+        while (stack.size() > HISTORY_MAX) {
+            stack.removeLast();
+        }
+    }
+
     /** 跳转到新路径并记录历史（进入目录 / 跳转路径都走这里） */
     private void navigateTo(Pane p, String newPath) {
         if (p == null || newPath == null || newPath.equals(p.path)) return;
-        p.backStack.push(p.path);
+        pushHistory(p.backStack, p.path);
         p.fwdStack.clear();          // 新分支，清空前进栈
         p.path = newPath;
         // 翻目录不用 stagger（那是给「新表面」的），改用整体交叉淡化
@@ -2437,7 +2481,7 @@ public class FileManagerModule extends HyVqModule {
             UiKit.toast(ctx, "没有上一步了");
             return;
         }
-        p.fwdStack.push(p.path);
+        pushHistory(p.fwdStack, p.path);
         p.path = p.backStack.pop();
         p.staggerPending = false;
         p.dirFadePending = true;
@@ -2451,7 +2495,7 @@ public class FileManagerModule extends HyVqModule {
             UiKit.toast(ctx, "没有下一步了");
             return;
         }
-        p.backStack.push(p.path);
+        pushHistory(p.backStack, p.path);
         p.path = p.fwdStack.pop();
         p.staggerPending = false;
         p.dirFadePending = true;
@@ -2826,7 +2870,11 @@ public class FileManagerModule extends HyVqModule {
                 }
             }
             p.lastArchivePath = curArchive;
-        } catch (Throwable ignored) { }
+        } catch (Throwable t) {
+            // 不能默默吞掉：本方法负责释放压缩包解出的磁盘缓存。
+            // 失败时缓存会白白占着空间，用户只会看到存储莫名变少。
+            android.util.Log.w("HyZipCache", "退出压缩包清理失败", t);
+        }
     }
 
     private void reload(Pane p) {
@@ -13384,7 +13432,6 @@ public class FileManagerModule extends HyVqModule {
                 } catch (Throwable t) {
                     dbg.append("query failed ").append(t).append('\n');
                 }
-                android.util.Log.d("HYOpenWith", dbg.toString());
                 // 落盘便于 adb 读取
                 java.io.File df = new java.io.File(
                         ctx.getExternalFilesDir(null), "openwith_diag.txt");
@@ -15704,10 +15751,6 @@ public class FileManagerModule extends HyVqModule {
             }
         }
 
-        android.util.Log.d("HyArchive", "loadZip path=" + p.path
-                + " zipPath=" + zipPath + " inner=[" + inner + "]"
-                + " items=" + items.size());
-
         java.util.TreeMap<String, FileEntry> dirs = new java.util.TreeMap<>();
         java.util.TreeMap<String, FileEntry> files = new java.util.TreeMap<>();
         // 加密标记只对 zip 有意义（能读到中央目录标志位）
@@ -15795,8 +15838,6 @@ public class FileManagerModule extends HyVqModule {
         }
         p.entries.addAll(dirs.values());
         p.entries.addAll(files.values());
-        android.util.Log.d("HyArchive", "loadZip result dirs=" + dirs.size()
-                + " files=" + files.size() + " entries=" + p.entries.size());
         if (items.isEmpty()) {
             p.lastResult = AccessResult.empty("压缩包 · " + zip.getName()
                     + "（单文件流格式，无内部条目）");
