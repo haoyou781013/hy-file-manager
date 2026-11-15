@@ -85,17 +85,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-            <activity
+        <activity
             android:name=".ImageViewerActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
             android:exported="false" />
-            <activity
+        <activity
             android:name=".MediaPlayerActivity"
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
             android:exported="false" />
-            <activity
+        <activity
             android:name=".crash.CrashActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:excludeFromRecents="true"
@@ -111,7 +111,7 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-            <activity
+        <activity
             android:name=".font.FontPreviewActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"

@@ -1683,6 +1683,10 @@ public class FileManagerModule extends HyVqModule {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         refresh.setOnRefreshListener(() -> {
             try {
+                // ⚠ 下拉刷新 = 用户明确要求「拿到最新内容」，必须绕过目录快照缓存。
+                // 否则：reload 发现指纹（mtime + 子项数）没变 → 直接从 dirCache 读旧快照，
+                // 刷新等于没刷。典型场景：文件被外部程序改写后，用户下拉想看到新大小。
+                if (p.dirCache != null) p.dirCache.clear();
                 // 压缩包内：丢掉条目缓存，强制重新读中央目录
                 if (p.path != null && p.path.startsWith(PREFIX_ZIP)) {
                     String[] zp = splitZipPath(p.path);

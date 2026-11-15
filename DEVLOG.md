@@ -43,10 +43,26 @@
 5. **清理 2 处未使用导入**
    `ZipCache.java` 的 `java.util.Enumeration`、`IcoDecoder.java` 的 `java.io.File`。
 
-**未修（审查中识别但按用户要求跳过）**：
-- Manifest 缩进错乱（UI 声明文件）
-- `reload()` 主线程同步 IO（架构级改动，风险大；作者已用目录指纹缓存缓解）
-- 目录缓存指纹「mtime + 子项数」在文件内容被外部改写时不刷新的固有取舍
+6. **下拉刷新不清 `dirCache` —— 刷新等于没刷**（后续发现，真 bug）
+   `refresh.setOnRefreshListener` 里只清了压缩包的 `archiveItemsCache`，
+   没清目录快照缓存。`reload()` 发现指纹（mtime + 子项数）没变 → 直接读旧快照。
+   **实测复现**：文件从 2 字节改写为 49 字节，目录 mtime 与子项数均未变
+   → 旧代码会显示旧的 2 字节，用户下拉刷新也刷不出来。
+   修复：刷新回调开头加 `p.dirCache.clear()`（注释说明「下拉刷新=用户明确要求最新内容，
+   必须绕过快照缓存」）。
+   「更多 → 刷新」走 `reloadAll()`，那里本来就有 `dirCache.clear()`，无需改。
+
+7. **Manifest 缩进统一**
+   4 处 `<activity>` 误缩进 12 格（`<application>` 子级应为 8 格）。
+   验证：去空白后逐行对比完全一致，纯缩进修正，零实质改动。
+
+**未修（评估后决定不动）**：
+- `reload()` 主线程同步 IO：架构级改动（需序号守卫防竞态、空窗期 UI、缓存写入时机、
+  `reloadAll` 同步语义变更），风险大于收益。且已有目录指纹缓存覆盖「返回上一目录」最高频场景。
+  仅在用户反馈「某目录打开很卡」时再动。
+- `ImageViewerActivity` / `MediaPlayerActivity` 的 `configChanges` 不一致
+  （前者无 `screenLayout`）：两者均未实现 `onConfigurationChanged`，也未做分屏处理，
+  差异不会导致行为不一致，保持原样。
 
 **验证**：`assembleRelease` 通过（1m13s），装机后主界面双窗格渲染正常，logcat 无崩溃。
 
