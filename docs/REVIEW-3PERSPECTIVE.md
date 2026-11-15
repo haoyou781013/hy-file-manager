@@ -219,6 +219,92 @@ if (snap != null) {
 
 **修复**：指纹只用 `mtime`，子项数后台补齐。
 
+### P4b. 缓存未命中时同一目录枚举两次
+
+**位置**：`FileManagerModule.java:2957-2967`
+
+```java
+p.lastResult = AccessRouter.list(ctx, p.path);   // ← 内部 listFiles() 一次
+...
+if (cc >= 0) {
+    childCount = cc;                    // 有快照时复用
+} else {
+    File[] kids2 = dirF.listFiles();    // ← 无快照时再列一次
+    childCount = kids2 == null ? 0 : kids2.length;
+}
+```
+
+作者已修掉「三元表达式两侧各调一次」的旧问题，但**「`AccessRouter.list` + 统计 `childCount`」仍是两次全目录枚举**。万级目录白扫一遍 ≈ 100~200ms。
+
+**修复**：直接用 `p.lastResult.entries.size()` 作为 `childCount`（语义一致，就是刚列出的真实条目数）。
+
+### P4c. 权限检查路径上仍有 `Files.isSymbolicLink`
+
+**位置**：`AccessRouter.java:119-133` 的 `toEntry()`
+
+每条目调 `Files.isSymbolicLink` + `isDirectory` + `length` + `lastModified` = **4 次 syscall**，且 `f.toPath()` 还多建一个 `UnixPath` 对象。1 万项目录 = 4 万次 syscall + 1 万个临时对象。
+
+**修复**：用 `Os.lstat(path, stat)` 一次拿到 `st_mode`/`st_size`/`st_mtime`，由 `st_mode & S_IFMT` 判 DIR/LINK/FILE → **4 万次降到 1 万次**。顺带解决 C1（`lstat` 在 API 21+ 就有，无需版本判断）。
+
+### P6b. 每个玻璃弹窗主线程阻塞 ≤80ms + 23MB 临时垃圾
+
+**位置**：`ui/UiKit.java:771`（`latch.await(80ms)`）、`:842-910`（`boxBlur`）
+
+**调用规模**：`glassDialog` 在 `FileManagerModule` 内 **41 处**，全项目 45 处。
+
+**每次开销**：
+- `shot` 全屏位图 1080×2400×4 = **10.4MB**
+- `boxBlur` 6 趟 × 2 = **6 个 Bitmap + 12 个 int[]** ≈ 12MB
+- `liftBrightness` + 裁剪再 1.3MB
+- 合计 **≈23MB 临时垃圾/弹窗**
+- `latch.await(80ms)` **阻塞主线程**
+
+**修复**：模糊底图按「窗口尺寸+主题+300ms 内」缓存复用；`boxBlurPass` 的 `int[]` 用静态缓冲池；`captureByPixelCopy` 的 `HandlerThread` 复用而非每次 new。
+
+### P7. `cardStyleMap` 强引用泄漏
+
+**位置**：`FileManagerModule.java:301-302`
+
+```java
+private final java.util.Map<View, int[]> cardStyleMap = new java.util.IdentityHashMap<>();
+```
+
+**key 是强引用**，而配对的 `cardViewRefs`（297 行）是 `WeakReference`。设置页每次重建都产生 200~300 个新 View 全部进 map，旧 View 因被强引用永不回收。清理阈值 `size() > cardViewRefs.size()*2 + 32`（7936 行）随两者同步增长，**基本不会触发**。
+
+**修复**：`cardStyleMap` 换 `WeakHashMap`，或把 `int[]` 并入 `cardViewRefs` 的配对结构。
+
+### P8. 冷启动在主线程递归清扫回收站
+
+**位置**：`FileManagerModule.java:1040` `purgeExpiredTrash()`（在 `createMainView` 内，首帧之前）
+
+回收站有 1 个 5000 文件的过期目录时，`countTree` 遍历 5000 项再 `deleteTree` 删除，**全在主线程**，冷启动白屏 1~3 秒。且每次启动都跑（无「上次清理时间」记录）。
+
+**修复**：移到 `TASK_QUEUE`；持久化 `last_purge_at`，24h 内不重复；`countTree` 与删除合并为单次遍历。
+
+### P9. 「打开方式」弹窗约 2100 次 PackageManager IPC
+
+**位置**：`FileManagerModule.java:13304-13440`
+
+200 个应用时：5 次 `queryIntentActivities` + 1 次 `getInstalledApplications` + 200 次 `getLaunchIntentForPackage` + 200 次 `getApplicationLabel` + **排序 comparator 内约 1500 次 `getApplicationLabel`** + 主线程写诊断文件。
+
+**修复**：整段搬后台；label 先算一次存 Map；诊断写文件那段（13333-13447）是遗留调试代码，直接删。
+
+### P10. `appIconCache` 无上限
+
+**位置**：`FileListAdapter.java:107-111`
+
+`Android/data` 下 3000 个包名目录滚一遍 → 缓存 3000 个 `Drawable`（每个 30~100KB）= **90~300MB**。
+
+**修复**：`LruCache<String, Drawable>` 上限 64。
+
+### P11. `SharedPreferences.commit()` 主线程 25 处，滑块松手写两次
+
+**位置**：`FileManagerModule.java:418-424`、`9970-9977`，滑块 12 处
+
+每个滑块 `onStopTrackingTouch` = `savePrefInt(commit)` + `persistState(24 键 commit)` = **2 次 fsync**（2~10ms，低端机 20ms+）。
+
+**修复**：`savePrefInt/savePrefBool` 内部改 `PREF_HANDLER.post(...)`（签名不变，25 个调用点零改动）；滑块释放合并为一次任务。
+
 ### P5. 缩略图每写一张就扫全盘
 
 **位置**：`ThumbLoader.java:497-523`
@@ -320,13 +406,20 @@ if (snap != null) {
 
 ### 随后修（性能，用户可感知）
 
-| 顺序 | 项 | 工作量 |
-|---|---|---|
-| 6 | P1 框选精确通知（含去掉 `\|\| true`） | 20 分钟 |
-| 7 | P3 `formatDate` 复用 SDF | 20 分钟 |
-| 8 | P5 `trimDisk` 节流 | 20 分钟 |
-| 9 | P4 缓存指纹不扫目录 | 1 小时（需权衡误判） |
-| 10 | X2/X3/X4 三处小修 | 1 小时 |
+| 顺序 | 项 | 工作量 | 收益 |
+|---|---|---|---|
+| 6 | P1 框选精确通知（含去掉 `\|\| true`） | 20 分钟 | 拖选从 1000~2000 bind/秒降到只刷差异 |
+| 7 | P3 `formatDate` 复用 SDF | 20 分钟 | 每帧省 60~180µs |
+| 8 | P4b 用 `entries.size()` 替掉第二次 `listFiles` | 10 分钟 | 万项目录省 100~200ms |
+| 9 | P5 `trimDisk` 节流 | 20 分钟 | 缩略图加载不再越滚越慢 |
+| 10 | P7 `cardStyleMap` 换 WeakHashMap | 15 分钟 | 长会话内存不再单调上涨 |
+| 11 | P10 `appIconCache` 加 LRU | 15 分钟 | 防 90~300MB 峰值 |
+| 12 | P11 `savePrefInt` 走后台 | 20 分钟 | 滑块操作不再卡 10~30ms |
+| 13 | P6b 玻璃弹窗模糊缓存 | 1 小时 | 弹窗首帧不再延迟 20~100ms |
+| 14 | X2/X3/X4 三处小修 | 1 小时 | 数据错乱 |
+| 15 | P8 回收站清扫移后台 | 30 分钟 | 冷启动白屏 |
+| 16 | P9 打开方式搬后台 | 1 小时 | 长按卡 300~900ms |
+| — | P4c 用 `Os.lstat` 合 syscall | 2 小时 | 4 万次 syscall → 1 万次（与 C1 一起做） |
 
 ### 再后（架构，需谨慎）
 
