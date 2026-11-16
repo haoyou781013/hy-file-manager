@@ -275,10 +275,38 @@ public final class FileOps {
      * <p>旧实现忽略 delete() 返回值与 listFiles() 为 null 的情况，
      * 只读子项 / SELinux 拒绝时会谎报「已删除 N 项」。</p>
      */
+    /**
+     * 是否是符号链接本身（不跟随），零 {@code java.nio.file} 依赖。
+     *
+     * <p>低版本用 {@code canonicalPath != absolutePath} 兜底：不完全等价
+     * （路径中任意一段是链接都会判为 true），但方向安全（少删不多删）。</p>
+     *
+     * <p>与 {@code FileManagerModule.isSymlink}、{@code ArchiveExtractor.isSymlinkStatic}
+     * 三处同构——本来应该抽到公共工具类，但那个类还没建，先保证行为一致。</p>
+     */
+    private static boolean isSymlink(File f) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                return java.nio.file.Files.isSymbolicLink(
+                        java.nio.file.Paths.get(f.getAbsolutePath()));
+            }
+            File p = f.getParentFile();
+            File canon = p == null ? f : new File(p.getCanonicalFile(), f.getName());
+            return !canon.getCanonicalPath().equals(canon.getAbsolutePath());
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     private static int deleteRecursive(File f) {
         if (f == null || !f.exists()) return 0;
         int count = 0;
-        if (f.isDirectory()) {
+        // ⚠ symlink 不能递归：`f.isDirectory()` 对「指向目录的符号链接」返回 true，
+        // 旧实现直接 listFiles() 递归 → 进入链接目标目录、把目标内容真删了。
+        // 对照：FileManagerModule.deleteTree(16954) 与
+        // ArchiveExtractor.deleteTreeQuietly 都判了 isSymlink，唯独这里漏了。
+        // delete() 对 symlink 只移除链接本身，不动目标。
+        if (f.isDirectory() && !isSymlink(f)) {
             File[] children = f.listFiles();
             if (children != null) {
                 for (File c : children) {

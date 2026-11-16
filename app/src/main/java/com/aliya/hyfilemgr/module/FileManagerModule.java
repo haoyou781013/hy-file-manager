@@ -8051,7 +8051,7 @@ public class FileManagerModule extends HyVqModule {
 
     // ── 背景图选择入口 ──
 
-    private static final int REQ_PICK_BG = 0x4B47;   // 老式 startActivityForResult 通道（retired）
+    private static final int REQ_PICK_BG = 0x4B47;   // 背景图选择（Android 13+ 主路径用 startActivityForResult 调系统 Photo Picker；旧版走 bgPickerLauncher）
     /** 图片查看器回传通道：删除已确认 / 设为背景已选择 */
     private static final int REQ_VIEWER = 0x4B49;
     /** 系统照片选择器的启动器，由 MainActivity 注册后注入 */
@@ -8399,9 +8399,11 @@ public class FileManagerModule extends HyVqModule {
     }
 
     private static boolean isImageName(String name) {
-        String l = name.toLowerCase(Locale.US);
-        return l.endsWith(".jpg") || l.endsWith(".jpeg") || l.endsWith(".png")
-                || l.endsWith(".webp") || l.endsWith(".bmp") || l.endsWith(".gif");
+        // 已统一到 util/Exts（19 种图片扩展名）。
+        // 旧实现手写 endsWith×6（jpg/jpeg/png/webp/bmp/gif）——
+        // 背景图浏览器会把 heic/heif/svg/tiff/raw 等全滤掉，
+        // 用户相机拍的 HEIC 照片在自建浏览器里根本看不到。
+        return Exts.isImage(Exts.extOf(name));
     }
 
     /** 一行「标题 + 可选副标题」，可点 */
@@ -15478,14 +15480,6 @@ public class FileManagerModule extends HyVqModule {
         }));
     }
 
-    private static String fixGbkName(String name) {
-        try {
-            return new String(name.getBytes("ISO-8859-1"), "GBK");
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
     private static boolean containsGarbled(String s) {
         if (s == null || s.isEmpty()) return false;
         // UTF-8 解 GBK 字节时产生 U+FFFD。旧判据只看 c < 0x20 且跳过 \0，
@@ -15533,7 +15527,15 @@ public class FileManagerModule extends HyVqModule {
     /** 把 FileEntry 的 zip 路径拆成 [zip 文件绝对路径, 包内相对路径] */
     private static String[] splitZipPath(String virt) {
         String rest = virt.substring(PREFIX_ZIP.length());
-        // zip 路径自身可能含 "/"，逐个尝试已知的 .zip/.jar/.apk 结尾作为切分点
+        // 后缀表只维护一份，供「按 '/' 逐段试切」与「整体即压缩包名」两处共用。
+        // 必须与 ARCHIVE_NAME_SUFFIXES（629 行）保持同步 —— 曾因这里漏了
+        // .tbz/.tbz2/.txz/.tzst 导致这些包切分失败、点解压时越界崩溃。
+        final String[] SUP = {
+                ".zip", ".jar", ".apk", ".xapk", ".7z", ".rar", ".tar",
+                ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst",
+                ".tgz", ".tbz2", ".tbz", ".txz", ".tzst"
+        };
+        // zip 路径自身可能含 "/"，逐个尝试已知后缀作为切分点
         int best = -1;
         for (int i = rest.length(); i > 0; i--) {
             char c = rest.charAt(i - 1);
@@ -15544,17 +15546,24 @@ public class FileManagerModule extends HyVqModule {
             // 此前只认 zip/jar/apk，7z/tar/rar 会切分失败 →
             // zipPath 变成整个 "zip:///sdcard/x/test.7z/" → isFile()=false →
             // loadZip 提前 return "压缩包不存在"，表现为「打开后空白、连 .. 都没有」
-            if (low.endsWith(".zip") || low.endsWith(".jar") || low.endsWith(".apk")
-                    || low.endsWith(".xapk") || low.endsWith(".7z")
-                    || low.endsWith(".rar") || low.endsWith(".tar")
-                    || low.endsWith(".tar.gz") || low.endsWith(".tar.bz2")
-                    || low.endsWith(".tar.xz") || low.endsWith(".tar.zst")
-                    || low.endsWith(".tgz")) {
+            boolean hit = false;
+            for (String s : SUP) {
+                if (low.endsWith(s)) { hit = true; break; }
+            }
+            if (hit) {
                 best = i - 1;
                 break;
             }
         }
         if (best < 0) {
+            // 防御：路径末尾没有 '/'（如 "zip:///sdcard/x/test.tbz"）。
+            // 当前所有构造点都是 `PREFIX_ZIP + zipPath + "/"`（带尾斜杠），
+            // 所以走不到这里；但旧的回退「第一个 '/'」会把 zipPath 切成空串，
+            // 下游 substring 直接越界。这里先把整体当压缩包名试一次。
+            String lowAll = rest.toLowerCase(java.util.Locale.ROOT);
+            for (String s : SUP) {
+                if (lowAll.endsWith(s)) return new String[]{rest, ""};
+            }
             int sl = rest.indexOf('/');
             best = sl < 0 ? rest.length() : sl;
         }
@@ -16399,9 +16408,17 @@ public class FileManagerModule extends HyVqModule {
         if (fs == null) return 0;
         int n = 0;
         for (File f : fs) {
+            // ⚠ .trashmeta 需要单独处理，不能当普通条目删。
+            // 旧实现直接跳过它们（isTrashMeta 在 collectTrash 里滤），
+            // 但清理时不删 → 条目删了、meta 留下永久占位；
+            // 更坑的是下次同名条目复用旧 meta → 恢复到错误路径。
+            // 这里靠 deleteTrashMeta 的「删条目时一并删」保证配对。
+            if (isTrashMeta(f)) continue;
             // 顶层条目才代表一次「删除操作」，其 mtime 已在 moveToTrash 里设为移入时间
             if (f.lastModified() >= deadline) continue;
             n += (int) countTree(f);
+            // 先删配对 meta，再删条目；顺序反了的话条目一消失就找不到 meta 名了
+            deleteTrashMeta(f);
             if (f.isDirectory()) {
                 deleteTree(f);
             } else if (f.delete()) {

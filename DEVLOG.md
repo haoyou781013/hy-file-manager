@@ -358,6 +358,46 @@ canonicalPath 兜底）。
 **验证**：`assembleRelease` 通过（1m22s），装机启动正常，崩溃 0 / FATAL 0，
 进程存活；双窗格渲染正常（文件夹图标、文件名、大小、修改时间全部正确）。
 
+### 五维度审查修复（2026-11-17，第 1 批：4 个真 bug）
+
+报告见 `docs/reviews/`（5 份 + 汇总 README）。
+
+1. **`.tbz/.tbz2/.txz/.tzst` 压缩包打开即崩**
+   `splitZipPath`（15528）的后缀表有 `.tgz` 但**漏了这 4 个**，而
+   `ARCHIVE_NAME_SUFFIXES`（629 行）与 `ArchiveExtractor.canExtract` 都支持它们，
+   侧边栏「压缩包」分类也包含 → 用户能看到、能点开。
+   切分失败 → `best<0` → 回退到首个 `/` → 整个 `zip://…/x.tbz` 被当包路径 →
+   `loadZip` 报「不存在」→ 点「解压」时 `substring` 越界崩溃。
+   改法：后缀表抽成局部 `SUP[]` 供两处共用（原来写了两遍），补 4 个后缀；
+   另加「整体即压缩包名」的防御分支（当前构造点都带尾斜杠，走不到，但避免空串下传）。
+
+2. **`FileOps.deleteRecursive` 不判 symlink → 可能删掉链接目标内容**
+   `f.isDirectory()` 对「指向目录的 symlink」返回 true，旧实现直接递归进去真删目标。
+   对照：`FileManagerModule.deleteTree`（16954）与 `ArchiveExtractor.deleteTreeQuietly`
+   都判了 `isSymlink`，唯独这里漏了。
+   调用链：`moveAsync` 跨分区删源、`moveToTrash` 删源、`restoreFromTrash` 删临时。
+   改法：新增 `isSymlink`（与另两处同构，API 26+ 用 `Files`，低版本 canonicalPath 兜底），
+   `deleteRecursive` 加 `&& !isSymlink(f)`。
+
+3. **回收站过期清理留孤儿 `.trashmeta`**
+   `purgeExpiredIn` 删条目但没删配对 meta → 残留永久占位；
+   更坑的是下次同名条目复用旧 meta → **恢复到错误路径**。
+   改法：删除前先 `deleteTrashMeta(f)`（顺序不能反，条目一消失就找不到 meta 名），
+   并显式 `continue` 跳过 meta 文件本身。
+
+4. **重复实现与死代码**
+   - `isImageName`（8401）是漏网旧实现，手写 `endsWith×6` 只认 jpg/jpeg/png/webp/bmp/gif；
+     而 `Exts.IMAGE` 有 19 种。后果：背景图浏览器里 **HEIC/HEIF/SVG/TIFF/RAW 照片全部不显示**
+     （相机默认 HEIC 的用户看不到自己的图）。改为 `Exts.isImage(Exts.extOf(name))`。
+   - `fixGbkName`（15481）零调用，与 `ArchiveExtractor.fixGbkName` 重复 → 删本文件这份。
+   - `REQ_PICK_BG`（8054）注释自称「retired」但 `8116` 仍在用（Android 13+ 走
+     `ACTION_PICK_IMAGES` 的主路径）→ 注释写错了，改正而非删代码。
+
+**验证**：`assembleRelease` 通过（1m22s），装机启动正常，崩溃 0 / FATAL 0；
+另用 Python 复刻 `splitZipPath` 逻辑跑了 9 个边界用例（含 `.tbz` 带/不带尾斜杠、
+`.tar.gz` 复合扩展名、非压缩包路径），8/9 符合预期（第 9 个是非压缩包路径返回空串，
+但该方法只在 `zip://` 下调用，实际走不到）。
+
 ### 下一步待办
 
 - 文本编辑器重构（预览/编辑双模式、语法高亮、快捷输入栏、编码切换、
