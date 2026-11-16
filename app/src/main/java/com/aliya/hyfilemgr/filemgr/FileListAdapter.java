@@ -20,8 +20,8 @@ import com.aliya.hyfilemgr.R;
 import com.aliya.hyfilemgr.access.AccessUtil;
 import com.aliya.hyfilemgr.access.FileEntry;
 import com.aliya.hyfilemgr.ui.UiKit;
+import com.aliya.hyfilemgr.util.Exts;
 
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -49,21 +49,8 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
     }
 
     // ── 格式支持：扩展名 → 图标分类（与 FileManagerModule 分类白名单同源扩充） ──
-    private static final Set<String> IMG_EXTS = new HashSet<>(Arrays.asList(
-            "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "svg",
-            "ico", "tif", "tiff", "raw", "cr2", "nef", "arw", "dng", "psd", "ai"));
-    private static final Set<String> VIDEO_EXTS = new HashSet<>(Arrays.asList(
-            "mp4", "mkv", "avi", "mov", "wmv", "flv", "3gp", "webm", "ts", "m4v",
-            "mpg", "mpeg", "rm", "rmvb", "vob", "f4v", "m2ts", "mts", "ogv", "mxf"));
-    private static final Set<String> AUDIO_EXTS = new HashSet<>(Arrays.asList(
-            "mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma", "amr",
-            "aiff", "ape", "wv", "mid", "midi", "ac3", "dts", "mka", "ra", "au", "caf"));
-    private static final Set<String> DOC_EXTS = new HashSet<>(Arrays.asList(
-            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md", "epub",
-            "csv", "rtf", "odt", "ods", "odp", "pages", "numbers", "key",
-            "html", "htm", "xml", "json", "log", "chm", "mobi", "azw3", "tex"));
-    private static final Set<String> ARCHIVE_EXTS = new HashSet<>(Arrays.asList(
-            "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "iso", "jar"));
+    // 扩展名集合已统一到 util/Exts（原先这里 5 套、FileManagerModule 4 套、
+    // MediaPlayerActivity 1 套，内容逐字重复，新增格式必漏一处）。
 
     /** 行交互回调 */
     public interface Listener {
@@ -411,33 +398,30 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         if (e.type == FileEntry.Type.LINK) return R.drawable.ic_folder;
         if (e.isDir()) return R.drawable.ic_folder;
         String ext = extOf(e.name);
-        if (IMG_EXTS.contains(ext)) return R.drawable.ic_img;
-        if (VIDEO_EXTS.contains(ext)) return R.drawable.ic_video;
-        if (AUDIO_EXTS.contains(ext)) return R.drawable.ic_audio;
-        if (DOC_EXTS.contains(ext)) return R.drawable.ic_doc;
+        if (Exts.isImage(ext)) return R.drawable.ic_img;
+        if (Exts.isVideo(ext)) return R.drawable.ic_video;
+        if (Exts.isAudio(ext)) return R.drawable.ic_audio;
+        if (Exts.isDoc(ext)) return R.drawable.ic_doc;
         if (ext.equals("apk")) return R.drawable.ic_apk;
-        if (ARCHIVE_EXTS.contains(ext)) return R.drawable.ic_archive;
+        if (Exts.isArchive(ext)) return R.drawable.ic_archive;
         return R.drawable.ic_file;
     }
 
-    /** 取小写扩展名（无点）；无扩展名返回空串 */
+    /** 取小写扩展名（无点）；无扩展名返回空串。实现统一在 util/Exts。 */
     private static String extOf(String name) {
-        if (name == null) return "";
-        int dot = name.lastIndexOf('.');
-        if (dot < 0 || dot == name.length() - 1) return "";
-        return name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
+        return Exts.extOf(name);
     }
 
     /** 多彩扁平化文件图标配色（对齐 Material 流行趋势）：
      *  图片=绿 / 视频=紫 / 音频=橙 / 文档=蓝 / APK=青 / 压缩包=琥珀；未知=主题次要色 */
     private int fileColor(FileEntry e) {
         String ext = extOf(e.name);
-        if (IMG_EXTS.contains(ext)) return 0xFF66BB6A;
-        if (VIDEO_EXTS.contains(ext)) return 0xFFAB47BC;
-        if (AUDIO_EXTS.contains(ext)) return 0xFFFFA726;
-        if (DOC_EXTS.contains(ext)) return 0xFF42A5F5;
+        if (Exts.isImage(ext)) return 0xFF66BB6A;
+        if (Exts.isVideo(ext)) return 0xFFAB47BC;
+        if (Exts.isAudio(ext)) return 0xFFFFA726;
+        if (Exts.isDoc(ext)) return 0xFF42A5F5;
         if (ext.equals("apk")) return 0xFF26A69A;
-        if (ARCHIVE_EXTS.contains(ext)) return 0xFFFFCA28;
+        if (Exts.isArchive(ext)) return 0xFFFFCA28;
         return UiKit.color(context, com.google.android.material.R.attr.colorSecondary);
     }
 

@@ -33,12 +33,9 @@ import com.aliya.hyfilemgr.player.PlayerCore;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * 内置播放器（Media3 / ExoPlayer 统一内核）。
@@ -159,9 +156,7 @@ public class MediaPlayerActivity extends Activity {
         return i;
     }
 
-    private static final Set<String> VIDEO_EXTS = new HashSet<>(Arrays.asList(
-            "mp4", "mkv", "avi", "mov", "wmv", "flv", "3gp", "webm", "ts", "m4v",
-            "mpg", "mpeg", "rm", "rmvb", "vob", "f4v", "m2ts", "mts", "ogv", "mxf"));
+    // 扩展名集合已统一到 util/Exts。
 
     private PlayerView playerView;
     private ExoPlayer player;
@@ -557,7 +552,7 @@ public class MediaPlayerActivity extends Activity {
         String ext = name.substring(dot + 1).toLowerCase();
         // 流媒体后缀也按视频处理
         if ("m3u8".equals(ext) || "mpd".equals(ext)) return true;
-        return VIDEO_EXTS.contains(ext);
+        return com.aliya.hyfilemgr.util.Exts.isVideo(ext);
     }
 
     private void togglePlay() {

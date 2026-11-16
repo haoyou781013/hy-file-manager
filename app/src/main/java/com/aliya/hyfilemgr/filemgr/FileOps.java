@@ -12,8 +12,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
 
 /**
  * 文件管理模块：文件操作工具 + 后台执行器。
@@ -33,31 +31,29 @@ public final class FileOps {
 
     private FileOps() {}
 
-    // ── 格式化 ──
+    // ── 格式化（委托给 AccessUtil，避免两份实现漂移）──
 
-    /** 人类可读文件大小（B/KB/MB/GB） */
+    /**
+     * 人类可读文件大小（B/KB/MB/GB）。
+     *
+     * <p>实现已统一到 {@link com.aliya.hyfilemgr.access.AccessUtil#formatSize}。
+     * 旧情况：FileOps 与 AccessUtil 各有一份**逐字相同**的拷贝，
+     * 改精度/单位时漏改一处就会出现「同一个界面两种口径」。
+     * 保留本方法作为转发入口，调用方无需改动。</p>
+     */
     public static String formatSize(long bytes) {
-        if (bytes < 0) return "-";
-        if (bytes < 1024) return bytes + " B";
-        double kb = bytes / 1024.0;
-        if (kb < 1024) return String.format(Locale.US, "%.1f KB", kb);
-        double mb = kb / 1024.0;
-        if (mb < 1024) return String.format(Locale.US, "%.1f MB", mb);
-        double gb = mb / 1024.0;
-        return String.format(Locale.US, "%.2f GB", gb);
+        return com.aliya.hyfilemgr.access.AccessUtil.formatSize(bytes);
     }
 
-    /** 格式化修改时间：今年显示 MM-dd HH:mm，跨年显示 yyyy-MM-dd */
+    /**
+     * 格式化修改时间（今年 MM-dd HH:mm，跨年 yyyy-MM-dd）。
+     *
+     * <p>实现已统一到 {@link com.aliya.hyfilemgr.access.AccessUtil#formatDate}。
+     * 那份做了 ThreadLocal SimpleDateFormat 缓存与年份缓存，本处旧拷贝
+     * 每次调用都新建 Calendar×2 + SimpleDateFormat，在列表绑定热路径上很贵。</p>
+     */
     public static String formatDate(long millis) {
-        if (millis <= 0) return "-";
-        java.util.Calendar cal = java.util.Calendar.getInstance();
-        cal.setTimeInMillis(millis);
-        java.util.Calendar now = java.util.Calendar.getInstance();
-        SimpleDateFormat sdf = new SimpleDateFormat(
-                cal.get(java.util.Calendar.YEAR) == now.get(java.util.Calendar.YEAR)
-                        ? "MM-dd HH:mm" : "yyyy-MM-dd",
-                Locale.getDefault());
-        return sdf.format(new Date(millis));
+        return com.aliya.hyfilemgr.access.AccessUtil.formatDate(millis);
     }
 
     /** 目录总大小（递归求和，文件/目录通用；失败返回 -1） */

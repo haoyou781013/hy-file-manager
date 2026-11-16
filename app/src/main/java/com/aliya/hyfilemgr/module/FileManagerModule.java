@@ -1,5 +1,7 @@
 package com.aliya.hyfilemgr.module;
 
+import com.aliya.hyfilemgr.util.Exts;
+
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
@@ -99,8 +101,6 @@ public class FileManagerModule extends HyVqModule {
      *  恢复 = 移回 TRASH_DIR 相对路径对应的原绝对路径；隐藏目录天然被分类扫描跳过 */
     private static final String TRASH_DIR =
             Environment.getExternalStorageDirectory().getAbsolutePath() + "/.HyVqTrash";
-    /** 分类视图虚拟路径前缀（分类功能已移除，仅作历史路径识别兜底，不再产生新路径） */
-    private static final String PREFIX_CAT = "cat://";
     /** 回收站虚拟路径：Pane.path = "trash://"（reload 特殊路由） */
     private static final String PREFIX_TRASH = "trash://";
     /** ZIP 内部浏览虚拟路径：zip://<zip绝对路径>/<包内相对路径>。
@@ -130,9 +130,6 @@ public class FileManagerModule extends HyVqModule {
 
     private static final java.util.concurrent.atomic.AtomicInteger queuedTasks =
             new java.util.concurrent.atomic.AtomicInteger();
-    /** 分类扫描结果缓存（key=分类id，避免重复全盘扫描） */
-    private static String catCacheKey = null;
-    private static List<FileEntry> catCache = null;
 
     // ── 剪贴板（模块级静态：切页/重建视图不丢；存路径字符串，虚拟条目不入板） ──
     private static final List<String> clipboard = new ArrayList<>();
@@ -615,6 +612,45 @@ public class FileManagerModule extends HyVqModule {
     private static final int DIR_CACHE_MAX = 24;
     /** 前进/后退历史栈上限：用户来回跳转时防无界增长 */
     private static final int HISTORY_MAX = 50;
+
+    /**
+     * 解压时要从压缩包名末尾剥掉的后缀表（长后缀在前，先匹配复合扩展名）。
+     *
+     * <p><b>曾经是两份漂移的拷贝</b>：`tryUnzip`（自动解压）与
+     * `extractZip`（手动解压）各写一个 `new String[]{...}`，而且内容不同：
+     * · extractZip 版有 `.tbz` 和 `.xapk`
+     * · tryUnzip 版两者都没有
+     * 结果：同一个 `foo.xapk` 手动解压得到目录 `foo`，自动解压得到 `foo.xapk`
+     * —— 用户能看到行为不一致。
+     *
+     * <p>顺序要求：`.tar.gz` 必须排在 `.gz` 前面，否则 `a.tar.gz` 会被剥成
+     * `a.tar`；`.tbz2` 在 `.tbz` 前面同理。新增格式时只改这一处。</p>
+     */
+    private static final String[] ARCHIVE_NAME_SUFFIXES = {
+            ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst",
+            ".tgz", ".tbz2", ".tbz", ".txz", ".tzst",
+            ".zip", ".jar", ".apk", ".xapk",
+            ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst"
+    };
+
+    /**
+     * 去掉压缩包的扩展名，得到用作输出目录名的基名。
+     *
+     * @param name 原始文件名（如 {@code backup.tar.gz}）
+     * @return 基名（如 {@code backup}）；全部剥完为空时返回 {@code "extracted"}
+     */
+    private static String archiveBaseName(String name) {
+        if (name == null || name.isEmpty()) return "extracted";
+        String base = name;
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        for (String suffix : ARCHIVE_NAME_SUFFIXES) {
+            if (lower.endsWith(suffix)) {
+                base = name.substring(0, name.length() - suffix.length());
+                break;
+            }
+        }
+        return base.isEmpty() ? "extracted" : base;
+    }
 
     /** 双窗格共用的 ViewHolder 回收池（两栏 item 布局一致，可安全共享） */
     private androidx.recyclerview.widget.RecyclerView.RecycledViewPool sharedViewPool;
@@ -3949,7 +3985,7 @@ public class FileManagerModule extends HyVqModule {
      * 长按菜单的网格项（图标上、文字下）。
      *
      * <p>自适应列数：容器为横向 LinearLayout，每格 weight=1，满 4 格自动换行。
-     * 调用方用 {@link #itemMenuGridRow} 创建行容器。</p>
+     * </p>
      *
      * @param grid  当前行容器
      * @param text  显示文字
@@ -4051,30 +4087,7 @@ public class FileManagerModule extends HyVqModule {
         grid.addView(wrap, wrapLp);
     }
 
-    /**
-     * 创建长按菜单的一行（横向，最多 4 格）。
-     *
-     * @param box   菜单根容器（Vertical LinearLayout）
-     * @param items 本行项数，不足 4 时右侧补空占位保持等宽
-     */
-    private LinearLayout itemMenuGridRow(LinearLayout box, int items) {
-        LinearLayout row = new LinearLayout(ctx);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        rowLp.topMargin = dp(2);
-        box.addView(row, rowLp);
-        // 按屏幕方向补空占位：横屏 4 列 / 竖屏 3 列（与「打开方式」同一规则）
-        int cols = openGridColumns();
-        for (int i = items; i < cols; i++) {
-            View sp = new View(ctx);
-            row.addView(sp, new LinearLayout.LayoutParams(0, 1, 1f));
-        }
-        return row;
-    }
-
-    private void addMenuRow(LinearLayout panel, String text, int iconRes, boolean enabled, View.OnClickListener onClick) {
+        private void addMenuRow(LinearLayout panel, String text, int iconRes, boolean enabled, View.OnClickListener onClick) {
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -4170,104 +4183,7 @@ public class FileManagerModule extends HyVqModule {
     // ── 内部小侧边栏：层级导航 + SAF 挂载目录（对齐 MT 管理器三条杠导航） ──
 
 
-    /** 侧边栏书签区（仿 ZhuFiler NavigationView 书签组）：分组标题 + 书签行。
-     *  点击进入目录（record navPrev 供返回）、长按删除；空态提示用 ⋮ 菜单收藏。 */
-    private void buildBookmarkSection(LinearLayout content) {
-        final java.util.Set<String> set = new java.util.LinkedHashSet<>(
-                fmPrefs().getStringSet("bookmarks", new java.util.HashSet<String>()));
-        // 分组标题（与挂载区风格一致）
-        TextView head = new TextView(ctx);
-        head.setText("书签（" + set.size() + "）");
-        head.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        head.setTypeface(null, android.graphics.Typeface.BOLD);
-        head.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
-        LinearLayout.LayoutParams headLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        headLp.topMargin = dp(8);
-        headLp.bottomMargin = dp(2);
-        headLp.leftMargin = dp(4);
-        content.addView(head, headLp);
-
-        if (set.isEmpty()) {
-            TextView empty = new TextView(ctx);
-            empty.setText("暂无书签（⋮菜单可收藏当前目录）");
-            empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-            empty.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
-            empty.setAlpha(0.6f);
-            LinearLayout.LayoutParams emptyLp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            emptyLp.leftMargin = dp(4);
-            emptyLp.bottomMargin = dp(4);
-            content.addView(empty, emptyLp);
-            return;
-        }
-
-        for (final String path : set) {
-            final File f = AccessRouter.fileOf(path);
-            LinearLayout row = new LinearLayout(ctx);
-            row.setOrientation(LinearLayout.HORIZONTAL);
-            row.setGravity(Gravity.CENTER_VERTICAL);
-            row.setPadding(dp(8), dp(6), dp(6), dp(6));
-            row.setClickable(true);
-            // 书签卡片：圆角 10dp + 主题色 + 轻描边(参考 Her 卡片风格)
-            {
-                int rowBg = path.equals(active.path)
-                        ? UiKit.color(ctx, com.google.android.material.R.attr.colorPrimaryContainer)
-                        : UiKit.color(ctx, com.google.android.material.R.attr.colorSurfaceContainerHigh);
-                android.graphics.drawable.GradientDrawable g = UiKit.rounded(ctx, 0, rowBg, 0);
-                g.setCornerRadii(new float[]{dp(14), dp(14), dp(14), dp(14), dp(14), dp(14), dp(14), dp(14)});
-                g.setStroke(dp(1), UiKit.color(ctx, com.google.android.material.R.attr.colorOutlineVariant));
-                row.setBackground(g);
-            }
-            row.setOnClickListener(v -> {
-                closeNavSidebar();
-                active.navPrev = active.path;
-                active.path = path;
-                reload(active);
-            });
-            // 长按删除书签（弹确认，防误删）
-            row.setOnLongClickListener(v -> {
-                new android.app.AlertDialog.Builder(ctx)
-                        .setTitle("删除书签")
-                        .setMessage("删除书签：" + path + "？")
-                        .setPositiveButton("删除", (d, w) -> {
-                            set.remove(path);
-                            fmPrefs().edit().putStringSet("bookmarks", set).commit();
-                            UiKit.toast(ctx, "已删除书签");
-                            rebuildNavContent();
-                        })
-                        .setNegativeButton("取消", null)
-                        .show();
-                return true;
-            });
-            ImageView icon = new ImageView(ctx);
-            icon.setImageResource(f.isDirectory() ? R.drawable.ic_folder : R.drawable.ic_file);
-            icon.setColorFilter(UiKit.color(ctx,
-                    com.google.android.material.R.attr.colorOnSurfaceVariant));
-            int s = dp(16);
-            row.addView(icon, new LinearLayout.LayoutParams(s, s));
-            TextView tv = new TextView(ctx);
-            String name = f.getName();
-            tv.setText(name == null || name.isEmpty() ? path : name);
-            tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-            tv.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
-            tv.setSingleLine(true);
-            tv.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            LinearLayout.LayoutParams tvLp = new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-            tvLp.leftMargin = dp(6);
-            row.addView(tv, tvLp);
-            content.addView(row, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            // 书签卡片间距
-            View spacer = new View(ctx);
-            LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, dp(2));
-            content.addView(spacer, sp);
-        }
-    }
-
-    /** 左上角三条杠（汉堡）点击：弹出内部小侧边栏（覆盖模块区域，不遮全局导航栏） */
+        /** 左上角三条杠（汉堡）点击：弹出内部小侧边栏（覆盖模块区域，不遮全局导航栏） */
     private void showNavSidebar() {
         if (navOverlay == null || navPanel == null || rootContainer == null) return;
         rebuildNavContent();
@@ -12907,33 +12823,9 @@ public class FileManagerModule extends HyVqModule {
     }
 
 
-    /** 纯视频扩展名：用于播放器左右切换时筛选同目录文件 */
-    private static final java.util.Set<String> VIDEO_ONLY_EXTS =
-            new java.util.HashSet<>(java.util.Arrays.asList(
-                    "mp4", "mkv", "avi", "mov", "wmv", "flv", "3gp", "webm", "ts", "m4v",
-                    "mpg", "mpeg", "rm", "rmvb", "vob", "f4v", "m2ts", "mts", "ogv", "mxf"));
-
-    /** 纯音频扩展名：用弹窗播放器（原生 MediaPlayer），与视频分开处理 */
-    private static final java.util.Set<String> AUDIO_ONLY_EXTS =
-            new java.util.HashSet<>(java.util.Arrays.asList(
-                    "mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma", "amr",
-                    "aiff", "ape", "wv", "mid", "midi", "ac3", "dts", "mka", "ra", "au", "caf"));
-
-    /** 图片扩展名：命中时内置「图片查看器」可用 */
-    private static final java.util.Set<String> IMAGE_EXTS =
-            new java.util.HashSet<>(java.util.Arrays.asList(
-                    "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "svg",
-                    "ico", "tif", "tiff", "raw", "cr2", "nef", "arw", "dng", "psd", "ai"));
-
-    /** 音视频扩展名：命中则直接调用**内置播放器**，不再走系统外部应用 */
-    private static final java.util.Set<String> MEDIA_EXTS =
-            new java.util.HashSet<>(java.util.Arrays.asList(
-                    // 视频
-                    "mp4", "mkv", "avi", "mov", "wmv", "flv", "3gp", "webm", "ts", "m4v",
-                    "mpg", "mpeg", "rm", "rmvb", "vob", "f4v", "m2ts", "mts", "ogv", "mxf",
-                    // 音频
-                    "mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma", "amr",
-                    "aiff", "ape", "wv", "mid", "midi", "ac3", "dts", "mka", "ra", "au", "caf"));
+    // 扩展名集合已统一到 util/Exts。原先这里 VIDEO_ONLY_EXTS / AUDIO_ONLY_EXTS /
+    // IMAGE_EXTS / MEDIA_EXTS 四套，与 FileListAdapter 的 5 套、MediaPlayerActivity
+    // 的 1 套内容逐字重复，新增格式时必漏一处。
 
     /** 收集当前活动目录下同类型的可播放文件（供播放器左右切换）。
      *  找不到时返回仅含自身的单元素列表，保证播放器始终有可用列表。 */
@@ -12944,7 +12836,7 @@ public class FileManagerModule extends HyVqModule {
             for (FileEntry e : p.entries) {
                 if (e == null || e.isDir() || e.name == null) continue;
                 String ex = extOf(e.name);
-                boolean ok = audioOnly ? AUDIO_ONLY_EXTS.contains(ex) : VIDEO_ONLY_EXTS.contains(ex);
+                boolean ok = audioOnly ? Exts.isAudio(ex) : Exts.isVideo(ex);
                 if (ok && e.path != null && !e.path.isEmpty()) out.add(e.path);
             }
         }
@@ -12990,9 +12882,15 @@ public class FileManagerModule extends HyVqModule {
         }
     }
 
+    /**
+     * 取小写扩展名（无点）；无扩展名返回空串。实现统一在 util/Exts。
+     *
+     * <p>旧的本地版本没判 {@code name == null}，而调用方有传
+     * {@code e.name}（虚拟条目可能为 null）的地方 → 潜在 NPE。
+     * 委托后顺带修掉。</p>
+     */
     private static String extOf(String name) {
-        int dot = name.lastIndexOf('.');
-        return dot >= 0 ? name.substring(dot + 1).toLowerCase() : "";
+        return Exts.extOf(name);
     }
 
     private void openFile(File f) {
@@ -13004,11 +12902,11 @@ public class FileManagerModule extends HyVqModule {
             return;
         }
         // 格式明确且内置功能存在 → 直接调用内置功能，不弹窗打扰
-        if (IMAGE_EXTS.contains(ext)) {
+        if (Exts.isImage(ext)) {
             openImageViewer(path, name, false);
             return;
         }
-        if (AUDIO_ONLY_EXTS.contains(ext)) {
+        if (Exts.isAudio(ext)) {
             // 音频：弹窗式播放（原生 MediaPlayer，无需 Surface）+ 同目录左右切换
             java.util.ArrayList<String> list = collectPlayable(path, true);
             int idx = list.indexOf(path);
@@ -13019,7 +12917,7 @@ public class FileManagerModule extends HyVqModule {
             showAudioPlayerDialog(list, idx, false);
             return;
         }
-        if (MEDIA_EXTS.contains(ext)) {
+        if (Exts.isMedia(ext)) {
             openWithBuiltInPlayer(path, name, false);   // 视频：全屏播放（Media3 内核）
             return;
         }
@@ -13037,8 +12935,8 @@ public class FileManagerModule extends HyVqModule {
      *  系统页列出系统已注册的应用（点击直接由该应用打开），**不拉起系统选择器**。 */
     private void showOpenWithDialog(final String pathOrUri, final String name, final boolean isUri) {
         final String ext = extOf(name);
-        final boolean isImg = IMAGE_EXTS.contains(ext);
-        final boolean isMedia = MEDIA_EXTS.contains(ext);
+        final boolean isImg = Exts.isImage(ext);
+        final boolean isMedia = Exts.isMedia(ext);
         final boolean isText = isTextFile(name);
         final boolean isZipFile = "zip".equals(ext) || "jar".equals(ext);
         final boolean isApk = "apk".equals(ext);
@@ -13316,17 +13214,7 @@ public class FileManagerModule extends HyVqModule {
         // 目标目录：与压缩包同级的同名文件夹（去掉压缩扩展名）
         File parentDir = f.getParentFile();
         if (parentDir == null || !parentDir.canWrite()) return "目录不可写，无法解压";
-        String base = name;
-        String lower = name.toLowerCase();
-        for (String suffix : new String[]{".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst",
-                ".tgz", ".tbz2", ".txz", ".tzst", ".zip", ".jar", ".apk", ".7z",
-                ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst"}) {
-            if (lower.endsWith(suffix)) {
-                base = name.substring(0, name.length() - suffix.length());
-                break;
-            }
-        }
-        if (base.isEmpty()) base = "extracted";
+        final String base = archiveBaseName(name);
         final File destDir = new File(parentDir,
                 uniqueName(parentDir.getAbsolutePath(), base, null));
         if (!destDir.mkdirs() && !destDir.isDirectory()) return "无法创建解压目录";
@@ -14261,7 +14149,7 @@ public class FileManagerModule extends HyVqModule {
         if (p != null && p.entries != null) {
             for (FileEntry e : p.entries) {
                 if (e == null || e.isDir() || e.name == null) continue;
-                if (IMAGE_EXTS.contains(extOf(e.name))
+                if (Exts.isImage(extOf(e.name))
                         && e.path != null && !e.path.isEmpty()) out.add(e.path);
             }
         }
@@ -14566,11 +14454,11 @@ public class FileManagerModule extends HyVqModule {
             }
             // 格式明确且内置功能支持 → 直接调用（SAF 文本编辑暂不支持，故文本走弹窗）
             String safExt = extOf(e.name);
-            if (IMAGE_EXTS.contains(safExt)) {
+            if (Exts.isImage(safExt)) {
                 openImageViewer(e.path, e.name, true);
                 return;
             }
-            if (AUDIO_ONLY_EXTS.contains(safExt)) {
+            if (Exts.isAudio(safExt)) {
                 java.util.ArrayList<String> safl = collectPlayable(e.path, true);
                 int safIdx = safl.indexOf(e.path);
                 if (safIdx < 0) {
@@ -14580,7 +14468,7 @@ public class FileManagerModule extends HyVqModule {
                 showAudioPlayerDialog(safl, safIdx, true);   // 音频：弹窗 + 左右切换
                 return;
             }
-            if (MEDIA_EXTS.contains(safExt)) {
+            if (Exts.isMedia(safExt)) {
                 openWithBuiltInPlayer(e.path, e.name, true);   // 视频：全屏页
                 return;
             }
@@ -15561,17 +15449,7 @@ public class FileManagerModule extends HyVqModule {
             return;
         }
         // 去掉压缩扩展名作为输出目录名（含复合扩展名）
-        String base = e.name;
-        String lower = base.toLowerCase(Locale.getDefault());
-        for (String suffix : new String[]{".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst",
-                ".tgz", ".tbz2", ".tbz", ".txz", ".tzst", ".zip", ".jar", ".apk", ".xapk",
-                ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst"}) {
-            if (lower.endsWith(suffix)) {
-                base = base.substring(0, base.length() - suffix.length());
-                break;
-            }
-        }
-        if (base.isEmpty()) base = "extracted";
+        final String base = archiveBaseName(e.name);
         final File outDir = new File(parent, uniqueName(parent.getAbsolutePath(), base, null));
 
         UiKit.toast(ctx, "解压中…");
@@ -16093,25 +15971,7 @@ public class FileManagerModule extends HyVqModule {
         }, "HyVqZipToOther").start();
     }
 
-    /** 在临时解压目录里按相对路径后缀查找条目 */
-    private static File findBySuffix(File root, String inner) {
-        java.util.ArrayDeque<File> q = new java.util.ArrayDeque<>();
-        q.add(root);
-        String norm = inner.replace('\\', '/');
-        while (!q.isEmpty()) {
-            File cur = q.poll();
-            File[] items = cur.listFiles();
-            if (items == null) continue;
-            for (File f : items) {
-                String p = f.getAbsolutePath().replace('\\', '/');
-                if (p.endsWith("/" + norm)) return f;
-                if (f.isDirectory()) q.add(f);
-            }
-        }
-        return null;
-    }
-
-    /** 进入嵌套压缩包：先把内层 zip 解到缓存，再以它为根进入内部浏览 */
+        /** 进入嵌套压缩包：先把内层 zip 解到缓存，再以它为根进入内部浏览 */
     private void enterNestedZip(final FileEntry e) {
         String[] parts = splitZipPath(e.path);
         final String outerZip = parts[0];
@@ -16273,13 +16133,13 @@ public class FileManagerModule extends HyVqModule {
                     UiKit.toast(ctx, "该条目不是文件");
                 } else if (isTextFile(fOut.getName())) {
                     openTextEditor(fOut);
-                } else if (IMAGE_EXTS.contains(extOf(fOut.getName()))) {
+                } else if (Exts.isImage(extOf(fOut.getName()))) {
                     // 图片：不走 openFile（那只会开单图），
                     // 而是传「同包内所有图片」的 zip:// 列表给查看器，
                     // 才能像普通目录一样左右滑看下一张。
                     openZipImageGallery(zipPath, inner, e.name);
-                } else if (VIDEO_ONLY_EXTS.contains(extOf(fOut.getName()))
-                        || AUDIO_ONLY_EXTS.contains(extOf(fOut.getName()))) {
+                } else if (Exts.isVideo(extOf(fOut.getName()))
+                        || Exts.isAudio(extOf(fOut.getName()))) {
                     // 音视频：同样传 zip:// 虚拟路径图集，而不是刚解出的临时文件。
                     // 否则播放器会显示「1/2」——列表里是窗格虚拟路径 + 当前临时文件两项
                     // （实际同包同级只有一个媒体文件）。
@@ -16315,7 +16175,7 @@ public class FileManagerModule extends HyVqModule {
                         ? currentInner.substring(0, currentInner.lastIndexOf('/') + 1) : "";
                 if (!nm.startsWith(dir)) continue;
                 if (nm.substring(dir.length()).contains("/")) continue;   // 排除更深层
-                if (!IMAGE_EXTS.contains(extOf(nm))) continue;
+                if (!Exts.isImage(extOf(nm))) continue;
                 list.add(PREFIX_ZIP + zipPath + "/" + nm);
             }
         } catch (Throwable ignored) { }
@@ -16355,8 +16215,7 @@ public class FileManagerModule extends HyVqModule {
      * <p>做法与图片一致：全部传 zip:// 虚拟路径，播放器按需解出。</p>
      */
     private void openZipMediaGallery(String zipPath, String currentInner, String name) {
-        boolean isAudio = AUDIO_ONLY_EXTS.contains(extOf(currentInner));
-        java.util.Set<String> wanted = isAudio ? AUDIO_ONLY_EXTS : VIDEO_ONLY_EXTS;
+        boolean isAudio = Exts.isAudio(extOf(currentInner));
 
         java.util.ArrayList<String> list = new java.util.ArrayList<>();
         String dir = currentInner.contains("/")
@@ -16369,7 +16228,8 @@ public class FileManagerModule extends HyVqModule {
                 String nm = ze.getName();
                 if (!nm.startsWith(dir)) continue;
                 if (nm.substring(dir.length()).contains("/")) continue;   // 排除更深层
-                if (!wanted.contains(extOf(nm))) continue;
+                String nmExt = extOf(nm);
+                if (isAudio ? !Exts.isAudio(nmExt) : !Exts.isVideo(nmExt)) continue;
                 list.add(PREFIX_ZIP + zipPath + "/" + nm);
             }
         } catch (Throwable ignored) { }

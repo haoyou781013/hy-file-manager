@@ -717,15 +717,70 @@ public final class ArchiveExtractor {
         return false;
     }
 
-    /** 静默删除整棵树（GBK 重解前清场用） */
+    /**
+     * 静默删除整棵树（GBK 重解前清场用）。
+     *
+     * <p><b>为什么改成非递归</b>：旧实现是递归，深目录（如 node_modules、
+     * 分层备份）有栈溢出风险；且它不判符号链接——目录里若有指向父目录的
+     * symlink，会无限递归。项目里 {@code FileManagerModule.deleteTree}
+     * 用的是显式栈 + 不跟随 symlink，但那是个实例方法且依赖模块的
+     * {@code isSymlink}，本类无法直接调用（静态工具类，不应依赖模块）。
+     * 因此在这里实现同构的显式栈版本，两边行为一致。</p>
+     */
     private static void deleteTreeQuietly(File f) {
         if (f == null || !f.exists()) return;
-        if (f.isDirectory()) {
-            File[] items = f.listFiles();
-            if (items != null) for (File c : items) deleteTreeQuietly(c);
+        // 非目录（含符号链接）直接删；delete() 对 symlink 只移除链接，不动目标
+        if (!f.isDirectory() || isSymlinkStatic(f)) {
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+            return;
         }
-        //noinspection ResultOfMethodCallIgnored
-        f.delete();
+        java.util.ArrayDeque<File> stack = new java.util.ArrayDeque<>();
+        java.util.ArrayList<File> dirs = new java.util.ArrayList<>();
+        stack.push(f);
+        while (!stack.isEmpty()) {
+            File cur = stack.pop();
+            if (isSymlinkStatic(cur)) {
+                //noinspection ResultOfMethodCallIgnored
+                cur.delete();
+                continue;
+            }
+            if (cur.isDirectory()) {
+                dirs.add(cur);           // 目录最后删（子项先删）
+                File[] ch = cur.listFiles();
+                if (ch != null) {
+                    for (File c : ch) stack.push(c);
+                }
+            } else {
+                //noinspection ResultOfMethodCallIgnored
+                cur.delete();
+            }
+        }
+        // 逆序删目录：先深后浅
+        for (int i = dirs.size() - 1; i >= 0; i--) {
+            //noinspection ResultOfMethodCallIgnored
+            dirs.get(i).delete();
+        }
+    }
+
+    /**
+     * 是否是符号链接本身（不跟随），零 {@code java.nio.file} 依赖。
+     *
+     * <p>低版本用 {@code canonicalPath != absolutePath} 兜底：不完全等价
+     * （路径中任意一段是链接都会判为 true），但方向安全（少删不多删）。
+     */
+    private static boolean isSymlinkStatic(File f) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                return java.nio.file.Files.isSymbolicLink(
+                        java.nio.file.Paths.get(f.getAbsolutePath()));
+            }
+            File p = f.getParentFile();
+            File canon = p == null ? f : new File(p.getCanonicalFile(), f.getName());
+            return !canon.getCanonicalPath().equals(canon.getAbsolutePath());
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     private static String fixGbkName(String name) {

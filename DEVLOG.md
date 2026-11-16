@@ -269,6 +269,95 @@
 
 **验证**：`assembleRelease` 通过（1m16s），装机启动正常，崩溃 0 / FATAL 0 / 进程存活。
 
+### 去重与死代码清理（2026-11-16）
+
+按三视角审查的「架构」部分执行。原则：**只做移动/委托，不改逻辑行为**
+（唯二例外是 `.xapk`/`.tbz` 后缀补齐与 `extOf` 的 NPE 修复，都是修 bug）。
+
+#### 1. 扩展名知识库统一到 `util/Exts`
+
+改之前同一批扩展名在 **3 个文件里各写一份**，内容逐字相同却毫无关联：
+
+| 位置 | 集合 |
+|---|---|
+| `FileListAdapter` | IMG/VIDEO/AUDIO/DOC/ARCHIVE_EXTS（5 套） |
+| `FileManagerModule` | IMAGE/VIDEO_ONLY/AUDIO_ONLY/MEDIA_EXTS（4 套） |
+| `MediaPlayerActivity` | VIDEO_EXTS（1 套） |
+
+后果：新增一个格式（如 `avif` 图片）必须记得改三处，漏一处就出现
+「详情页说是图片，列表却不显示缩略图」这种诡异不一致。
+
+新建 `util/Exts.java`：`IMAGE`/`VIDEO`/`AUDIO`/`DOC`/`ARCHIVE`/`MEDIA`
+六个不可变集合 + `isImage/isVideo/isAudio/isMedia/isDoc/isArchive` 谓词 +
+`extOf()` 帮助方法。10 套定义合并为 1 套，16 处 `XXX_EXTS.contains(...)`
+改为 `Exts.isXxx(...)`。
+
+#### 2. `formatSize` / `formatDate` 合并到 `AccessUtil`
+
+`FileOps.formatSize` 与 `AccessUtil.formatSize` 是**逐字相同**的拷贝；
+`FileOps.formatDate` 是 `AccessUtil.formatDate` 的旧版拷贝（**没有** ThreadLocal
+缓存 —— 也就是上一轮性能优化只改了一半）。现在 `FileOps` 两个方法都改为
+转发到 `AccessUtil`，调用方零改动。
+
+#### 3. 解压后缀表统一 + 修 `.xapk` 不一致
+
+`tryUnzip`（自动解压）与 `extractZip`（手动解压）各写一个后缀剥离表，且**内容不同**：
+
+```
+extractZip 版：..., ".apk", ".xapk", ".7z", ...   ← 有 .xapk、.tbz
+tryUnzip 版：  ..., ".apk", ".7z", ...             ← 两者都没有
+```
+
+结果：同一个 `foo.xapk` 手动解压得到目录 `foo`，自动解压得到 `foo.xapk`
+—— **用户能看到的现网行为不一致**。
+
+改为 `ARCHIVE_NAME_SUFFIXES` 常量 + `archiveBaseName(String)` 方法，两处共用。
+顺序要求已写进注释：`.tar.gz` 必须排在 `.gz` 前，否则 `a.tar.gz` 会被剥成 `a.tar`。
+
+#### 4. `deleteTreeQuietly` 改为非递归
+
+`ArchiveExtractor.deleteTreeQuietly` 原为递归实现，两个问题：
+① 深目录（node_modules、分层备份）有栈溢出风险；
+② 不判符号链接 —— 目录里若有指向父目录的 symlink 会无限递归。
+
+改为与 `FileManagerModule.deleteTree` 同构的显式栈版本，并新增
+`isSymlinkStatic`（零 `java.nio.file` 依赖，API 26+ 用 Files，低版本用
+canonicalPath 兜底）。
+
+#### 5. `extOf` 三份合一份，顺带修 NPE
+
+`FileListAdapter.extOf`、`FileManagerModule.extOf`、新增的 `Exts.extOf` 三份。
+前两份改为委托。**其中 `FileManagerModule` 那份没判 `name == null`**，
+而调用方有传 `e.name`（虚拟条目可能为 null）的地方 → 潜在 NPE，委托后修掉。
+
+#### 6. 删死代码
+
+| 项 | 说明 |
+|---|---|
+| `PREFIX_CAT` | 分类功能已移除，零使用 |
+| `catCache` / `catCacheKey` | 只声明，全项目零读写 |
+| `findBySuffix()` | 零调用 |
+| `buildBookmarkSection()` | 零调用 |
+| `itemMenuGridRow()` | 零调用（含其 javadoc 中的 `{@link}` 引用） |
+
+顺带清理因去重而失效的 6 个 import（`Arrays`/`HashSet`/`Set`/`Date`/`Locale`）。
+
+#### 评估后决定不改
+
+| 项 | 理由 |
+|---|---|
+| `countTree` + `dirSize` 合并 | 一个数条目、一个数大小，调用场景完全不同；合并成「一次遍历返回两个值」会让两个简单方法变成带出参的复杂签名，收益不抵复杂度 |
+| `StatFs` 三处用法 | `FileOps.storageInfo` 返回字符串、另两处要算占用百分比，语义不同，强行合并反而要加参数分支 |
+| `mimeOf` | 全文只有一份，无重复 |
+
+**效果**：`FileManagerModule.java` 从 **17364 降到 17224 行**（-140 行）。
+注意「去重」不等于「大幅瘦身」——删掉的 10 套扩展名定义只有约 40 行（都在长行里），
+而新增的解释性注释占了不少篇幅；真正的收益是**单一事实源**，不是行数。
+新增 `util/Exts.java`（125 行），项目总文件数 42 → 43，总行数 28661。
+
+**验证**：`assembleRelease` 通过（1m22s），装机启动正常，崩溃 0 / FATAL 0，
+进程存活；双窗格渲染正常（文件夹图标、文件名、大小、修改时间全部正确）。
+
 ### 下一步待办
 
 - 文本编辑器重构（预览/编辑双模式、语法高亮、快捷输入栏、编码切换、
