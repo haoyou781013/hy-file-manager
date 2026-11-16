@@ -81,13 +81,23 @@ public final class ArchiveExtractor {
     public static Result extract(File src, File destDir, String password, Progress progress) {
         if (src == null || !src.exists()) return Result.fail("文件不存在");
         if (!src.canRead()) return Result.fail("没有读取权限");
-        if (!destDir.exists() && !destDir.mkdirs()) return Result.fail("无法创建目标目录");
+        // ⚠ 记录「目标目录是否原本就存在」。
+        //
+        // 为什么需要：GBK 乱码重解路径里有 deleteTreeQuietly(destDir)，
+        // 目的是把刚解出的乱码文件清掉再重解。但如果 destDir 是调用方
+        // 传进来的**已存在目录**（本方法签名明确允许），那个 delete 会把
+        // 用户原有的文件整棵删掉，只剩重解结果。
+        //
+        // 有这条标记后，只有「本次调用自己创建的空目录」才允许整棵清空重解；
+        // 目标原本就存在时走「不清理、直接重解另一份到临时目录」的保守路径。
+        final boolean destPreexisted = destDir.exists();
+        if (!destPreexisted && !destDir.mkdirs()) return Result.fail("无法创建目标目录");
 
         String e = ext(src.getName());
         try {
             switch (e) {
                 case "zip": case "jar": case "apk": case "xapk":
-                    return extractZip(src, destDir, password, progress);
+                    return extractZip(src, destDir, password, progress, destPreexisted);
                 case "7z":
                     return extract7z(src, destDir, password, progress);
                 case "rar":
@@ -121,7 +131,7 @@ public final class ArchiveExtractor {
     // ── ZIP ──
 
     private static Result extractZip(File src, File destDir, String password,
-                                     Progress progress) throws IOException {
+                                     Progress progress, boolean destPreexisted) throws IOException {
         // 有密码用 zip4j（commons-compress 不支持 AES 加密 zip）
         if (password != null && !password.isEmpty()) {
             return extractZipEncrypted(src, destDir, password, progress);
@@ -146,8 +156,19 @@ public final class ArchiveExtractor {
         }
 
         if (hasReplacementChars(destDir)) {
-            // 清掉刚解出的乱码结果，用 ISO-8859-1 重解再转 GBK
-            deleteTreeQuietly(destDir);
+            // 用 ISO-8859-1 重解再转 GBK。
+            //
+            // ⚠ 清空策略取决于目标目录是否原本就存在：
+            //   • 本次新建（!destPreexisted）→ 可以整棵清空，里面只有刚解出的乱码；
+            //   • 调用方传入的已存在目录 → **不能清**，否则会把用户原有文件删掉。
+            //     这种情况改为「保留旧内容，GBK 重解覆盖同名文件」，
+            //     代价是乱码名文件可能残留，但绝不动用户数据。
+            if (!destPreexisted) {
+                deleteTreeQuietly(destDir);
+            } else {
+                android.util.Log.w("HyExtract",
+                        "目标目录已存在，GBK 重解跳过清空以防删用户文件：" + destDir);
+            }
             gbk = true;
             try (org.apache.commons.compress.archivers.zip.ZipArchiveInputStream zin =
                          new org.apache.commons.compress.archivers.zip.ZipArchiveInputStream(

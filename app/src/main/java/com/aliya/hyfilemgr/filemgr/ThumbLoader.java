@@ -260,6 +260,12 @@ public final class ThumbLoader {
                 if (f2 != null && !isAllBlack(f2)) {
                     if (f != null && !f.isRecycled()) f.recycle();
                     f = f2;
+                } else if (f2 != null) {
+                    // f2 也是全黑 → 不采用，但**必须回收**。
+                    // 旧实现这里直接丢掉 f2，而 getFrameAtTime 返回的位图在
+                    // native 堆上，不 recycle 就要等 GC finalizer；批量加载一屏
+                    // 黑场视频缩略图就会累积多张 1080p 位图（每张 ~4MB）。
+                    if (!f2.isRecycled()) f2.recycle();
                 }
             }
             // 最后兑底：0 时刻（至少比没有强）

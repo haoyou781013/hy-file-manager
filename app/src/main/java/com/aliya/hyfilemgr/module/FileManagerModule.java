@@ -1058,14 +1058,59 @@ public class FileManagerModule extends HyVqModule {
         });
         if (body.isAttachedToWindow()) applyStatusBarInset();
 
-        // 启动时清理过期回收站文件（对比记录时间）
-        try {
-            purgeExpiredTrash();
-        } catch (Throwable ignored) {
-        }
+        // 启动时清理过期回收站文件（对比记录时间）。
+        //
+        // ⚠ 必须放后台：purgeExpiredTrash 会对每个过期条目调 countTree
+        // （递归遍历整棵被删目录树）再 deleteTree。回收站里有 1 个 5000 文件的
+        // 过期目录时，就是 5000 次 listFiles/stat，全在主线程且发生在首帧之前
+        // → 冷启动白屏 1~3 秒。而旧实现每次启动都跑（无「上次清理时间」记录）。
+        //
+        // 放到 TASK_QUEUE（已有单线程串行队列），并加「24 小时内不重复扫」的节流，
+        // 避免每次启动都白扫一遍。
+        scheduleTrashPurge();
 
         reloadAll();
         return rootContainer;
+    }
+
+    /** 过期回收站清扫的最小间隔：24 小时 */
+    private static final long TRASH_PURGE_INTERVAL_MS = 24L * 60 * 60 * 1000;
+    /** 上次清扫时间（SharedPreferences 键名） */
+    private static final String PREF_LAST_TRASH_PURGE = "last_trash_purge_at";
+
+    /**
+     * 把「清扫过期回收站」排到后台，并做 24 小时节流。
+     *
+     * <p>节流理由：回收站通常没有过期项，但旧实现每次启动都要把整个回收站
+     * 递归走一遍才能确认「没东西可清」。24 小时内扫过一次就跳过。</p>
+     *
+     * <p><b>⚠ 不能用 {@link #runTask}</b>：runTask 内部会
+     * {@code TaskKeepAliveService.acquire()} 拉起前台服务（通知栏显示
+     * 「正在处理文件」）。回收站清扫只是启动维护，用户根本没发起任何操作，
+     * 不应该弹通知；而且实测这会导致冷启动时前台服务与
+     * {@code reloadAll()} 抢主线程，触发
+     * {@code ForegroundServiceDidNotStartInTimeException} 崩溃。
+     * 所以用独立的轻量线程，不碰前台服务。</p>
+     */
+    private void scheduleTrashPurge() {
+        if (!trashEnabled || trashKeepDays <= 0) return;
+        new Thread(() -> {
+            try {
+                long last = fmPrefs().getLong(PREF_LAST_TRASH_PURGE, 0L);
+                long now = System.currentTimeMillis();
+                if (last > 0 && now - last < TRASH_PURGE_INTERVAL_MS) return;
+                int removed = purgeExpiredTrash();
+                try {
+                    fmPrefs().edit().putLong(PREF_LAST_TRASH_PURGE,
+                            System.currentTimeMillis()).apply();
+                } catch (Throwable ignored) { }
+                if (removed > 0) {
+                    android.util.Log.i("HYTrash", "启动清扫删除 " + removed + " 个过期项");
+                }
+            } catch (Throwable t) {
+                android.util.Log.w("HYTrash", "启动清扫失败", t);
+            }
+        }, "HyTrashPurge").start();
     }
 
     // ── 内部侧边栏叠加层：覆盖模块区域（全局导航栏正下方），不遮全局标题栏 ──
@@ -3766,6 +3811,11 @@ public class FileManagerModule extends HyVqModule {
                     if (srcSaf || dstSaf) {
                         // SAF 参与的组合（SAF→真实 / 真实→SAF / SAF→SAF）
                         String name = uniqueName(dest, baseNameOf(p), existing);
+                        // ⚠ 必须把刚分配的名字回写 existing。
+                        // 否则同一批粘贴里两个不同目录的同名文件会拿到同一个名字
+                        // （各自都看到 existing 里没有它）→ provider 侧后写覆盖前写，
+                        // 或者 provider 自己造出 "name (1) (1)"，用户少一个文件。
+                        if (existing != null && name != null) existing.add(name);
                         boolean okOp;
                         if (cut && srcSaf && dstSaf) {
                             // SAF→SAF 剪切：走 moveInto 三策略（同父 rename / 同 provider moveDocument /
@@ -10603,17 +10653,44 @@ public class FileManagerModule extends HyVqModule {
         tv.setLineSpacing(0, 1.25f);
         tv.setPadding(dp(4), dp(4), dp(4), dp(4));
 
-        // 目录子项数交给后台算，算完回填（上面写的是「计算中…」占位）
+        // 两个后台结果（项目数 / 大小）各自用一个字段暂存，回填时重拼整段文本。
+        //
+        // ⚠ 旧实现用 tv.getText().toString().replace("计算中…", x)：
+        // 两个异步任务互相踩——项目数先回来时，它的 replace 会把「大小：计算中…」
+        // 一并替掉；然后大小回来再 replace 已经找不到占位符 → 大小永久丢失，
+        // 界面显示成「项目数：1.2 MB」这种错乱。
+        // 现在两个值独立保存，每次回填都用 baseText + 当前已知值重拼。
+        final TextView tvRef = tv;
+        final String propHeadLine = "名称：" + e.name + "\n"
+                + "路径：" + e.path + "\n"
+                + "类型：" + typeStr + "\n";
+        final boolean isSafProp = SafStrategy.isSafUri(e.path);
+        final boolean canShowSize = e.isDir() && !e.virtual && !isSafProp;
+        final String[] propCount = { e.isDir() ? "计算中…" : null };
+        final String[] propSize = { canShowSize ? "计算中…"
+                : (isSafProp ? "-" : null) };
+
+        Runnable rerenderProp = () -> {
+            StringBuilder t = new StringBuilder(propHeadLine);
+            if (e.isDir()) {
+                t.append("项目数：").append(propCount[0] == null ? "—" : propCount[0]).append('\n');
+                t.append("大小：").append(propSize[0] == null ? "—" : propSize[0]);
+            } else {
+                t.append("大小：").append(FileOps.formatSize(e.length)).append('\n');
+            }
+            t.append("修改时间：").append(FileOps.formatDate(e.lastModified));
+            tvRef.setText(t.toString());
+        };
+        rerenderProp.run();
+
+        // 目录子项数交给后台算
         if (e.isDir()) {
-            final TextView tvRef = tv;
-            final String baseText = sb.toString();
             new Thread(() -> {
                 int cnt = countChildren(e);
                 handler.post(() -> {
                     if (detached) return;
-                    // 只替换占位那一行，其余内容（类型/修改时间）保持原样
-                    tvRef.setText(baseText.replace("项目数：计算中…",
-                            "项目数：" + cnt));
+                    propCount[0] = String.valueOf(cnt);
+                    rerenderProp.run();
                 });
             }, "HyPropCount").start();
         }
@@ -10643,12 +10720,14 @@ public class FileManagerModule extends HyVqModule {
         dialog.show();
 
         // 目录大小后台计算后回填（仅真实目录；虚拟目录无真实大小，SAF 目录显示 "-"）
-        if (e.isDir() && !e.virtual && !SafStrategy.isSafUri(e.path)) {
+        if (canShowSize) {
             new Thread(() -> {
                 long size = FileOps.dirSize(AccessRouter.fileOf(e));
                 final String sizeStr = size < 0 ? "计算失败" : FileOps.formatSize(size);
                 handler.post(() -> {
-                    tv.setText(tv.getText().toString().replace("计算中…", sizeStr));
+                    if (detached) return;
+                    propSize[0] = sizeStr;
+                    rerenderProp.run();
                 });
             }, "HyVqFileSize").start();
         }

@@ -168,9 +168,55 @@
 无崩溃、无 `NoSuchMethodError`/`NoClassDefFoundError`，双窗格渲染正常
 （`Os.lstat` 改造后文件大小与 mtime 显示均正确）。
 
-**下批待修**：X2 属性框全局 replace、X3 uniqueName 未回写、
-X4 ZipCache 原子写、D8 回收站清扫移后台、P5 缩略图黑帧 Bitmap 泄漏、
-D3 解压清空既有目录。
+### 三视角审查修复（2026-11-16，第 2 批）
+
+12. **X2 属性框两个占位符互相顶掉**
+    目录属性框同时起两个后台线程（项目数 / 大小），回填都用
+    `tv.getText().toString().replace("计算中…", x)`。项目数先回来时它的 replace
+    会把「大小：计算中…」一并替掉，大小再回来已找不到占位符 → 显示成
+    「项目数：1.2 MB」这种错乱。
+    改法：两个值分别存 `String[]`，每次回填用 `propHeadLine` + 当前已知值
+    重拼整段文本（`rerenderProp`）。
+
+13. **X3 `uniqueName()` 未回写 `existing`**
+    同一批粘贴里两个不同目录的同名文件，各自都看到 `existing` 里没有它 →
+    拿到同一个名字 → provider 侧后写覆盖前写（或 provider 造出 `name (1) (1)`），
+    用户少一个文件。改法：分配后立即 `existing.add(name)`。
+
+14. **X4 `ZipCache.extract` 无锁无临时文件**
+    缩略图线程 + 查看器 + 播放器可能同时请求同一条目。旧实现直接写最终路径，
+    线程 A 写到一半，线程 B 看到 `length()>0` 就当缓存命中 → 读到半截文件；
+    而半截文件满足 `length()>0` 会被后续调用长期复用，错误内容驻留缓存。
+    改法：按绝对路径的细粒度锁（`ConcurrentHashMap` 取锁对象）+ 写 `.tmp`
+    后原子 rename；`purgeArchive` 删文件时同步移除锁表条目防泄漏。
+
+15. **P8 冷启动主线程清扫回收站**
+    `purgeExpiredTrash()` 在 `createMainView` 内、`reloadAll()` 之前，对每个过期
+    条目调 `countTree`（递归遍历整棵被删目录树）再 `deleteTree`。5000 文件的
+    过期目录 = 冷启动白屏 1~3 秒，且每次启动都跑。
+    改法：移到独立线程 `HyTrashPurge` + 24 小时节流（`PREF_LAST_TRASH_PURGE`）。
+    **踩坑**：第一版用了 `runTask()`，而 `runTask` 会 `TaskKeepAliveService.acquire()`
+    拉起前台服务 → 冷启动时前台服务与 `reloadAll()` 抢主线程，实测触发
+    `ForegroundServiceDidNotStartInTimeException` 崩溃（FATAL，进程死）。
+    回收站清扫是启动维护，用户没发起任何操作，不该弹「正在处理文件」通知，
+    改用裸线程（不碰前台服务）后崩溃消失。
+
+16. **P5 缩略图黑帧 Bitmap 泄漏**
+    `decodeVideoThumb` 里黑帧重试的 `f2` 若也是全黑，既不使用也不 `recycle`
+    直接丢弃。`getFrameAtTime` 的位图在 native 堆，不 recycle 要等 GC finalizer；
+    批量加载黑场视频缩略图会累积多张 1080p 位图（每张 ~4MB）。
+    同类：`ImageViewerActivity` 解码完成但 `seq` 已变时 `fb` 直接丢弃未回收；
+    顺带补上「换图时回收旧 drawable 的位图」。
+
+17. **D3 解压到已存在目录会清空整棵树**
+    `extract()` 签名明确允许 `destDir` 已存在，但 GBK 乱码重解路径里有
+    `deleteTreeQuietly(destDir)` —— 会把用户原有文件整棵删除。
+    改法：`extract()` 记录 `destPreexisted` 并传给 `extractZip`；
+    只有「本次新建的空目录」才允许清空重解，目标原本存在时跳过清空并打日志。
+
+**验证（第 2 批）**：`assembleRelease` 通过，装机启动正常，
+崩溃 0 / FATAL 0 / 前台服务异常 0，进程存活，双窗格渲染正常。
+（第 1 次构建曾引入 `ForegroundServiceDidNotStartInTimeException`，已修复并复测通过。）
 
 ### 下一步待办
 

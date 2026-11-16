@@ -421,12 +421,27 @@ public class ImageViewerActivity extends Activity {
                 } catch (Throwable ignored) { }
                 final Bitmap fb = bmp;
                 post(() -> {
-                    if (mySeq != seq) return;
+                    if (mySeq != seq) {
+                        // 序号已变（用户翻页/页面重建）→ 这张图没人用，必须回收。
+                        // 旧实现直接 return，而 fb 是 decodeSampled 出的 ARGB_8888
+                        // 大图（高清模式可达几十 MB），不回收就等 GC —— 翻页几分
+                        // 就能把堆撑爆。
+                        if (fb != null && !fb.isRecycled()) fb.recycle();
+                        return;
+                    }
                     decoding = false;
                     if (fb == null) {
                         return;   // 解码失败：留空白，不弹 toast 打扰翻页
                     }
+                    // 换图前把旧图的位图也回收：这个 ImagePage
+                    // 是不回收 ViewHolder 的（ViewPager2 复用）,
+                    // 否则翻过的高清图会一张张堆在堆里。
+                    android.graphics.drawable.Drawable old = iv.getDrawable();
                     iv.setImageBitmap(fb);
+                    if (old instanceof android.graphics.drawable.BitmapDrawable) {
+                        Bitmap ob = ((android.graphics.drawable.BitmapDrawable) old).getBitmap();
+                        if (ob != null && ob != fb && !ob.isRecycled()) ob.recycle();
+                    }
                     iv.animate().alpha(1f).setDuration(FADE_MS).start();
                     resetZoomMatrix();
                 });

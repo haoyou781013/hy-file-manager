@@ -92,24 +92,70 @@ public final class ZipCache {
                 return out;
             }
 
-            try (ZipFile zf = new ZipFile(new File(zipPath))) {
-                ZipEntry ze = zf.getEntry(inner);
-                if (ze == null || ze.isDirectory()) return null;
-                try (InputStream in = zf.getInputStream(ze);
-                     FileOutputStream fos = new FileOutputStream(out)) {
-                    // 缓冲区大一点：媒体文件常有几十 MB，减少 syscall
-                    byte[] buf = new byte[131072];
-                    int n;
-                    while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
+            // ⚠ 并发防护：同一 (zipPath, inner) 可能被多个线程同时请求
+            // （缩略图线程 + 查看器 + 播放器），而无 in-flight 去重。
+            // 旧实现直接写最终路径：线程 A 写到一半，线程 B 看到 length()>0
+            // 就当缓存命中 → BitmapFactory/ExoPlayer 读到<b>半截文件</b>；
+            // 而且半截文件会被后续调用长期复用（上面的 length()>0 判断），
+            // 错误内容就驻留在缓存里了。
+            //
+            // 改法：① 同 key 加锁，后来者等前一个写完直接命中；
+            //       ② 先写 .tmp 再原子 rename，中途被杀不会留下半截文件。
+            final String lockKey = out.getAbsolutePath();
+            synchronized (lockFor(lockKey)) {
+                // 双重检查：等锁期间别的线程可能已写好
+                if (out.isFile() && out.length() > 0) {
+                    touch(out);
+                    return out;
                 }
+                File tmp = new File(out.getAbsolutePath() + ".tmp");
+                try {
+                    try (ZipFile zf = new ZipFile(new File(zipPath))) {
+                        ZipEntry ze = zf.getEntry(inner);
+                        if (ze == null || ze.isDirectory()) return null;
+                        try (InputStream in = zf.getInputStream(ze);
+                             FileOutputStream fos = new FileOutputStream(tmp)) {
+                            // 缓冲区大一点：媒体文件常有几十 MB，减少 syscall
+                            byte[] buf = new byte[131072];
+                            int n;
+                            while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
+                            fos.flush();
+                        }
+                    }
+                    if (!tmp.renameTo(out)) {
+                        // rename 失败（极少：跨分区不会，因为同目录）→ 退回直接复制
+                        try (java.io.InputStream in = new java.io.FileInputStream(tmp);
+                             java.io.OutputStream outs = new java.io.FileOutputStream(out)) {
+                            byte[] buf = new byte[131072];
+                            int n;
+                            while ((n = in.read(buf)) > 0) outs.write(buf, 0, n);
+                        }
+                    }
+                } finally {
+                    if (tmp.exists()) { try { tmp.delete(); } catch (Throwable ignored) { } }
+                }
+                register(zipPath, out);
+                trimIfNeeded(ctx);
+                return out;
             }
-            register(zipPath, out);
-            trimIfNeeded(ctx);
-            return out;
         } catch (Throwable t) {
             return null;
         }
     }
+
+    /**
+     * 按 key 取一把细粒度锁（避免全局锁串行化所有解压）。
+     *
+     * <p>用 {@code ConcurrentHashMap.computeIfAbsent} 的键集合作为锁表；
+     * 锁对象不清理（数量受解出的条目数约束，且与 cacheDir 生命周期一致）。</p>
+     */
+    private static Object lockFor(String key) {
+        return LOCKS.computeIfAbsent(key, k -> new Object());
+    }
+
+    /** 解压锁表：绝对路径 → 锁对象 */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Object> LOCKS =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     /** 解出并返回路径字符串（失败 null），供调用方直接喂给 BitmapFactory / ExoPlayer */
     public static String extractPath(Context ctx, String dirName, String zipPath, String inner) {
@@ -134,7 +180,11 @@ public final class ZipCache {
             try {
                 if (f != null && f.isFile()) {
                     long len = f.length();
-                    if (f.delete()) freed += len;
+                    if (f.delete()) {
+                        freed += len;
+                        // 同步移除锁表条目，避免 LOCKS 随会话无限增长
+                        LOCKS.remove(f.getAbsolutePath());
+                    }
                 }
             } catch (Throwable ignored) { }
         }
