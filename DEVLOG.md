@@ -218,6 +218,57 @@
 崩溃 0 / FATAL 0 / 前台服务异常 0，进程存活，双窗格渲染正常。
 （第 1 次构建曾引入 `ForegroundServiceDidNotStartInTimeException`，已修复并复测通过。）
 
+### 切换目录回到顶部（2026-11-16，用户反馈修复）
+
+**用户反馈**：「切换目录从头滑动没有了（切换目录不要保存上个目录的滑动位置）」
+
+**根因（两层叠加）**：
+
+1. 切换目录走 `adapter.setData(p.entries)` → `notifyDataSetChanged()`。
+   而 `p.entries` 是**同一个 List 实例**（`reload` 里一直 `clear()` + `addAll()`），
+   RecyclerView 在 `notifyDataSetChanged` 后会保留原来的 `LinearLayoutManager` 锚点
+   → 从第 N 行进去仍然停在第 N 行。
+2. 旧的「滚动位置记忆」机制（`scrollStateByDir` + `restoreScrollOnLoad`）
+   虽然门控在 `restoreScrollOnLoad` 上，但 `markReturnToForeground()` 全项目
+   **零调用**，等于白存了一堆 `Parcelable`；同时它让代码看起来「有恢复逻辑」，
+   掩盖了真正的问题。
+
+**修复**：
+
+1. 新增 `resetListToTop(Pane)`：`scrollToPosition(0)` →
+   `post()` 到下一帧再 `scrollToPositionWithOffset(0, 0)`。
+   分两拍是因为 `notifyDataSetChanged` 的 layout 在下一帧才完成，
+   只调一次会出现「偶尔停在老位置」。
+2. 在 `reload()` 里用 `dirChanged` 标志控制：
+   ```java
+   final boolean dirChanged = p.dirFadePending;   // 必须在消费前拷贝
+   if (p.dirFadePending) { p.dirFadePending = false; playDirTransition(p.list); }
+   ...
+   if (dirChanged) resetListToTop(p);
+   ```
+   **踩坑**：第一版直接在后面判 `p.dirFadePending`，但它在上面淡入动画块里
+   已被置 false，导致逻辑永不执行。改为先拷一份。
+3. **彻底删除** `scrollStateByDir` / `restoreScrollOnLoad` / `lastLoadedPath` /
+   `markReturnToForeground()` / `SCROLL_STATE_MAX` 整套机制（用户明确不要恢复，
+   留着只是死代码 + 内存占用）。
+4. 删除 `reload()` 里 `onSaveInstanceState` / `onRestoreInstanceState` 调用。
+
+**边界正确性**（已用脚本逐一核对）：
+
+| 场景 | 入口 | 是否重置滚动 |
+|---|---|---|
+| 进入目录 | `navigateTo` | ✅ 重置 |
+| 后退 | `navBack` | ✅ 重置 |
+| 前进 | `navForward` | ✅ 重置 |
+| 排序 | `reloadAll` | ❌ 保留（否则列表突然跳顶） |
+| 写操作后刷新 | `reloadAll` | ❌ 保留 |
+| 下拉刷新 | 直接调 `reload` | ❌ 保留（不清 dirFadePending） |
+
+**网格模式**：`GridLayoutManager` 是 `LinearLayoutManager` 的子类，
+`instanceof` 判断覆盖两种布局，`scrollToPositionWithOffset` 同样适用。
+
+**验证**：`assembleRelease` 通过（1m16s），装机启动正常，崩溃 0 / FATAL 0 / 进程存活。
+
 ### 下一步待办
 
 - 文本编辑器重构（预览/编辑双模式、语法高亮、快捷输入栏、编码切换、

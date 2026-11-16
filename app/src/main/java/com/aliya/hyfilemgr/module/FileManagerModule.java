@@ -562,21 +562,6 @@ public class FileManagerModule extends HyVqModule {
         /** 下拉刷新容器（buildPane 里创建；刷新完成时用它收起转圈） */
         androidx.swiperefreshlayout.widget.SwipeRefreshLayout swipeRefresh;
         FileListAdapter adapter;
-        /** ⭐8 目录滚动位置记忆（参考 MaterialFiles FileListFragment）：按路径缓存
-         *  RecyclerView 布局状态（含像素偏移），切换目录保存上一个、返回时恢复。
-         *  <b>必须有上限</b>：旧实现用无界 HashMap，每浏览一个新目录就 +1，
-         *  长期使用只涨不降。15 相当于「最近往返的十几个目录」，够日常用。 */
-        final Map<String, android.os.Parcelable> scrollStateByDir =
-                new java.util.LinkedHashMap<String, android.os.Parcelable>(16, 0.75f, true) {
-                    @Override
-                    protected boolean removeEldestEntry(
-                            java.util.Map.Entry<String, android.os.Parcelable> eldest) {
-                        return size() > SCROLL_STATE_MAX;
-                    }
-                };
-        /** 最近一次加载的路径：reload 离开前据此把旧目录状态存入 scrollStateByDir */
-        String lastLoadedPath;
-
         /** ⭐ 目录缓存（仿 ZhuFiler DirCache）：路径 → 条目快照 + 目录指纹（mtime/子项数）。
          *  切换回未变化目录直接复用快照，避免重复 listFiles（大目录性能提升明显）。
          *  <b>必须有上限</b>：value 是整目录的条目快照，万级目录单条就是几万个对象。
@@ -621,9 +606,6 @@ public class FileManagerModule extends HyVqModule {
     /** 授权列表加载诊断（错误可见性：列表空且异常时 toast 真实原因） */
     private String mountLoadError;
 
-    /** 下次 reload 是否恢复滚动位置：仅「切到其他页面/后台后返回」时置 true。
-     *  目录之间的普通切换不恢复（避免用户莫名其妙的滚动跳动）。 */
-    private boolean restoreScrollOnLoad = false;
     /** SAF 系统文件选择器授权请求码 */
     private static final int REQ_SAF_MOUNT = 1005;
     private int sortMode = SORT_NAME;
@@ -631,8 +613,6 @@ public class FileManagerModule extends HyVqModule {
     // ── 每个窗格的内存上限：防止长期使用后缓存无限增长 ──
     /** 目录快照缓存上限：value 是整目录条目列表，万级目录单条就很大 */
     private static final int DIR_CACHE_MAX = 24;
-    /** 滚动位置缓存上限：对应「最近往返的二十来个目录」 */
-    private static final int SCROLL_STATE_MAX = 20;
     /** 前进/后退历史栈上限：用户来回跳转时防无界增长 */
     private static final int HISTORY_MAX = 50;
 
@@ -2982,20 +2962,12 @@ public class FileManagerModule extends HyVqModule {
         // 而 reload 是每次切目录/刷新/操作的公共入口 →
         // 每翻一层目录一次同步 commit（13 键 fsync，UI 线程）。
         // 真正需要落盘的是设置类改动，那些 handler 已各自调用。
-        // 滚动位置记忆（参考 MaterialFiles）：离开目录前缓存布局状态，**仅在特定场景恢复**。
-        // ⭐ 用户反馈：目录之间随便点一下也恢复旧位置，会让人莫名"上滑"。
-        //   故改为：只有「切到别处（如设置）再返回」才回到原位置；
-        //   同一次浏览中的目录切换一律**从顶部开始**。
-        if (p.list != null && p.list.getLayoutManager() != null && p.lastLoadedPath != null) {
-            try {
-                p.scrollStateByDir.put(p.lastLoadedPath, p.list.getLayoutManager().onSaveInstanceState());
-            } catch (Throwable ignored) {
-            }
-        }
-        final android.os.Parcelable restoreState = restoreScrollOnLoad
-                ? p.scrollStateByDir.get(p.path) : null;
-        restoreScrollOnLoad = false;   // 用后即清，避免影响后续普通目录切换
-        p.lastLoadedPath = p.path;
+        //
+        // 滚动位置：不记忆、不恢复（用户明确要求「切换目录从头开始」）。
+        // 旧实现会把每个目录的 LayoutManager 状态存进 scrollStateByDir，
+        // 虽然门控在 restoreScrollOnLoad 上，但那个开关没有任何实际调用点
+        // （markReturnToForeground 全项目零调用），等于白存了一堆 Parcelable，
+        // 改为彻底移除。
         p.selected.clear();
         // 用 instant：翻目录时底部栏直接切到位，不播 160ms 退场动画。
         // 旧写法播动画，而下面紧接着就 bind 新数据，两个窗口重叠。
@@ -3080,24 +3052,29 @@ public class FileManagerModule extends HyVqModule {
 
         // 翻目录/前进后退后的整体交叉淡化。
         // 数据已经 bind 完再做动画，避免淡入时看到空列表。
+        // 在这里就把「是否换了目录」拷一份：下面 resetListToTop 要用，
+        // 而这个标志一旦置 false 就无法区分「切目录」与「同目录重刷」。
+        final boolean dirChanged = p.dirFadePending;
         if (p.dirFadePending) {
             p.dirFadePending = false;
             playDirTransition(p.list);
         }
-        // 数据就绪后恢复该目录上次的布局状态（滚动位置/偏移；目录内容变化时
-        // RecyclerView 内部会钳制越界位置，安全）
-        if (restoreState != null && p.list != null && p.list.getLayoutManager() != null) {
-            try {
-                p.list.getLayoutManager().onRestoreInstanceState(restoreState);
-            } catch (Throwable ignored) {
-            }
+        // ⭐ 切换目录必须从顶部开始（用户明确要求）。
+        //
+        // 为什么要显式做：切换目录走 adapter.setData(p.entries)
+        // → notifyDataSetChanged()。而 p.entries 是**同一个 List 实例**
+        // （reload 里一直 clear + addAll），RecyclerView 在 notifyDataSetChanged
+        // 后会保留原来的 LinearLayoutManager 锛点，于是从第 N 行进去仍然停在第 N 行。
+        //
+        // 为什么用 dirChanged 而不用 dirFadePending：后者在上面的淡入动画块里
+        // 已经被消费（置 false）了，到这里永远是 false。所以在消费前先拷一份。
+        if (dirChanged) {
+            resetListToTop(p);
         }
         // SAF/虚拟层查询失败时提示真实错误（不再静默空列表，便于定位权限/uri格式问题）
         if (p.entries.isEmpty() && p.lastResult.error != null && !p.lastResult.error.isEmpty()) {
             UiKit.toast(ctx, p.lastResult.error);
         }
-        // 入场动画只在「新建 surface」时播：首次进入该窗格、或空目录→有内容。
-        // 翻目录/排序/删除后刷新都不播（官方 stagger 适用边界）。
         // 入场动画只在「新建 surface」时播：冷启动后的首次加载。
         // 翻目录/排序/删除后刷新都不播（官方 stagger 适用边界）。
         // 目录为空时不播（没有可入场的子项），保持 staggerPending 等下次。
@@ -3159,6 +3136,44 @@ public class FileManagerModule extends HyVqModule {
      * 再淡入，避免中间闪一帧空白。<b>不改变列表高度</b>，
      * 因此不会引起布局跳动。</p>
      */
+    /**
+     * 把列表滚回顶部（切换目录时用）。
+     *
+     * <p><b>为什么不能只靠 {@code scrollToPosition(0)}：</b>
+     * 在 {@code notifyDataSetChanged()} 之后立刻调 {@code scrollToPosition(0)}
+     * 是不够的 —— RecyclerView 此时还没完成 layout，而且它会保留原先的
+     * 锛点（anchor）。必须同时：
+     * ① {@code scrollToPosition(0)} 重置 LayoutManager 的锛点；
+     * ② {@code post()} 到下一帧再确一次（布局完成后可能被锛点拉回）。</p>
+     */
+    private void resetListToTop(final Pane p) {
+        if (p == null || p.list == null) return;
+        try {
+            p.list.scrollToPosition(0);
+            // 下一帧再确一次：notifyDataSetChanged 的 layout 在 post 里才完成，
+            // 那时才真正重置锛点。不加这一步会出现「偶尔停在老位置」。
+            p.list.post(() -> {
+                try {
+                    if (p.list == null) return;
+                    RecyclerView.LayoutManager lm = p.list.getLayoutManager();
+                    if (lm != null) {
+                        // scrollToPositionWithOffset 比 scrollToPosition 更硬：
+                        // 后者允许一次「平滑靠近」，前者直接把锛点钉在 0 位置。
+                        if (lm instanceof androidx.recyclerview.widget.LinearLayoutManager) {
+                            ((androidx.recyclerview.widget.LinearLayoutManager) lm)
+                                    .scrollToPositionWithOffset(0, 0);
+                        } else {
+                            lm.scrollToPosition(0);
+                        }
+                    }
+                    p.list.scrollToPosition(0);
+                } catch (Throwable ignored) {
+                }
+            });
+        } catch (Throwable ignored) {
+        }
+    }
+
     private void playDirTransition(final RecyclerView rv) {
         if (rv == null) return;
         if (animScale <= 0f) return;          // 用户关闭动画 / 无障碍减动效
@@ -12919,11 +12934,6 @@ public class FileManagerModule extends HyVqModule {
                     // 音频
                     "mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma", "amr",
                     "aiff", "ape", "wv", "mid", "midi", "ac3", "dts", "mka", "ra", "au", "caf"));
-
-    /** 由宿主在「从其他页面（如设置）或后台返回」时调用：下次加载恢复原滚动位置 */
-    public void markReturnToForeground() {
-        restoreScrollOnLoad = true;
-    }
 
     /** 收集当前活动目录下同类型的可播放文件（供播放器左右切换）。
      *  找不到时返回仅含自身的单元素列表，保证播放器始终有可用列表。 */
