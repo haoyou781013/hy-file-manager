@@ -297,9 +297,19 @@ public class FileManagerModule extends HyVqModule {
     private final java.util.List<java.lang.ref.WeakReference<View>> cardViewRefs =
             new java.util.ArrayList<>();
 
-    /** 卡片圆角 / 是否标题卡的登记信息（重建背景时要原样还原） */
+    /**
+     * 卡片圆角 / 是否标题卡的登记信息（重建背景时要原样还原）。
+     *
+     * <p><b>为什么必须是 WeakHashMap</b>：设置页每次重建整棵 View 树
+     * （每页 200~300 个 View）都往这里 put。旧实现用 {@code IdentityHashMap}，
+     * key 是<b>强引用</b>——旧 View 因为被 map 持着，永远回收不了。
+     * 而配对的 {@code cardViewRefs}（297 行）是 {@code WeakReference}，
+     * 弱引用永远不会置空，{@code refreshRegisteredCards} 的
+     * 「{@code size() > refs.size()*2 + 32} 就清理」随两者同步增长 → 基本不会触发。
+     * 进设置页 50 次 ≈ 1 万多个 View 常驻（含 Drawable/Listener）。</p>
+     */
     private final java.util.Map<View, int[]> cardStyleMap =
-            new java.util.IdentityHashMap<>();
+            new java.util.WeakHashMap<>();
 
     /**
      * 「设置卡片背景」的唯一入口。
@@ -414,14 +424,27 @@ public class FileManagerModule extends HyVqModule {
     /** 列表文件密度：1=紧凑 2=标准 3=宽松 */
     private static int listDensity = 2;
 
-    /** 同步写入整型偏好（commit 同步落盘，失败打日志） */
+    /**
+     * 写入整型偏好（**异步**，不阻塞调用线程）。
+     *
+     * <p><b>为什么改成异步</b>：旧实现直接用 {@code commit()} 同步落盘，
+     * 而它被 25 处在主线程调用（滑块 {@code onStopTrackingTouch}、排序菜单…）。
+     * 每次 commit 都是 fsync（2~10ms，低端机 20ms+）；而滑块松手还会紧接一个
+     * {@code persistState()}（又一次 24 键 commit）→ <b>两次 fsync</b>。
+     * 表现就是「拖完滑块卡一下」。</p>
+     *
+     * <p>用已有的 {@code PREF_HANDLER}（专用后台线程，persistState 已走这条线），
+     * 签名不变——25 个调用点零改动。</p>
+     */
     private void savePrefInt(String key, int value) {
-        try {
-            boolean ok = fmPrefs().edit().putInt(key, value).commit();
-            android.util.Log.i("HYPrefs", "save " + key + "=" + value + " ok=" + ok);
-        } catch (Throwable t) {
-            android.util.Log.e("HYPrefs", "save " + key + " failed", t);
-        }
+        PREF_HANDLER.post(() -> {
+            try {
+                boolean ok = fmPrefs().edit().putInt(key, value).commit();
+                android.util.Log.i("HYPrefs", "save " + key + "=" + value + " ok=" + ok);
+            } catch (Throwable t) {
+                android.util.Log.e("HYPrefs", "save " + key + " failed", t);
+            }
+        });
     }
     private static final String PREF_GRID_MODE = "grid_mode";
     private static final String PREF_THUMBS = "thumbs_enabled";
@@ -1866,17 +1889,17 @@ public class FileManagerModule extends HyVqModule {
 
                 int from = Math.min(anchorPos, curPos);
                 int to = Math.max(anchorPos, curPos);
-                boolean changed = false;
                 for (int i = from; i <= to; i++) {
                     FileEntry e = entryAt(p, i);
                     if (e == null) continue;
-                    if (p.selected.add(e)) changed = true;
+                    p.selected.add(e);
                 }
                 // 回收本次区间之外、但由本次拖动加入的条目
+                int prevFrom = -1, prevTo = -1;
                 if (p.dragRangeStart >= 0) {
-                    int pf = Math.min(p.dragRangeStart, lastRangePrevEnd);
-                    int pt = Math.max(p.dragRangeStart, lastRangePrevEnd);
-                    for (int i = pf; i <= pt; i++) {
+                    prevFrom = Math.min(p.dragRangeStart, lastRangePrevEnd);
+                    prevTo = Math.max(p.dragRangeStart, lastRangePrevEnd);
+                    for (int i = prevFrom; i <= prevTo; i++) {
                         if (i >= from && i <= to) continue;   // 仍在区间内，保留
                         FileEntry e = entryAt(p, i);
                         if (e != null) p.selected.remove(e);
@@ -1885,10 +1908,25 @@ public class FileManagerModule extends HyVqModule {
                 p.dragRangeStart = anchorPos;
                 lastRangePrevEnd = curPos;
 
-                if (changed || true) {
-                    p.adapter.setSelected(p.selected);
-                    updateOpBar();
+                // ⚠ 只通知「变了的行」，不要全表重绑。
+                //
+                // 旧实现是 if (changed || true) p.adapter.setSelected(...)，
+                // 而 setSelected 内部是 notifyDataSetChanged()：
+                //  ① || true 让 changed 判断完全失效；
+                //  ② 本方法在 onInterceptTouchEvent(MOVE) 里每个触摸事件都调，
+                //     一次拖动几十个 MOVE → 几十次全表重绑。
+                // 按 16 行可见、60~120 MOVE/秒算，旧实现会跑到 1000~2000 次 bind/秒。
+                //
+                // 现在只把「上次区间 ∪ 本次区间」这一段刷一遍，其余行不动。
+                // 合并成一段（而不是分开刷两个区间）是因为拖动时两个区间通常重叠或相邻。
+                p.adapter.applySelection(p.selected);
+                int dirtyFrom = prevFrom < 0 ? from : Math.min(from, prevFrom);
+                int dirtyTo = prevFrom < 0 ? to : Math.max(to, prevTo);
+                if (dirtyTo >= dirtyFrom) {
+                    p.adapter.notifyItemRangeChanged(dirtyFrom, dirtyTo - dirtyFrom + 1,
+                            FileListAdapter.PAYLOAD_SELECTION);
                 }
+                updateOpBar();
             }
 
             /** 上一次框选的终点（用于回收区间） */
@@ -6712,7 +6750,10 @@ public class FileManagerModule extends HyVqModule {
                 for (int i = 0; i < n; i++) {
                     sb.append("\n--- ").append(logs[i].getName()).append(" ---\n");
                     try {
-                        byte[] d = java.nio.file.Files.readAllBytes(logs[i].toPath());
+                        // 不用 java.nio.file.Files.readAllBytes：那是 API 26 API，
+                        // 本项 minSdk = 23，低版本会 NoClassDefFoundError（虽然在外层
+                        // catch 里不会崩，但会变成「读取失败」，诊断日志导不出来）。
+                        byte[] d = readFileBytes(logs[i]);
                         sb.append(new String(d, java.nio.charset.StandardCharsets.UTF_8));
                     } catch (Throwable t) {
                         sb.append("（读取失败：").append(t).append("）\n");
@@ -7931,20 +7972,10 @@ public class FileManagerModule extends HyVqModule {
             v.setBackground(cardSurface(style[0], style[1] == 1));
             refreshed++;
         }
-        // 反向清理：cardStyleMap 里已没有强引用的 Key 会随 View 回收消失，
-        // 这里只清掉本次遍历中已确认失效的项，避免 map 无限增长
-        if (cardStyleMap.size() > cardViewRefs.size() * 2 + 32) {
-            java.util.Map<View, int[]> alive = new java.util.IdentityHashMap<>();
-            for (java.util.Iterator<java.lang.ref.WeakReference<View>> it2 = cardViewRefs.iterator();
-                 it2.hasNext(); ) {
-                View v = it2.next().get();
-                if (v != null && cardStyleMap.containsKey(v)) {
-                    alive.put(v, cardStyleMap.get(v));
-                }
-            }
-            cardStyleMap.clear();
-            cardStyleMap.putAll(alive);
-        }
+        // cardStyleMap 已改为 WeakHashMap：View 被回收后条目会自动消失，
+        // 不再需要「阈值+重建」那种反向清理（旧实现用 IdentityHashMap 强引用，
+        // 才需要靠这里的清空来补救；而且那个阈值 size() > refs.size()*2+32
+        // 随两者同步增长，基本不会触发）。
         android.util.Log.i("HYCardAlpha", "refreshed " + refreshed + " cards @ " + cardAlpha + "%");
     }
 
@@ -9967,13 +9998,16 @@ public class FileManagerModule extends HyVqModule {
      *
      * <p>写入失败会把异常打到 logcat，避免静默丢失设置。</p>
      */
+    /** 写入布尔偏好（异步，同 {@link #savePrefInt} 的理由） */
     private void savePrefBool(String key, boolean value) {
-        try {
-            boolean ok = fmPrefs().edit().putBoolean(key, value).commit();
-            android.util.Log.i("HYPrefs", "save " + key + "=" + value + " ok=" + ok);
-        } catch (Throwable t) {
-            android.util.Log.e("HYPrefs", "save " + key + " failed", t);
-        }
+        PREF_HANDLER.post(() -> {
+            try {
+                boolean ok = fmPrefs().edit().putBoolean(key, value).commit();
+                android.util.Log.i("HYPrefs", "save " + key + "=" + value + " ok=" + ok);
+            } catch (Throwable t) {
+                android.util.Log.e("HYPrefs", "save " + key + " failed", t);
+            }
+        });
     }
 
     private android.content.SharedPreferences fmPrefs() {
@@ -11219,8 +11253,19 @@ public class FileManagerModule extends HyVqModule {
         final String body = tab.content.replace("\r\n", "\n");
         final String out = "CRLF".equals(tab.lineEnding) ? body.replace("\n", "\r\n") : body;
         final String enc = tab.encoding;
+        // ⚠ 记录本次保存的快照内容：完成回调里用它和最新 content 比对，
+        // 判断保存期间用户是否又改了（竞态）。
+        final String snapshot = tab.content;
         runTask(() -> {
-            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tab.file)) {
+            java.io.File tmp = null;
+            try {
+                // ⚠ 原子写：旧实现直接 new FileOutputStream(tab.file) 原地截断，
+                // 写到一半被杀/掉电 → 原文件变半截或 0 字节，用户的代码直接没了。
+                // 改为「写同目录临时文件 → rename」，rename 在同一个文件系统内是原子的，
+                // 失败时原文件完整无损。
+                java.io.File parent = tab.file.getParentFile();
+                if (parent != null && !parent.exists()) parent.mkdirs();
+                tmp = new java.io.File(parent, tab.file.getName() + ".hysave.tmp");
                 byte[] bytes;
                 if ("GBK".equals(enc)) {
                     java.nio.charset.CharsetEncoder gbkEnc = java.nio.charset.Charset.forName("GBK").newEncoder();
@@ -11234,25 +11279,70 @@ public class FileManagerModule extends HyVqModule {
                 } else {
                     bytes = out.getBytes("UTF-8");
                 }
-                fos.write(bytes);
+                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tmp)) {
+                    fos.write(bytes);
+                    fos.flush();
+                    // 强制落盘：否则 rename 后仍可能因突然断电丢掉临时文件内容
+                    try { fos.getFD().sync(); } catch (Throwable ignored) { }
+                }
+                if (!tmp.renameTo(tab.file)) {
+                    // rename 失败（跨分区 / 目标被占用）→ 降级为直接覆盖，
+                    // 但先备份原文件，失败时能回滚
+                    java.io.File bak = null;
+                    try {
+                        if (tab.file.exists()) {
+                            bak = new java.io.File(parent, tab.file.getName() + ".hybak");
+                            copyFileRaw(tab.file, bak);
+                        }
+                        copyFileRaw(tmp, tab.file);
+                    } catch (Throwable t2) {
+                        if (bak != null && bak.exists()) {
+                            try { copyFileRaw(bak, tab.file); } catch (Throwable ignored) { }
+                        }
+                        throw t2;
+                    } finally {
+                        if (bak != null) { try { bak.delete(); } catch (Throwable ignored) { } }
+                    }
+                }
                 final String rootErr = null;
+                final java.io.File tmpToClean = tmp;
                 handler.post(() -> {
-                    tab.savedContent = tab.content;
-                    tab.dirty = false;
+                    // ⚠ 只在「保存期间用户没继续改」时才清除 dirty。
+                    // 旧实现无条件 tab.dirty = false，而保存大文件期间用户的输入
+                    // 会走 TextWatcher 置 dirty=true——随后被这里覆盖成 false，
+                    // 关闭标签时 closeEditorTab 判 !dirty 直接移除，新输入静默丢弃。
+                    boolean unchanged = snapshot.equals(tab.content);
+                    tab.savedContent = snapshot;
+                    if (unchanged) {
+                        tab.dirty = false;
+                    }
                     if (editorHeader != null && tab == currentEditTab) {
                         editorHeader.setText(tab.file.getName() + " · " + tab.encoding + " · "
                                 + FileOps.formatSize(tab.file.length()));
                     }
-                    UiKit.toast(ctx, rootErr != null ? rootErr : "已保存："
+                    UiKit.toast(ctx, rootErr != null ? rootErr
+                            : (unchanged ? "已保存：" : "已保存（保存期间又有修改未存）：")
                             + (tab.rootTarget != null ? tab.rootTarget : tab.file.getName()));
                     renderEditorTabs();
                     reloadAll();
                     if (onDone != null) onDone.run();
                 });
             } catch (Throwable t) {
+                if (tmp != null && tmp.exists()) { try { tmp.delete(); } catch (Throwable ignored) { } }
                 handler.post(() -> UiKit.alert(ctx, "保存失败：" + t.getMessage()));
             }
         });
+    }
+
+    /** 字节级复制（不依赖 API 26 的 Files.copy，用于编辑器保存的兼容回退路径） */
+    private static void copyFileRaw(java.io.File src, java.io.File dst) throws java.io.IOException {
+        try (java.io.InputStream in = new java.io.FileInputStream(src);
+             java.io.OutputStream outs = new java.io.FileOutputStream(dst)) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) outs.write(buf, 0, n);
+            outs.flush();
+        }
     }
 
     /** 关闭编辑器：有未保存修改 → 全部保存/放弃/取消（打开保留：关闭时持久化标签列表） */
@@ -12444,7 +12534,10 @@ public class FileManagerModule extends HyVqModule {
                 if (!trimmed.isEmpty()) {
                     char last = trimmed.charAt(trimmed.length() - 1);
                     if (last == '{' || last == '[' || last == '(' || last == ':') {
-                        indent.append(" ".repeat(Math.max(1, editorTabWidthPref())));
+                        // 不用 String.repeat：那是 API 33 的方法，minSdk 23 上会
+                        // NoSuchMethodError（回车自动缩进是高频路径，必现）。
+                        // 脱糖不一定覆盖 String 类的新实例方法，故用项目已有的工具方法。
+                        indent.append(repeatSpaces(Math.max(1, editorTabWidthPref())));
                     }
                 }
                 if (indent.length() == 0) return;
@@ -16939,6 +17032,26 @@ public class FileManagerModule extends HyVqModule {
      * {@code getCanonicalPath != getAbsolutePath} 兜底 —— 不完全等价
      * （路径中任意一段是链接都会判为 true），但方向是安全的一侧（少删不多删）。</p>
      */
+    /**
+     * 读整个文件为字节数组（不依赖 API 26 的 {@code java.nio.file.Files}）。
+     *
+     * <p>为什么不用 {@code Files.readAllBytes}：本项目 minSdk = 23，
+     * 那是 API 26 才有的类。虽然调用方都在 catch(Throwable) 里不会崩，
+     * 但功能会退化成「读取失败」——导诊断日志这种关键场景不能这样。</p>
+     */
+    private static byte[] readFileBytes(File f) throws java.io.IOException {
+        long len = f.length();
+        if (len > 16L * 1024 * 1024) throw new java.io.IOException("文件过大 " + len);
+        try (java.io.InputStream in = new java.io.FileInputStream(f)) {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(
+                    (int) Math.max(64, len));
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+            return bos.toByteArray();
+        }
+    }
+
     private static boolean isSymlink(File f) {
         try {
             if (android.os.Build.VERSION.SDK_INT >= 26) {

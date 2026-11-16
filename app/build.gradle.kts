@@ -18,6 +18,19 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // 开启核心库脱糖（desugaring）
+        //
+        // 为什么：本项目 minSdk = 23，但代码里用了多处 API 24/33 才有的
+        // Java 库接口：
+        //   • java.util.function.Supplier / Consumer（API 24）
+        //     —— FileOps.runAsync、模块内的对话框回调
+        //   • ConcurrentHashMap.computeIfAbsent（API 24）—— ZipCache
+        //   • List.removeIf（API 24）—— ZipCache
+        //   • String.repeat（API 33）—— 编辑器回车自动缩进
+        // 不开脱糖时，Android 6.x/7.x 上这些调用会
+        // NoClassDefFoundError / NoSuchMethodError 崩溃。
+        // （lint.abortOnError=false 把 NewApi 检查掩盖了，所以一直没暴露。）
+        isCoreLibraryDesugaringEnabled = true
     }
 
     // ── 签名配置：复用 HY_VQ 的发布密钥 ──
@@ -60,6 +73,10 @@ android {
 }
 
 dependencies {
+    // 核心库脱糖：提供 API 24/33 的 Java 库接口在 minSdk 23 上的实现
+    // （Supplier / Consumer / computeIfAbsent / removeIf / String.repeat 等）
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.12.0")

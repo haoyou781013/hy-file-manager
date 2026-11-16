@@ -115,20 +115,91 @@ public final class AccessRouter {
         return new File(PathAlias.io(path));
     }
 
-    /** File → FileEntry（符号链接标记 LINK 并保留目标） */
+    /**
+     * File → FileEntry（符号链接标记 LINK 并保留目标）。
+     *
+     * <p><b>为什么用 {@link android.system.Os#lstat} 而不用 {@code java.nio.file.Files}：</b></p>
+     *
+     * <p>① <b>版本兼容</b>：{@code Files.isSymbolicLink} 需要 <b>API 26</b>，而本项目
+     * minSdk = 23。旧实现在 Android 6.x/7.x 上进入任意目录都会
+     * {@code NoClassDefFoundError} 崩溃。{@code Os.lstat} 从 API 21 就有。
+     * （同项目 {@code FileManagerModule.isSymlink} 用的就是版本判断兜底，
+     * 这里改为彻底不依赖 Files，两边行为就一致了。）</p>
+     *
+     * <p>② <b>syscall 合并</b>：旧实现每个条目要 4 次系统调用
+     * （{@code isSymbolicLink} + {@code isDirectory} + {@code length} + {@code lastModified}），
+     * 而 {@code f.toPath()} 还会额外 new 一个 {@code UnixPath} 对象。
+     * 万项目录 = 4 万次 syscall + 1 万个临时对象，全在主线程。
+     * 改用 {@code lstat} 一次拿到 {@code st_mode/st_size/st_mtime}，四项判断一次完成。</p>
+     *
+     * <p>注：{@code st_mtime} 是秒级，与 {@code File.lastModified()}
+     * 在 Android 上的实现（同样源于 {@code st_mtime}）一致，排序行为不变。</p>
+     */
     public static FileEntry toEntry(File f) {
-        if (java.nio.file.Files.isSymbolicLink(f.toPath())) {
-            String target = null;
-            try {
-                target = java.nio.file.Files.readSymbolicLink(f.toPath()).toString();
-            } catch (Throwable ignored) {
+        final String path = f.getAbsolutePath();
+        try {
+            android.system.StructStat st = android.system.Os.lstat(path);
+            final int fmt = st.st_mode & android.system.OsConstants.S_IFMT;
+            final long mtime = st.st_mtime * 1000L;   // 秒 → 毫秒
+            if (fmt == android.system.OsConstants.S_IFLNK) {
+                return FileEntry.link(path, readLinkTarget(path), mtime);
             }
-            return FileEntry.link(f.getAbsolutePath(), target, f.lastModified());
+            if (fmt == android.system.OsConstants.S_IFDIR) {
+                return FileEntry.dir(path, mtime);
+            }
+            return FileEntry.file(path, st.st_size, mtime);
+        } catch (Throwable t) {
+            // lstat 失败（权限不足 / SELinux 拦截 / 路径已消失）→ 退回 File API。
+            // 退回路径不含 java.nio.file 调用，所以低版本也不会崩。
+            return toEntryFallback(f);
+        }
+    }
+
+    /**
+     * 读取符号链接指向的目标（用于界面显示「-> 目标」）。
+     *
+     * <p>API 26+ 用 {@code Files.readSymbolicLink}（能正确处理相对路径）；
+     * 低版本退回 {@code canonicalPath} 差值推算，与
+     * {@code FileManagerModule.isSymlink} 的低版本兜底思路一致。</p>
+     *
+     * @return 链接目标；读不到返回 null（界面只显示为 LINK 类型，不显示箭头）
+     */
+    private static String readLinkTarget(String path) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                return java.nio.file.Files.readSymbolicLink(
+                        java.nio.file.Paths.get(path)).toString();
+            }
+            File f = new File(path);
+            File canon = f.getCanonicalFile();
+            return canon.getAbsolutePath().equals(path) ? null : canon.getAbsolutePath();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * {@link #toEntry} 的兜底实现：只用 {@code java.io.File}，零 {@code java.nio.file} 依赖。
+     *
+     * <p>目录/文件/链接的区分靠 {@code canonicalPath != absolutePath} 近似判断
+     * （无法区分「本条目是链接」与「路径中某段是链接」，但方向安全：
+     * 最多把普通条目显示成 LINK，不会漏删数据）。</p>
+     */
+    private static FileEntry toEntryFallback(File f) {
+        final String path = f.getAbsolutePath();
+        final long mtime = f.lastModified();
+        boolean link = false;
+        try {
+            link = !f.getCanonicalPath().equals(path);
+        } catch (Throwable ignored) {
+        }
+        if (link) {
+            return FileEntry.link(path, readLinkTarget(path), mtime);
         }
         if (f.isDirectory()) {
-            return FileEntry.dir(f.getAbsolutePath(), f.lastModified());
+            return FileEntry.dir(path, mtime);
         }
-        return FileEntry.file(f.getAbsolutePath(), f.length(), f.lastModified());
+        return FileEntry.file(path, f.length(), mtime);
     }
 
     /** 规范化路径：去尾部斜杠（根除外） */

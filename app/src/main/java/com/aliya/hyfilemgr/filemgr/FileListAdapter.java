@@ -14,6 +14,8 @@ import android.widget.TextView;
 
 import androidx.recyclerview.widget.RecyclerView;
 
+import java.util.List;
+
 import com.aliya.hyfilemgr.R;
 import com.aliya.hyfilemgr.access.AccessUtil;
 import com.aliya.hyfilemgr.access.FileEntry;
@@ -107,8 +109,31 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
     private final java.util.Map<String, android.graphics.drawable.Drawable> appIconCache =
             new java.util.HashMap<>();
 
-    /** 记住哪些包名查过（含查出 null 的），避免重复查询 */
+    /**
+     * 应用图标缓存上限（按条目数）。
+     *
+     * <p><b>为什么必须有上限</b>：{@code Android/data} 下可能有几千个包名目录，
+     * 不管有没有图标都会进 {@code appIconQueried}。旧实现两个集合都无界：
+     * 3000 个包名 × 30~100KB 图标 = <b>90~300MB</b> 常驻。
+     * 用户不会只待在一个目录，但会反复往返，故缓存必须存在（避免滚动时
+     * 走 PackageManager IPC），只是要控量。64 条足够覆盖屏幕内的包名目录。</p>
+     */
+    private static final int APP_ICON_CACHE_MAX = 64;
+
+    /** 记住哪些包名查过（含查出 null 的），避免重复查询；同样有上限 */
     private final java.util.Set<String> appIconQueried = new java.util.HashSet<>();
+
+    /** 两集合超限时各淘汰最旧的一半（插入顺序：HashSet/HashMap 无顺序，故用队列记录） */
+    private final java.util.ArrayDeque<String> appIconOrder = new java.util.ArrayDeque<>();
+
+    private void trimAppIconCache() {
+        while (appIconOrder.size() > APP_ICON_CACHE_MAX) {
+            String old = appIconOrder.pollFirst();
+            if (old == null) break;
+            appIconCache.remove(old);
+            appIconQueried.remove(old);
+        }
+    }
 
     /** 这些父目录下的直接子目录才当作包名文件夹 */
     private static final String[] PANGO_PARENT_SUFFIXES = {
@@ -172,6 +197,7 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         if (pkg == null) return null;
         if (appIconQueried.contains(pkg)) return appIconCache.get(pkg);
         appIconQueried.add(pkg);
+        appIconOrder.addLast(pkg);
         android.graphics.drawable.Drawable d = null;
         try {
             android.content.pm.PackageManager pm = context.getPackageManager();
@@ -182,6 +208,7 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
             // 未安装 / 不可见：静默
         }
         appIconCache.put(pkg, d);
+        trimAppIconCache();
         return d;
     }
 
@@ -214,6 +241,27 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         notifyDataSetChanged();
     }
 
+    /**
+     * 仅更新选择集合的引用，<b>不触发任何刷新</b>。
+     *
+     * <p>给「拖动框选」这种高频路径用：调用方自己知道哪些行变了，
+     * 会配合 {@code notifyItemRangeChanged(from, count, PAYLOAD_SELECTION)} 精确通知。</p>
+     *
+     * <p>对比 {@link #setSelected}：那个是 {@code notifyDataSetChanged()} 全表重绑，
+     * 适合「全选/取消全选」这种确实全变了的场景，不适合拖动。</p>
+     */
+    public void applySelection(Set<FileEntry> selected) {
+        this.selected = selected;
+    }
+
+    /**
+     * 局部刷新的 payload：只重算选中态（背景/缩放/勾选框）。
+     *
+     * <p>命中此 payload 时 {@link #onBindViewHolder(VH, int, List)} 跳过大头的
+     * 名称/副文本/图标/缩略图绑定，只重算与选中相关的几个属性。</p>
+     */
+    public static final Object PAYLOAD_SELECTION = new Object();
+
     public void setSelected(Set<FileEntry> selected) {
         this.selected = selected;
         notifyDataSetChanged();
@@ -222,6 +270,40 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
     @Override
     public VH onCreateViewHolder(ViewGroup parent, int viewType) {
         return new VH(buildRow());
+    }
+
+    /**
+     * 带 payload 的绑定：拖动框选时只重算选中态，不重做名称/图标/缩略图。
+     *
+     * <p>这是「拖动不卡」的关键——旧实现每个 MOVE 都全表 {@code notifyDataSetChanged}，
+     * 每行都要重建 GradientDrawable、重算 formatDate、重新请求缩略图。</p>
+     */
+    @Override
+    public void onBindViewHolder(VH h, int position, List<Object> payloads) {
+        if (payloads != null && !payloads.isEmpty()) {
+            boolean onlySelection = true;
+            for (Object o : payloads) {
+                if (o != PAYLOAD_SELECTION) { onlySelection = false; break; }
+            }
+            if (onlySelection) {
+                bindSelection(h, position);
+                return;
+            }
+        }
+        onBindViewHolder(h, position);
+    }
+
+    /** 只重算选中相关的视觉（背景 / 缩放 / 勾选框），不动名称与图标 */
+    private void bindSelection(VH h, int position) {
+        FileEntry e = entries.get(position);
+        boolean checked = selected != null && selected.contains(e);
+        int surface = checked
+                ? UiKit.color(context, com.google.android.material.R.attr.colorPrimaryContainer)
+                : UiKit.color(context, com.google.android.material.R.attr.colorSurfaceContainerLow);
+        h.itemView.setBackground(makeBg(surface, checked));
+        h.itemView.setScaleX(checked ? 0.985f : 1f);
+        h.itemView.setScaleY(checked ? 0.985f : 1f);
+        if (h.check != null) h.check.setChecked(checked);
     }
 
     @Override

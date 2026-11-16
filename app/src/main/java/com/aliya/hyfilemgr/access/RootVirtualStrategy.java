@@ -43,17 +43,11 @@ public final class RootVirtualStrategy {
         File[] real = root.listFiles();
         if (real != null) {
             // 真实成功：白名单裁剪（保留链接标记与真实元数据）
+            // 复用 AccessRouter.toEntry：它用 Os.lstat 一次拿到类型/大小/mtime，
+            // 且不依赖 API 26 的 java.nio.file.Files（旧写法在此处会低版本崩溃）。
             for (File f : real) {
                 if (!ROOT_WHITELIST.contains(f.getName())) continue;
-                boolean link = java.nio.file.Files.isSymbolicLink(f.toPath());
-                if (link) {
-                    String target = readLink(f);
-                    out.add(FileEntry.link(f.getAbsolutePath(), target, f.lastModified()));
-                } else if (f.isDirectory()) {
-                    out.add(FileEntry.dir(f.getAbsolutePath(), f.lastModified()));
-                } else {
-                    out.add(FileEntry.file(f.getAbsolutePath(), f.length(), f.lastModified()));
-                }
+                out.add(AccessRouter.toEntry(f));
             }
         } else {
             // 真实读取失败（真机实测：untrusted_app 对 / 的 File.listFiles() 返回 null，
@@ -75,7 +69,13 @@ public final class RootVirtualStrategy {
 
     private static String readLink(File f) {
         try {
-            return java.nio.file.Files.readSymbolicLink(f.toPath()).toString();
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                return java.nio.file.Files.readSymbolicLink(
+                        java.nio.file.Paths.get(f.getAbsolutePath())).toString();
+            }
+            File canon = f.getCanonicalFile();
+            return canon.getAbsolutePath().equals(f.getAbsolutePath())
+                    ? null : canon.getAbsolutePath();
         } catch (Throwable t) {
             return null;
         }

@@ -561,24 +561,57 @@ public class ImageViewerActivity extends Activity {
         }
     }
 
-    /** 高清采样：原始尺寸不超屏幕 4 倍则用 1，超出按 2/4 逐级降（上界 8） */
+    /**
+     * 高清模式采样：目标 2× 屏幕，再加像素数硬闸防 OOM。
+     *
+     * <p><b>旧实现的 OOM 路径（实测推算）</b>：判据是「原始边不超屏幕 4 倍就 sample=1」，
+     * 而 1080×2400 屏的 4 倍单边是 4320px —— 市面上绝大多数手机原图（4000×3000）
+     * 都落在 sample=1 区间，即 **48MB 单张**；5000 万像素（8160×6120）仍不触发降级，
+     * 直接 **200MB** → 必 OOM。而 {@code offscreenPageLimit=1} 常驻 3 页 = 峰值翻三倍。
+     * 且 hdMode 默认 true（{@link #KEY_HD_MODE} 默认值），用户默认就在风险路径上。</p>
+     *
+     * <p>改动：① 判据从 4× 收到 2×；② 上界从 8 放宽到 32（配合新判据才能真降下来）；
+     * ③ 增加 {@link #MAX_DECODE_PIXELS} 像素数硬闸 —— 单边判据无法拦住「两边都很大」
+     * 的方图，必须再卡一道总像素数。</p>
+     *
+     * <p>代价：超高清图的极限清晰度下降。用户放大到 100% 时可能看出差异，
+     * 但这比崩溃（或不崩但被系统杀进程）好——若将来需要「放大仍清晰」，
+     * 正确做法是引入 {@code BitmapRegionDecoder} 分块解码（本项目目前 0 处使用），
+     * 而不是把整图解码做大。</p>
+     */
     private int calcHdSample(int w, int h) {
         int reqW = getResources().getDisplayMetrics().widthPixels;
         int reqH = getResources().getDisplayMetrics().heightPixels;
         int sample = 1;
-        while ((w / (sample * 2) > reqW * 4 || h / (sample * 2) > reqH * 4) && sample < 8) {
-            sample *= 2;
-        }
-        return sample;
+        // ① 单边判据：高清也比屏幕 2 倍为止（旧为 4 倍）
+        while ((w / sample > reqW * 2 || h / sample > reqH * 2) && sample < 32) sample *= 2;
+        // ② 总像素硬闸：单边判据拦不住两边都大的方图。
+        //    4 字节/像素，16MP ≈ 64MB，留足余量给 3 页常驻与其它堆。
+        while ((long) (w / sample) * (h / sample) > MAX_DECODE_PIXELS && sample < 32) sample *= 2;
+        return Math.max(1, sample);
     }
 
-    /** 普通模式采样：按屏幕 2 倍，上界 16（超宽/超高图也能降下来） */
+    /**
+     * 单张位图的解码像素上限（ARGB_8888 下 16MP ≈ 64MB）。
+     *
+     * <p>为什么要硬闸：{{@link #calcHdSample}/{@link #calcSample} 的 while 循环
+     * 都有 {@code sample < 32} 上界，极端尺寸（如 20000×20000）会停在 32 仍然很大；
+     * 而且「单边不超屏幕 N 倍」对正方形大图不敏感。总像素数才是内存的真实来源。</p>
+     */
+    private static final long MAX_DECODE_PIXELS = 16_000_000L;
+
+    /**
+     * 普通模式采样：按屏幕 2 倍，上界 16（超宽/超高图也能降下来）。
+     * 同样加像素数硬闸。
+     */
     private int calcSample(int w, int h) {
         int reqW = getResources().getDisplayMetrics().widthPixels;
         int reqH = getResources().getDisplayMetrics().heightPixels;
         int sample = 1;
         // 用 || 而非 &&：超宽/超高图在 && 下 sample 恒为 1，会全尺寸解码
         while ((w / sample > reqW * 2 || h / sample > reqH * 2) && sample < 16) sample *= 2;
+        // 总像素硬闸（与高清模式同一上限；普通模式已用 RGB_565，但 16MP×2B 仍需卡住极端值）
+        while ((long) (w / sample) * (h / sample) > MAX_DECODE_PIXELS && sample < 32) sample *= 2;
         return Math.max(1, sample);
     }
 

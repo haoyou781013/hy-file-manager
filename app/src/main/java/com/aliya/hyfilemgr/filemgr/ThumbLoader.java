@@ -502,6 +502,36 @@ public final class ThumbLoader {
         } catch (Throwable ignored) {
         }
         MEM.put(key, b);
+        trimDiskThrottled(ctx);
+    }
+
+    // ── trimDisk 节流 ──
+    //
+    // 旧实现每次 writeDisk 都无条件调 trimDisk：全盘 listFiles() + 每文件 length()
+    // + 超限时全量排序。缓存 5000 张时，每解一张就≈ 5000 次 stat；
+    // 而 POOL 只有 3 线程，滚动一屏 16 张 = 16 次全目录扫描
+    // —— 这就是「大目录滚动后段缩略图越出越慢」的成因。
+    //
+    // 改法：内存里累加字节数，只在「确实超了 + 距上次 trim 超过 30 秒」才真扫盘。
+    // 累加值是估算（包含 GC 前的文件），宁可早 trim 不可晚 trim，不会误删新文件。
+    /** 估算的磁盘占用（字节）；<0 表示未知，下次 trim 会全扫重建 */
+    private static final java.util.concurrent.atomic.AtomicLong diskBytesAcc =
+            new java.util.concurrent.atomic.AtomicLong(-1);
+    /** 上次 trim 的时间戳（ms） */
+    private static final java.util.concurrent.atomic.AtomicLong lastTrimAt =
+            new java.util.concurrent.atomic.AtomicLong(0);
+    /** trim 最小间隔：30 秒内不重复全盘扫描 */
+    private static final long TRIM_MIN_INTERVAL_MS = 30_000L;
+
+    private static void trimDiskThrottled(Context ctx) {
+        long acc = diskBytesAcc.get();
+        // 未知时先全扫一次（首启动），之后都靠累加值与定期重建
+        if (acc >= 0) {
+            long now = android.os.SystemClock.elapsedRealtime();
+            boolean overLimit = acc > DISK_MAX_BYTES;
+            boolean intervalOk = now - lastTrimAt.get() > TRIM_MIN_INTERVAL_MS;
+            if (!overLimit || !intervalOk) return;
+        }
         trimDisk(ctx);
     }
 
@@ -509,17 +539,36 @@ public final class ThumbLoader {
     private static void trimDisk(Context ctx) {
         File dir = new File(ctx.getCacheDir(), "thumbs");
         File[] all = dir.listFiles();
-        if (all == null || all.length == 0) return;
-        long total = 0;
-        for (File f : all) total += f.length();
-        if (total <= DISK_MAX_BYTES) return;
-        java.util.Arrays.sort(all, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
-        long target = DISK_MAX_BYTES * 8 / 10;   // 一次清到 80%，避免频繁 trim
-        for (File f : all) {
-            if (total <= target) break;
-            long len = f.length();
-            if (f.delete()) total -= len;
+        if (all == null || all.length == 0) {
+            diskBytesAcc.set(0);
+            lastTrimAt.set(android.os.SystemClock.elapsedRealtime());
+            return;
         }
+        // 先把 length 与 lastModified 各读一遍存进数组：旧实现用 comparator 直接调
+        // lastModified()，N log N 次比较 = N log N 次 syscall。
+        final long[] sizes = new long[all.length];
+        final long[] mtimes = new long[all.length];
+        long total = 0;
+        for (int i = 0; i < all.length; i++) {
+            sizes[i] = all[i].length();
+            mtimes[i] = all[i].lastModified();
+            total += sizes[i];
+        }
+        lastTrimAt.set(android.os.SystemClock.elapsedRealtime());
+        if (total <= DISK_MAX_BYTES) {
+            diskBytesAcc.set(total);   // 重建估算值，纠正累加误差
+            return;
+        }
+        // 按下标排序（不重排 File[]，避免额外分配）
+        Integer[] idx = new Integer[all.length];
+        for (int i = 0; i < idx.length; i++) idx[i] = i;
+        java.util.Arrays.sort(idx, (a, b) -> Long.compare(mtimes[a], mtimes[b]));
+        long target = DISK_MAX_BYTES * 8 / 10;   // 一次清到 80%，避免频繁 trim
+        for (Integer i : idx) {
+            if (total <= target) break;
+            if (all[i].delete()) total -= sizes[i];
+        }
+        diskBytesAcc.set(total);
     }
 
     // APK 解码需要 Context，用静态持有（Application 级，不会泄漏）

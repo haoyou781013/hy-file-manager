@@ -339,7 +339,18 @@ public final class SafStrategy {
                 return false;
             }
             boolean ok = true;
-            for (String[] c : listChildren(ctx, srcDoc)) {
+            // 用 listChildrenOrNull：区分「读失败」与「空目录」。
+            // 旧实现在读失败时返回空 list → 递归循环不执行 → ok 保持 true
+            // → 目标建成空目录却报成功 → moveInto 删源，用户数据丢失。
+            List<String[]> kids = listChildrenOrNull(ctx, srcDoc);
+            if (kids == null) {
+                if (err != null) {
+                    err.append("无法读取源目录（权限不足或已不存在）").append(name).append(' ');
+                }
+                try { deleteDocument(ctx, newDir); } catch (Throwable ignored) {}
+                return false;
+            }
+            for (String[] c : kids) {
                 if (!copySafToSaf(ctx, c[0], newDir, c[1], err)) ok = false;
             }
             if (!ok) {
@@ -404,10 +415,28 @@ public final class SafStrategy {
                 }
                 boolean ok = true;
                 File[] children = src.listFiles();
-                if (children != null) {
-                    for (File c : children) {
-                        if (!copyFileToSaf(ctx, c, newDir, c.getName(), err)) ok = false;
+                // ⚠ 关键：「读不到」不等于「空目录」。
+                //
+                // listFiles() 返回 null 的典型原因：无读权限、目录已被删、
+                // SELinux 拦截。旧实现 if (children != null) 静默跳过循环，
+                // ok 保持 true → 目标只建成空目录却报成功。
+                //
+                // 而 moveInto 的第③步是「copyInto 成功 → deleteDocument(源)」——
+                // 于是调用方会看到：目标是个空目录、源目录连同内容被删、界面报「成功」。
+                // 这是真正丢用户数据的路径，必须让「读不到」显式失败。
+                //
+                // 真正的空目录 listFiles() 返回的是长度为 0 的数组（非 null），
+                // 所以这里抛错不会误伤「正常复制空目录」的场景。
+                if (children == null) {
+                    if (err != null) {
+                        err.append("无法读取源目录（权限不足或已不存在）")
+                                .append(name).append(' ');
                     }
+                    try { deleteDocument(ctx, newDir); } catch (Throwable ignored) {}
+                    return false;
+                }
+                for (File c : children) {
+                    if (!copyFileToSaf(ctx, c, newDir, c.getName(), err)) ok = false;
                 }
                 if (!ok) {
                     // ⭐1 复制失败清理已创建的目标目录，防残留垃圾
@@ -479,12 +508,28 @@ public final class SafStrategy {
 
     /** 列出 document 直接子条目（{document uri, 显示名, mime}），供复制递归/计数/重名检查 */
     public static List<String[]> listChildren(Context ctx, String docUriStr) {
+        List<String[]> out = listChildrenOrNull(ctx, docUriStr);
+        return out == null ? new ArrayList<>() : out;
+    }
+
+    /**
+     * 同 {@link #listChildren}，但**能区分「读失败」与「真空目录」**。
+     *
+     * <p>为什么需要：{@code listChildren} 旧实现无论 cursor 为 null、query 抛异常
+     * 还是目录真的为空，都返回同一个空 list。调用方（递归复制）无法区分，
+     * 于是把「无读权限」当成「空目录」——而 {@code moveInto} 的后续逻辑是
+     * 「复制成功 → 删源」，最终结果就是<b>目标建成空的、源目录被删、界面报成功</b>。
+     * 这是真正丢用户数据的路径。</p>
+     *
+     * @return 子项列表（真空目录返回空 list）；读失败返回 {@code null}
+     */
+    public static List<String[]> listChildrenOrNull(Context ctx, String docUriStr) {
         List<String[]> out = new ArrayList<>();
         try {
             Uri children = childrenUri(Uri.parse(docUriStr));
-            if (children == null) return out;
+            if (children == null) return null;
             Cursor c = queryChildrenCursor(ctx, children);
-            if (c == null) return out;
+            if (c == null) return null;
             try {
                 while (c.moveToNext()) {
                     String id = c.getString(0);
@@ -505,6 +550,7 @@ public final class SafStrategy {
                 c.close();
             }
         } catch (Throwable ignored) {
+            return null;
         }
         return out;
     }

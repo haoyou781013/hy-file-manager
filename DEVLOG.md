@@ -66,6 +66,112 @@
 
 **验证**：`assembleRelease` 通过（1m13s），装机后主界面双窗格渲染正常，logcat 无崩溃。
 
+### 三视角审查修复（2026-11-16，第 1 批）
+
+按 `docs/REVIEW-3PERSPECTIVE.md` 修复崩溃/丢数据/性能共 11 项。
+
+#### 崩溃类
+
+1. **minSdk 23 却用 API 26 的 `java.nio.file.Files`**（最严重）
+   `AccessRouter.toEntry()` 每条目调 `Files.isSymbolicLink` → Android 6.x/7.x
+   **进任何目录必崩**（`NoClassDefFoundError`）。同项目 `FileManagerModule.isSymlink()`
+   早有版本判断，这两处漏了。
+   改法：`toEntry` 全面改用 `android.system.Os.lstat`（API 21+，无版本问题），
+   一次拿到 `st_mode/st_size/st_mtime`，用 `st_mode & S_IFMT` 判 DIR/LINK/FILE。
+   顺手解决 **P4c**：旧实现每条目 4 次 syscall（isSymbolicLink + isDirectory +
+   length + lastModified）+ 1 个 `UnixPath` 对象，万项目录 = 4 万次 syscall；
+   现在 1 次 `lstat` 搞定。失败时退回纯 `java.io.File` 的 `toEntryFallback`（零 nio 依赖）。
+   `RootVirtualStrategy.listRoot()` 改为直接复用 `AccessRouter.toEntry`，删掉重复逻辑。
+
+2. **未启用 coreLibraryDesugaring 却用 API 24/33 库**
+   代码用了 `Supplier`/`Consumer`（API 24）、`computeIfAbsent`/`removeIf`（API 24）、
+   `String.repeat`（API 33）。`lint.abortOnError=false` 把 NewApi 掩盖了。
+   改法：`build.gradle.kts` 启用 `isCoreLibraryDesugaringEnabled = true` +
+   `desugar_jdk_libs:2.1.5`；`String.repeat` 改用项目已有的 `repeatSpaces()`
+   （脱糖不一定覆盖 String 的新实例方法）。
+   `exportDiagnosticLog` 的 `Files.readAllBytes` 改为自写 `readFileBytes`。
+
+#### 数据安全类
+
+3. **SAF 复制失败当成功 → 删源丢数据**
+   `copyFileToSaf` 里 `File[] children = src.listFiles(); if (children != null) {...}`，
+   `listFiles()` 返回 null（无读权限/目录已删/SELinux 拦截）时静默跳过循环，
+   `ok` 保持 true → 目标只建成空目录却报成功。而 `moveInto` 第③步是
+   「copyInto 成功 → deleteDocument(源)」→ **源目录连同内容被删，界面报「成功」**。
+   改法：`children == null` 时写错误、删已建目标目录、返回 false。
+   注意真正的空目录 `listFiles()` 返回长度 0 的数组（非 null），不会误伤。
+   同类问题在 `copySafToSaf`：`listChildren()` 无论失败还是空目录都返回空 list。
+   新增 `listChildrenOrNull()`（读失败返回 null）来区分，递归复制改用它。
+
+4. **编辑器保存非原子 + dirty 竞态**
+   ① `new FileOutputStream(tab.file)` 原地截断，写一半被杀/掉电 → 原文件变半截或 0 字节。
+   ② 保存大文件期间用户继续输入（TextWatcher 置 dirty=true），worker 完成后
+   handler **无条件** `tab.dirty = false` → 关闭标签判 `!dirty` 直接移除，**新输入静默丢弃**。
+   改法：写同目录 `xxx.hysave.tmp` → `getFD().sync()` → `renameTo`（原子）；
+   rename 失败（跨分区/被占用）降级为「备份原文件 + 复制 + 失败回滚」。
+   dirty 改为「保存前快照 vs 完成时 content」比对，不一致则保持 dirty，
+   toast 也区分「已保存」与「已保存（保存期间又有修改未存）」。
+
+#### OOM 类
+
+5. **图片查看器高清模式上限 16× 屏幕**
+   `calcHdSample` 判据是「原始边不超屏幕 4 倍就 sample=1」，1080×2400 屏的 4 倍
+   单边是 4320px —— 手机原图（4000×3000）全落在 sample=1，即 48MB 单张；
+   5000 万像素（8160×6120）仍不降级 = **200MB** 必 OOM，而 `hdMode` 默认 true。
+   改法：判据 4× → 2×，上界 8 → 32，新增 `MAX_DECODE_PIXELS = 16_000_000`
+   总像素硬闸（单边判据拦不住两边都大的方图）。`calcSample` 也加同一硬闸。
+
+#### 性能类
+
+6. **拖动框选每帧全表重绑**
+   `applyRangeSelection` 里 `if (changed || true)` 让 changed 判断完全失效，
+   每个 `onInterceptTouchEvent(MOVE)` 都 `setSelected()` → `notifyDataSetChanged()`
+   → 16 行全部重绑，60~120 MOVE/秒 = **1000~2000 次 bind/秒**。
+   改法：新增 `FileListAdapter.applySelection()`（只换引用不刷新）+
+   `PAYLOAD_SELECTION` + `onBindViewHolder(VH, int, payloads)` 走轻量
+   `bindSelection()`（只重算背景/缩放/勾选框，不碰名称/图标/缩略图），
+   并只对「上次区间 ∪ 本次区间」`notifyItemRangeChanged`。
+
+7. **`formatDate` 每行构造 SDF ×1 + Calendar ×2**
+   `buildSub()` 每个文件行都调，绑定 100 行 = 200 次 Calendar + 100 次
+   `new SimpleDateFormat`（构造要解析 pattern 并建 DateFormatSymbols）。
+   改法：两个 pattern 各缓存一份 `ThreadLocal<SimpleDateFormat>`（非线程安全，
+   相册扫描后台线程也会调）；「今年」只每年算一次（`volatile int cachedYear`）。
+
+8. **`trimDisk` 每写一张缩略图就全盘扫描**
+   `writeDisk()` 结尾无条件 `trimDisk()`：全目录 `listFiles()` + 每文件 `length()`
+   + 超限时全量排序（comparator 内还再调 `lastModified()`，N log N 次 syscall）。
+   缓存 5000 张时每解一张 ≈ 5000 次 stat，而 POOL 只有 3 线程
+   —— 这就是「大目录滚动后段缩略图越出越慢」的成因。
+   改法：`AtomicLong` 内存累加字节数 + 30 秒最小间隔，只在超限时才真扫盘；
+   排序前把 `length`/`lastModified` 读进数组，改用下标排序避免 comparator 重复 syscall。
+
+9. **`cardStyleMap` 强引用泄漏**
+   用 `IdentityHashMap`（key 强引用）而配对的是 `WeakReference` 列表。
+   设置页每次重建 200~300 个 View 全进 map，旧 View 永不回收；清理阈值
+   `size() > refs.size()*2 + 32` 随两者同步增长，基本不触发。
+   改法：换 `WeakHashMap`（`android.view.View` 未重写 equals/hashCode，语义等价），
+   并删掉那段已无意义的阈值反向清理。
+
+10. **`appIconCache` 无上限**
+    `Android/data` 下 3000 个包名 → 缓存 3000 个 Drawable（30~100KB each）= 90~300MB。
+    改法：加 `appIconOrder` 队列 + `APP_ICON_CACHE_MAX = 64`，
+    超限时按插入顺序淘汰（`appIconQueried` 同步清理，保证能重新查询）。
+
+11. **`savePrefInt`/`savePrefBool` 主线程 `commit()`**
+    25 处主线程调用，每次 fsync 2~10ms（低端机 20ms+）；滑块松手还会紧接
+    `persistState()`（又一次 24 键 commit）= **2 次 fsync**，表现为「拖完卡一下」。
+    改法：方法体改为 `PREF_HANDLER.post(...)`（专用后台线程，`persistState` 已走这条），
+    签名不变 → 25 个调用点零改动。
+
+**验证**：`assembleRelease` 通过（1m37s），装机启动正常，
+无崩溃、无 `NoSuchMethodError`/`NoClassDefFoundError`，双窗格渲染正常
+（`Os.lstat` 改造后文件大小与 mtime 显示均正确）。
+
+**下批待修**：X2 属性框全局 replace、X3 uniqueName 未回写、
+X4 ZipCache 原子写、D8 回收站清扫移后台、P5 缩略图黑帧 Bitmap 泄漏、
+D3 解压清空既有目录。
+
 ### 下一步待办
 
 - 文本编辑器重构（预览/编辑双模式、语法高亮、快捷输入栏、编码切换、
