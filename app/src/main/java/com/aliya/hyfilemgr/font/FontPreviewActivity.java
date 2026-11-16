@@ -187,7 +187,7 @@ public class FontPreviewActivity extends Activity {
 
         TextView back = new TextView(this);
         back.setText("‹");
-        back.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28);
+        back.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
         back.setTextColor(0xFFFFFFFF);
         back.setGravity(Gravity.CENTER);
         back.setPadding(dp(10), 0, dp(14), dp(4));
@@ -220,7 +220,7 @@ public class FontPreviewActivity extends Activity {
         // 预览输入框
         input = new EditText(this);
         input.setText(sampleText);
-        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         input.setTextColor(0xFFD5DBE5);
         input.setHintTextColor(0xFF5A6472);
         input.setHint("输入要预览的文字…");
@@ -288,7 +288,7 @@ public class FontPreviewActivity extends Activity {
             // 字号标注
             TextView tag = new TextView(this);
             tag.setText(sp + " sp");
-            tag.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            tag.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
             tag.setTextColor(0xFF5A6472);
             LinearLayout.LayoutParams tagLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);

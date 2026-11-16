@@ -135,37 +135,102 @@ public final class UiKit {
 
     // ══════════════ 全局排版标尺（跨模块统一）════════════
     //
-    // 全量审计发现：全项目存在 12 种字号（9/10/11/12/12.5/13/14/15/16/17/20/26/30），
-    // 其中 9sp 过小（可读性问题）、12.5/17 离网格。此处定义标尺，
-    // 新代码一律引用常量；旧值逐步向标尺靠拢。
-    /** 微型标签 / 角标（原 9/10sp 过小，统一 11） */
+    // 2026-11-17 重定：原标尺 {11,12,13,14,16,20,26} 本身就含 12/13/14
+    // 三个 1sp 相邻档——而 1sp 差无法构成视觉层级，实测全项目 11/12/13
+    // 三档合计 135 次（占 63%），读者根本分不出轻重。
+    //
+    // 新标尺：6 档，档差 ≥2sp，每档语义唯一。
+    // 全项目 213 处 setTextSize 已按此映射收敛（14 种 → 6 种）：
+    //   9/10/11/11.5 → 11    12/13 → 13    14/15 → 15
+    //   16/17/18     → 17    20/22 → 20    26/28 → 26
+    // 新代码一律引用常量，不要再写数值。
+    /** 微型标签 / 角标 / 辅助信息 */
     public static final float TYPE_MICRO = 11f;
-    /** 次要说明文字 */
-    public static final float TYPE_CAPTION = 12f;
-    /** 正文 */
+    /** 正文（列表副标题、说明文字、正文段落） */
     public static final float TYPE_BODY = 13f;
-    /** 强调正文 */
-    public static final float TYPE_BODY_LARGE = 14f;
-    /** 小标题 */
-    public static final float TYPE_TITLE = 16f;
-    /** 段落标题 */
+    /** 强调正文 / 行标题 / 弹窗正文 */
+    public static final float TYPE_BODY_LARGE = 15f;
+    /** 小标题 / 章节名 / 应用名 */
+    public static final float TYPE_TITLE = 17f;
+    /** 段落标题 / 页面标题 */
     public static final float TYPE_HEADLINE = 20f;
-    /** 页面大标题 */
+    /** 大标题 / 大数字 */
     public static final float TYPE_DISPLAY = 26f;
 
     // ══════════════ 全局圆角标尺 ═════════════
-    /** 小组件（图标内衬 / 输入框 / 胶囊内） */
-    public static final int RADIUS_SMALL = 8;
-    /** 按钮 / 中卡 */
+    // 2026-11-17 重定：原常量外部引用 0 次（纯摆设），实际散写 12 种半径。
+    // 新标尺对齐实际高频值：999（胶囊）×8、16（卡片）×6、14×9、10×5、8×4。
+    // 16 是最常用的卡片角，现在终于有常量了。
+    /** 小元素：图标内衬 / 小标签 / 描边点 */
+    public static final int RADIUS_XS = 6;
+    /** 小组件：输入框 / 图标容器 */
+    public static final int RADIUS_SMALL = 10;
+    /** 按钮 / 中卡 / 列表行 */
     public static final int RADIUS_MEDIUM = 14;
     /** 内容卡片 / 弹窗容器 */
-    public static final int RADIUS_LARGE = 24;
+    public static final int RADIUS_LARGE = 16;
+    /** 大容器 / 侧边栏面板 */
+    public static final int RADIUS_XL = 24;
     /** 全圆角胶囊（标签 / 底栏 / 播放钮） */
     public static final int RADIUS_PILL = 999;
 
+    // ══════════════ 触摸目标 ═════════════
+    /**
+     * 最小触摸目标尺寸（dp）。
+     *
+     * <p>Android 无障碍规范要求 48dp（iOS 44pt，Web 24 CSS px + WCAG 例外）。
+     * 视觉上可以是 34dp 的图标，但点击区必须补齐到 48dp——
+     * 用 {@code setPadding} 加透明边，或 {@code minWidth/minHeight}。</p>
+     *
+     * <p>实测本项目曾有 15 处低于此值（最小 8dp 的回收站箭头、34dp 的音乐控制键），
+     * 对运动障碍用户基本不可用。</p>
+     */
+    public static final int TOUCH_MIN_DP = 48;
+
+    /**
+     * 当前主题是否为深色（用于选对比度达标的前景色）。
+     *
+     * <p><b>为什么不读 App 的 uiTheme 设置</b>：{@code UiKit} 是静态工具类，
+     * 拿不到 {@code FileManagerModule.uiTheme}（跟随系统/浅色/深色三态）。
+     * 这里直接从主题属性取实际生效的 {@code colorSurface} 亮度判断——
+     * 无论设置怎么选，最终渲染出来是深是浅由它决定。</p>
+     *
+     * <p>用 WCAG 相对亮度公式（不是简单的 RGB 平均），与无障碍对比度标准同源。</p>
+     */
+    public static boolean isDarkTheme(Context context) {
+        try {
+            int surface = color(context, com.google.android.material.R.attr.colorSurface);
+            return relativeLuminance(surface) < 0.5;
+        } catch (Throwable t) {
+            return false;   // 取不到就当浅色（多数设备默认）
+        }
+    }
+
+    /** WCAG 相对亮度（0=全黑，1=全白） */
+    public static double relativeLuminance(int color) {
+        double r = ((color >> 16) & 0xFF) / 255.0;
+        double g = ((color >> 8) & 0xFF) / 255.0;
+        double b = (color & 0xFF) / 255.0;
+        r = r <= 0.03928 ? r / 12.92 : Math.pow((r + 0.055) / 1.055, 2.4);
+        g = g <= 0.03928 ? g / 12.92 : Math.pow((g + 0.055) / 1.055, 2.4);
+        b = b <= 0.03928 ? b / 12.92 : Math.pow((b + 0.055) / 1.055, 2.4);
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    }
+
+    /**
+     * 两色对比度（1:1 ~ 21:1）。WCAG 正文标准 4.5:1，大字号 3:1。
+     * 供审查脚本/单测验证用，也可在代码里做运行时断言。
+     */
+    public static double contrastRatio(int c1, int c2) {
+        double l1 = relativeLuminance(c1);
+        double l2 = relativeLuminance(c2);
+        if (l1 < l2) { double t = l1; l1 = l2; l2 = t; }
+        return (l1 + 0.05) / (l2 + 0.05);
+    }
+
     /** 按标尺取最接近的字号（供旧代码迁移用） */
     public static float snapType(float sp) {
-        float[] scale = {TYPE_MICRO, TYPE_CAPTION, TYPE_BODY, TYPE_BODY_LARGE,
+        float[] scale = {TYPE_MICRO, TYPE_BODY, TYPE_BODY_LARGE,
                 TYPE_TITLE, TYPE_HEADLINE, TYPE_DISPLAY};
         float best = scale[0];
         float diff = Math.abs(sp - best);
@@ -971,7 +1036,7 @@ public final class UiKit {
         if (desc != null && !desc.isEmpty()) {
             TextView descView = new TextView(context);
             descView.setText(desc);
-            descView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            descView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
             descView.setTextColor(onSurfaceVariant);
             LinearLayout.LayoutParams descLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);

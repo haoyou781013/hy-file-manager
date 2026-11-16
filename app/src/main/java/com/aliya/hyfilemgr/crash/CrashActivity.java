@@ -99,7 +99,7 @@ public class CrashActivity extends Activity {
         scroll.setPadding(sp, sp, sp, sp);
         TextView body = new TextView(this);
         body.setText(report);
-        body.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        body.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         body.setTextColor(0xFFD5DBE5);
         body.setTypeface(Typeface.MONOSPACE);
         body.setTextIsSelectable(true);
@@ -162,7 +162,7 @@ public class CrashActivity extends Activity {
         tip.setText("将把崩溃堆栈、设备与系统信息提交到开发者的 GitHub Issues，无需注册账号。\n\n"
                 + "请注意：崩溃堆栈可能包含你当时打开的文件路径。若介意，请先点「复制」自行去除后再反馈。"
                 + "\n\n（可选）补充说明发生了什么：");
-        tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tip.setTextColor(0xFFC8D0DC);
         tip.setLineSpacing(dp(2), 1f);
         tip.setPadding(dp(4), 0, dp(4), dp(8));

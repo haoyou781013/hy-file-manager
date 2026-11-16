@@ -901,7 +901,7 @@ public class MediaPlayerActivity extends Activity {
 
             TextView t = new TextView(this);
             t.setText(label);
-            t.setTextSize(12);
+            t.setTextSize(13);
             t.setGravity(android.view.Gravity.CENTER);
             t.setMaxLines(2);
             t.setPadding(dpInt(6), dpInt(12), dpInt(6), dpInt(12));

@@ -803,13 +803,13 @@ public class ImageViewerActivity extends Activity {
         final android.app.Dialog dialog = UiKit.glassDialog(this, box);
         TextView cancel = new TextView(this);
         cancel.setText("取消");
-        cancel.setTextSize(14);
+        cancel.setTextSize(15);
         cancel.setTextColor(0xCCFFFFFF);
         cancel.setPadding(dp(16), dp(8), dp(16), dp(8));
         cancel.setOnClickListener(v -> UiKit.dismissWithAnim(dialog));
         TextView ok = new TextView(this);
         ok.setText("删除");
-        ok.setTextSize(14);
+        ok.setTextSize(15);
         ok.setTypeface(null, android.graphics.Typeface.BOLD);
         ok.setTextColor(0xFFFF6E6E);
         ok.setPadding(dp(16), dp(8), dp(16), dp(8));
@@ -851,7 +851,7 @@ public class ImageViewerActivity extends Activity {
             final int which = i;
             TextView row = new TextView(this);
             row.setText(targets[i]);
-            row.setTextSize(14);
+            row.setTextSize(15);
             row.setTextColor(0xE6FFFFFF);
             row.setPadding(dp(4), dp(12), dp(4), dp(12));
             row.setBackgroundResource(com.aliya.hyfilemgr.R.drawable.bg_ripple);

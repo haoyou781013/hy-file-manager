@@ -518,7 +518,7 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         textCol.addView(nameRow);
 
         TextView name = new TextView(context);
-        name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         name.setTextColor(UiKit.color(context, com.google.android.material.R.attr.colorOnSurface));
         name.setTypeface(null, Typeface.BOLD);
         name.setSingleLine(true);

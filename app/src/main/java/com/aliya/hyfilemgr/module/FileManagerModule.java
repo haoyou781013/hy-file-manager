@@ -1303,7 +1303,7 @@ public class FileManagerModule extends HyVqModule {
     private TextView subHeader(String text) {
         TextView tv = new TextView(ctx);
         tv.setText(text);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f);
         tv.setTypeface(null, android.graphics.Typeface.BOLD);
         tv.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorPrimary));
@@ -1381,7 +1381,7 @@ public class FileManagerModule extends HyVqModule {
 
                     if (sub != null) {
                         tv2 = new TextView(ctx);
-                        tv2.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+                        tv2.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
                         tv2.setTextColor(UiKit.color(ctx,
                                 com.google.android.material.R.attr.colorOnSurfaceVariant));
                         tv2.setSingleLine(true);
@@ -2040,7 +2040,7 @@ public class FileManagerModule extends HyVqModule {
         clipBar.setVisibility(View.GONE);
 
         clipInfo = new TextView(ctx);
-        clipInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        clipInfo.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         clipInfo.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSecondaryContainer));
         clipBar.addView(clipInfo, new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
@@ -2075,7 +2075,7 @@ public class FileManagerModule extends HyVqModule {
 
         // ── 第一行：已选计数 ──
         opCount = new TextView(ctx);
-        opCount.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        opCount.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         opCount.setTypeface(null, android.graphics.Typeface.BOLD);
         opCount.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorPrimary));
@@ -2130,7 +2130,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView tv = new TextView(ctx);
         tv.setText(label);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         tv.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         tv.setGravity(Gravity.CENTER);
@@ -2188,27 +2188,31 @@ public class FileManagerModule extends HyVqModule {
         // ① 后退 <
         navBackBtn = navButton(dp(20), v -> navBack(active));
         navBackBtn.setImageResource(R.drawable.ic_chevron_left);
+        navBackBtn.setContentDescription("后退");
         addNavBtnWrap(navBackBtn);
 
         // ② 前进 >
         navFwdBtn = navButton(dp(20), v -> navForward(active));
         navFwdBtn.setImageResource(R.drawable.ic_chevron_right);
+        navFwdBtn.setContentDescription("前进");
         addNavBtnWrap(navFwdBtn);
 
         // ③ 上级 ↑
         ImageView upBtn = navButton(dp(20), v -> navUp(active));
         upBtn.setImageResource(R.drawable.ic_arrow_upward);
+        upBtn.setContentDescription("返回上级目录");
         addNavBtnWrap(upBtn);
 
         // ④ 同步路径：蓝色包裹的 ← → 组合
         syncBtn = buildSyncButton();
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(
-                dp(40), ViewGroup.LayoutParams.WRAP_CONTENT);
+                dp(UiKit.TOUCH_MIN_DP), ViewGroup.LayoutParams.WRAP_CONTENT);
         bottomNav.addView(syncBtn, slp);
 
         // ⑤ 新建 +
         ImageView addBtn = navButton(dp(20), v -> showNewMenu(bottomNav));
         addBtn.setImageResource(R.drawable.ic_add);
+        addBtn.setContentDescription("新建文件或文件夹");
         addNavBtnWrap(addBtn);
 
         bottomNav.setAlpha(0f);
@@ -2295,7 +2299,10 @@ public class FileManagerModule extends HyVqModule {
         syncIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
         syncIcon.setColorFilter(stroke);
         syncIcon.setPadding(dp(8), dp(8), dp(8), dp(8));
-        box.addView(syncIcon, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        // 触摸目标 48dp（Android 无障碍规范）。原 40dp 是「视觉尺寸 = 点击区」，
+        // 低于标准；此按钮在底部功能栏内，空间充足，直接放大不破坏布局。
+        box.addView(syncIcon, new LinearLayout.LayoutParams(
+                dp(UiKit.TOUCH_MIN_DP), dp(UiKit.TOUCH_MIN_DP)));
 
         box.setOnClickListener(v -> syncByFocus());
         // 与同栏其它按钮一致的按压回弹
@@ -4073,7 +4080,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView label = new TextView(ctx);
         label.setText(text);
-        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         label.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
         label.setGravity(Gravity.CENTER);
         label.setMaxLines(2);
@@ -4370,7 +4377,7 @@ public class FileManagerModule extends HyVqModule {
             final int idx = i;
             TextView chip = new TextView(ctx);
             chip.setText(names[i]);
-            chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
             chip.setPadding(dp(14), dp(7), dp(14), dp(7));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -4467,14 +4474,14 @@ public class FileManagerModule extends HyVqModule {
 
         TextView why = new TextView(ctx);
         why.setText(reason + "\n\n以下是你的内容，可以复制后到网页提交：");
-        why.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        why.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         why.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorError));
         why.setPadding(dp(4), 0, dp(4), dp(8));
         box.addView(why);
 
         TextView content = new TextView(ctx);
         content.setText(text);
-        content.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        content.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         content.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
         content.setPadding(dp(10), dp(8), dp(10), dp(8));
         content.setBackground(UiKit.rounded(ctx, 10,
@@ -4610,7 +4617,7 @@ public class FileManagerModule extends HyVqModule {
         for (final String p : loadGalleryPaths()) {
             TextView chip = new TextView(ctx);
             chip.setText(new File(p).getName());
-            chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
             chip.setPadding(dp(12), dp(6), dp(12), dp(6));
             chip.setLayoutParams(new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -4652,7 +4659,7 @@ public class FileManagerModule extends HyVqModule {
 
         final TextView loading = new TextView(ctx);
         loading.setText("扫描中…");
-        loading.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        loading.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         loading.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         loading.setGravity(Gravity.CENTER);
@@ -4694,7 +4701,7 @@ public class FileManagerModule extends HyVqModule {
                 if (fGroups.isEmpty()) {
                     TextView empty = new TextView(ctx);
                     empty.setText("此路径下没有图片\n可在下方 ＋ 或 设置 中添加其它扫描路径");
-                    empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                    empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
                     empty.setTextColor(UiKit.color(ctx,
                             com.google.android.material.R.attr.colorOnSurfaceVariant));
                     empty.setGravity(Gravity.CENTER);
@@ -4716,7 +4723,7 @@ public class FileManagerModule extends HyVqModule {
         if (label != null && !label.isEmpty()) {
             TextView head = new TextView(ctx);
             head.setText(label + "（" + imgs.size() + "）");
-            head.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            head.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
             head.setTypeface(null, android.graphics.Typeface.BOLD);
             head.setTextColor(UiKit.color(ctx,
                     com.google.android.material.R.attr.colorOnSurfaceVariant));
@@ -4773,7 +4780,7 @@ public class FileManagerModule extends HyVqModule {
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
                 TextView badge = new TextView(ctx);
                 badge.setText("GIF");
-                badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+                badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
                 badge.setTypeface(null, android.graphics.Typeface.BOLD);
                 badge.setTextColor(0xFFFFFFFF);
                 badge.setBackgroundColor(0x99000000);
@@ -4858,7 +4865,7 @@ public class FileManagerModule extends HyVqModule {
         TextView hdTip = new TextView(ctx);
         hdTip.setText("开启后大图更清晰，但解码更慢、内存占用更高。\n"
                 + "查看器中长按画面可临时切换，不影响此处的默认设置。");
-        hdTip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        hdTip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         hdTip.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         hdTip.setLineSpacing(dp(2), 1f);
@@ -4990,7 +4997,7 @@ public class FileManagerModule extends HyVqModule {
 
         final TextView tvDetail = new TextView(ctx);
         tvDetail.setText("");
-        tvDetail.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tvDetail.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tvDetail.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         tvDetail.setPadding(dp(14), 0, dp(14), dp(10));
@@ -5014,7 +5021,7 @@ public class FileManagerModule extends HyVqModule {
 
         final TextView devBarLabel = new TextView(ctx);
         devBarLabel.setText("");
-        devBarLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        devBarLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         devBarLabel.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         devBarLabel.setPadding(dp(14), dp(4), dp(14), dp(2));
@@ -5031,7 +5038,7 @@ public class FileManagerModule extends HyVqModule {
 
         final TextView appBarLabel = new TextView(ctx);
         appBarLabel.setText("");
-        appBarLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        appBarLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         appBarLabel.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         appBarLabel.setPadding(dp(14), dp(4), dp(14), dp(2));
@@ -5046,7 +5053,7 @@ public class FileManagerModule extends HyVqModule {
         // 未被分段覆盖的「其它占用」说明（系统 + 其它应用），避免用户以为统计漏了
         final TextView tvOther = new TextView(ctx);
         tvOther.setText("");
-        tvOther.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvOther.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         tvOther.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         tvOther.setLineSpacing(dp(2), 1f);
@@ -5105,7 +5112,7 @@ public class FileManagerModule extends HyVqModule {
 
         final TextView tvAllClearable = new TextView(ctx);
         tvAllClearable.setText("统计中…");
-        tvAllClearable.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tvAllClearable.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tvAllClearable.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         tvAllClearable.setLineSpacing(dp(2), 1f);
@@ -5197,7 +5204,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView tvTitle = new TextView(ctx);
         tvTitle.setText(title);
-        tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         tvTitle.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
         texts.addView(tvTitle);
@@ -5217,7 +5224,7 @@ public class FileManagerModule extends HyVqModule {
                     try { onClear.run(); } catch (Throwable ignored) { }
                     refreshStoragePage();
                 }));
-        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         btn.setPadding(dp(10), dp(6), dp(10), dp(6));
         row.addView(btn);
 
@@ -5508,7 +5515,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView tvTitle = new TextView(ctx);
         tvTitle.setText(title);
-        tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         tvTitle.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
         texts.addView(tvTitle);
@@ -5523,7 +5530,7 @@ public class FileManagerModule extends HyVqModule {
 
         if (clearable && onClear != null) {
             TextView btn = textButton("清理", v -> onClear.run());
-            btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
             btn.setPadding(dp(10), dp(6), dp(10), dp(6));
             row.addView(btn);
         }
@@ -5741,7 +5748,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView title = new TextView(ctx);
         title.setText("启动时检查更新");
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         title.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
         textCol.addView(title);
@@ -5815,7 +5822,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView curVer = new TextView(ctx);
         curVer.setText("v" + cur);
-        curVer.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        curVer.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
         curVer.setTypeface(null, android.graphics.Typeface.BOLD);
         curVer.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
@@ -5974,7 +5981,7 @@ public class FileManagerModule extends HyVqModule {
 
         if (hasNew) {
             TextView dl = textButton("下载并安装", null);
-            dl.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            dl.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
             dl.setPadding(dp(12), dp(12), dp(12), dp(12));
             dl.setBackground(UiKit.rounded(ctx, 8,
                     UiKit.color(ctx, com.google.android.material.R.attr.colorPrimaryContainer), 0));
@@ -6562,7 +6569,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView appName = new TextView(ctx);
         appName.setText("HY文件管理");
-        appName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        appName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
         appName.setTypeface(null, android.graphics.Typeface.BOLD);
         appName.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
@@ -6585,7 +6592,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView tagline = new TextView(ctx);
         tagline.setText("双窗格文件管理器 · 压缩包直读 · 内置编辑器");
-        tagline.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tagline.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         tagline.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         LinearLayout.LayoutParams tagLp = new LinearLayout.LayoutParams(
@@ -6761,7 +6768,7 @@ public class FileManagerModule extends HyVqModule {
         TextView tip = new TextView(ctx);
         String preview = content.length() > 400 ? content.substring(0, 400) + "\n…" : content;
         tip.setText("共 " + content.length() + " 字符：\n\n" + preview);
-        tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         tip.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
         tip.setTypeface(android.graphics.Typeface.MONOSPACE);
         tip.setPadding(dp(8), dp(8), dp(8), dp(8));
@@ -6853,7 +6860,7 @@ public class FileManagerModule extends HyVqModule {
                 + "· 缩略图缓存、ZIP 浏览缓存、更新包缓存\n\n"
                 + "不会动：\n· 你的文件与回收站内容\n\n"
                 + "清除后应用恢复到初始状态，不可撤销。");
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tv.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
         tv.setLineSpacing(dp(2), 1f);
         tv.setPadding(dp(4), 0, dp(4), dp(8));
@@ -7067,14 +7074,14 @@ public class FileManagerModule extends HyVqModule {
 
         TextView sep = new TextView(ctx);
         sep.setText("  |  ");
-        sep.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        sep.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         sep.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         title.addView(sep);
 
         settingsTopTitle = new TextView(ctx);
         settingsTopTitle.setText("");
-        settingsTopTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        settingsTopTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         settingsTopTitle.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
         settingsTopTitle.setSingleLine(true);
@@ -7162,13 +7169,13 @@ public class FileManagerModule extends HyVqModule {
 
         TextView tvTitle = new TextView(ctx);
         tvTitle.setText(title);
-        tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tvTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         tvTitle.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurface));
         texts.addView(tvTitle);
 
         TextView tvSub = new TextView(ctx);
         tvSub.setText(subtitle);
-        tvSub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvSub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         tvSub.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         tvSub.setAlpha(0.75f);
@@ -8277,7 +8284,7 @@ public class FileManagerModule extends HyVqModule {
                     if (items.isEmpty()) {
                         TextView empty = new TextView(ctx);
                         empty.setText("（这里没有可编辑的文本文件）");
-                        empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                        empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
                         empty.setTextColor(UiKit.color(ctx,
                                 com.google.android.material.R.attr.colorOnSurfaceVariant));
                         empty.setPadding(dp(8), dp(16), dp(8), dp(16));
@@ -8370,7 +8377,7 @@ public class FileManagerModule extends HyVqModule {
                     if (items.isEmpty()) {
                         TextView empty = new TextView(ctx);
                         empty.setText("（这里没有图片）");
-                        empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                        empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
                         empty.setTextColor(UiKit.color(ctx,
                                 com.google.android.material.R.attr.colorOnSurfaceVariant));
                         empty.setPadding(dp(8), dp(10), dp(8), dp(10));
@@ -8416,7 +8423,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView t = new TextView(ctx);
         t.setText(title);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         t.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
         row.addView(t);
@@ -8709,7 +8716,7 @@ public class FileManagerModule extends HyVqModule {
             hint.setText("若开启后仍无法启动：adb shell am start 前先执行\n"
                     + "adb shell run-as com.aliya.hyfilemgr …\n"
                     + "或直接卸载重装（设置会保留在带外备份）");
-            hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
             hint.setTextColor(UiKit.color(ctx,
                     com.google.android.material.R.attr.colorOnSurfaceVariant));
             hint.setAlpha(0.7f);
@@ -9024,7 +9031,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView t = new TextView(ctx);
         t.setText(title);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         t.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
         row.addView(t, new LinearLayout.LayoutParams(
@@ -9083,7 +9090,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView tvValue = new TextView(ctx);
         tvValue.setText(initValue);
-        tvValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tvValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tvValue.setTypeface(null, android.graphics.Typeface.BOLD);
         tvValue.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorPrimary));
@@ -9112,7 +9119,7 @@ public class FileManagerModule extends HyVqModule {
             for (int i = 0; i < tickLabels.length; i++) {
                 TextView tv = new TextView(ctx);
                 tv.setText(tickLabels[i]);
-                tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+                tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
                 tv.setTextColor(UiKit.color(ctx,
                         com.google.android.material.R.attr.colorOnSurfaceVariant));
                 tv.setAlpha(0.7f);
@@ -9294,7 +9301,7 @@ public class FileManagerModule extends HyVqModule {
         trashHeader.addView(trashArrow);
         TextView trashTitle = new TextView(ctx);
         trashTitle.setText("回收站");
-        trashTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        trashTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         trashTitle.setTypeface(null, android.graphics.Typeface.BOLD);
         trashTitle.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
@@ -9357,7 +9364,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView tvSub = new TextView(ctx);
         tvSub.setText(status);
-        tvSub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvSub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         tvSub.setTextColor(UiKit.color(ctx, ok
                 ? com.google.android.material.R.attr.colorPrimary
                 : com.google.android.material.R.attr.colorOnSurfaceVariant));
@@ -9430,7 +9437,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView sub = new TextView(ctx);
         sub.setText("v" + appVersion() + "  ·  本地文件");
-        sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         sub.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
         sub.setAlpha(0.75f);
         sub.setSingleLine(true);
@@ -9477,7 +9484,7 @@ public class FileManagerModule extends HyVqModule {
 
         final TextView tvLeft = new TextView(ctx);
         tvLeft.setText("存储空间");
-        tvLeft.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvLeft.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         tvLeft.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
         tvLeft.setSingleLine(true);
         labelRow.addView(tvLeft, new LinearLayout.LayoutParams(
@@ -9485,7 +9492,7 @@ public class FileManagerModule extends HyVqModule {
 
         final TextView tvPct = new TextView(ctx);
         tvPct.setText("—");
-        tvPct.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvPct.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         tvPct.setTypeface(null, android.graphics.Typeface.BOLD);
         tvPct.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary));
         tvPct.setSingleLine(true);
@@ -9510,7 +9517,7 @@ public class FileManagerModule extends HyVqModule {
         // 底部：可用空间
         final TextView tvFree = new TextView(ctx);
         tvFree.setText("可用 —");
-        tvFree.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+        tvFree.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         tvFree.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
         tvFree.setAlpha(0.7f);
         tvFree.setSingleLine(true);
@@ -9593,7 +9600,7 @@ public class FileManagerModule extends HyVqModule {
         // 当前路径（次要信息，弱化显示）
         TextView curPath = new TextView(ctx);
         curPath.setText(displayPath(active.path));
-        curPath.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        curPath.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         curPath.setTextColor(UiKit.color(ctx, com.google.android.material.R.attr.colorOnSurfaceVariant));
         curPath.setAlpha(0.6f);
         curPath.setSingleLine(true);
@@ -9745,7 +9752,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView tv = new TextView(ctx);
         tv.setText(title);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         tv.setTypeface(null, android.graphics.Typeface.BOLD);
         tv.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurface));
@@ -9838,7 +9845,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView tv = new TextView(ctx);
         tv.setText(title);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tv.setTypeface(null, android.graphics.Typeface.BOLD);
         tv.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
@@ -10112,7 +10119,7 @@ public class FileManagerModule extends HyVqModule {
         top.addView(icon, new LinearLayout.LayoutParams(s, s));
         TextView tv = new TextView(ctx);
         tv.setText(e.title);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         // 未选中行原先用 colorOnSurface 但背景是 colorSurfaceContainerLow，
         // 在浅色主题下两者亮度接近、对比不足。改为加粗 + 全不透明正文色。
         tv.setTypeface(null, android.graphics.Typeface.BOLD);
@@ -10720,7 +10727,7 @@ public class FileManagerModule extends HyVqModule {
 
             TextView tip = new TextView(ctx);
             tip.setText("仅本次生效，默认值在 设置 → 文件管理 → 回收站 中调整");
-            tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            tip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
             tip.setTextColor(UiKit.color(ctx,
                     com.google.android.material.R.attr.colorOnSurfaceVariant));
             tip.setAlpha(0.7f);
@@ -11200,9 +11207,12 @@ public class FileManagerModule extends HyVqModule {
             item.setGravity(Gravity.CENTER_VERTICAL);
             item.setPadding(dp(8), 0, 0, 0);
             item.setBackground(UiKit.rounded(ctx, dp(6), active ? activeColor : idleColor, 0));
+            // 触摸目标：标签高 44dp（原 30dp 低于无障碍标准）。
+            // 这里取 44 而非 48 是空间取舍——标签栏横向排列，48dp 会挤掉一行内容；
+            // 44dp 是 Material 对「密集列表项」的下限，关闭按钮另用 minWidth/minHeight 补足。
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(30));
-            lp.setMargins(0, dp(4), dp(4), dp(4));
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(44));
+            lp.setMargins(0, dp(2), dp(4), dp(2));
             item.setLayoutParams(lp);
             TextView name = new TextView(ctx);
             name.setText(t.file.getName() + (t.dirty ? " •" : ""));
@@ -11218,7 +11228,13 @@ public class FileManagerModule extends HyVqModule {
             close.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
             close.setTextColor(active ? 0xFFD7D7D7 : 0xFF8B8B8B);
             close.setGravity(Gravity.CENTER);
-            close.setPadding(dp(8), 0, dp(8), 0);
+            close.setPadding(dp(10), 0, dp(10), 0);
+            // 触摸目标：关闭按钮必须 ≥44dp，否则手指点不中相邻标签。
+            // 旧实现只有 8dp 水平 padding、高度跟着标签 30dp —— 热区约 25×30dp。
+            close.setMinWidth(dp(44));
+            close.setMinHeight(dp(44));
+            // 读屏标签：旧实现直接朗读「乘号」，用户不知道这是关闭按钮。
+            close.setContentDescription("关闭标签 " + t.file.getName());
             close.setOnClickListener(v -> closeEditorTab(t));
             item.addView(close);
             item.setOnClickListener(v -> switchEditorTab(t));
@@ -11679,7 +11695,7 @@ public class FileManagerModule extends HyVqModule {
         final int[] pal = editorPalette();
         TextView tv = new TextView(ctx);
         tv.setText(label);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tv.setTextColor(pal[2]);
         tv.setGravity(Gravity.CENTER);
         tv.setPadding(dp(8), dp(4), dp(8), dp(4));
@@ -11711,7 +11727,9 @@ public class FileManagerModule extends HyVqModule {
             return new int[]{0xFF121212, 0xFFE0E0E0, 0xFF9E9E9E, 0xFF1E1E1E, 0xFF82AAFF, 0xFF2C2C2C};
         }
         if (theme == 1) { // 浅色
-            return new int[]{0xFFFFFFFF, 0xFF212121, 0xFF757575, 0xFFF0F0F0, 0xFF42A5F5, 0xFFDDDDDD}; // 强调色改浅蓝
+            // 强调色 42A5F5 在白底上只有 2.65:1（标准 4.5:1）→ 改 1565C0（5.75:1）。
+            // 这个色同时用作标签激活态的背景，白字压在上面需要背景足够深。
+            return new int[]{0xFFFFFFFF, 0xFF212121, 0xFF757575, 0xFFF0F0F0, 0xFF1565C0, 0xFFDDDDDD};
         }
         // 跟随系统：Material 动态属性
         return new int[]{
@@ -11861,12 +11879,12 @@ public class FileManagerModule extends HyVqModule {
         box.addView(repEt);
         final androidx.appcompat.widget.SwitchCompat regexSw = new androidx.appcompat.widget.SwitchCompat(ctx);
         regexSw.setText("正则表达式");
-        regexSw.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        regexSw.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         box.addView(regexSw);
         final androidx.appcompat.widget.SwitchCompat wrapSw = new androidx.appcompat.widget.SwitchCompat(ctx);
         wrapSw.setText("循环查找");
         wrapSw.setChecked(true);
-        wrapSw.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        wrapSw.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         box.addView(wrapSw);
         final android.app.AlertDialog dlg = new android.app.AlertDialog.Builder(ctx)
                 .setTitle("查找 / 替换")
@@ -12330,7 +12348,7 @@ public class FileManagerModule extends HyVqModule {
         top.setBackgroundColor(pal[0]);
         TextView title = new TextView(ctx);
         title.setText("预览 · " + currentEditTab.file.getName());
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         title.setTypeface(null, android.graphics.Typeface.BOLD);
         title.setPadding(dp(12), dp(8), 0, dp(8));
         title.setTextColor(pal[1]);
@@ -12748,7 +12766,7 @@ public class FileManagerModule extends HyVqModule {
         row.addView(icon, new LinearLayout.LayoutParams(s, s));
         TextView tv = new TextView(ctx);
         tv.setText(title);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         tv.setTextColor(pal[1]);
         tv.setSingleLine(true);
         tv.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -12959,7 +12977,7 @@ public class FileManagerModule extends HyVqModule {
         box.addView(tvName);
 
         final TextView tvPage = new TextView(ctx);
-        tvPage.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tvPage.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tvPage.setTypeface(null, android.graphics.Typeface.BOLD);
         tvPage.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorPrimary));
@@ -13326,7 +13344,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView tvWhat = new TextView(ctx);
         tvWhat.setText("方式：" + modeName + "\n文件：" + fileName);
-        tvWhat.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tvWhat.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tvWhat.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         tvWhat.setPadding(dp(4), 0, dp(4), dp(6));
@@ -13336,8 +13354,11 @@ public class FileManagerModule extends HyVqModule {
 
         TextView tvReason = new TextView(ctx);
         tvReason.setText(reason);
-        tvReason.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        tvReason.setTextColor(0xFFFF6B6B);
+        tvReason.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        // 错误色按明暗动态选：深色用亮红（暗底上 6.75:1），浅色用深红。
+        // 旧实现硬编码 0xFFFF6B6B，在浅色玻璃弹窗上只有 2.78:1（标准 4.5:1），
+        // 失败原因看不清——而这恰恰是用户最需要读的文字。
+        tvReason.setTextColor(UiKit.isDarkTheme(ctx) ? 0xFFFF6B6B : 0xFFD32F2F);
         tvReason.setPadding(dp(4), 0, dp(4), dp(10));
         tvReason.setTextIsSelectable(true);
         box.addView(tvReason);
@@ -13592,7 +13613,7 @@ public class FileManagerModule extends HyVqModule {
                 t1.setTextColor(onSurface);
                 TextView t2 = new TextView(ctx);
                 t2.setText(ri.activityInfo.packageName);
-                t2.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+                t2.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
                 t2.setTextColor(variant);
                 col.addView(t1);
                 col.addView(t2);
@@ -13727,7 +13748,7 @@ public class FileManagerModule extends HyVqModule {
     private TextView hintText(String text, int color) {
         TextView tv = new TextView(ctx);
         tv.setText(text);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tv.setTextColor(color);
         tv.setPadding(dp(4), dp(10), dp(4), dp(10));
         return tv;
@@ -13814,8 +13835,11 @@ public class FileManagerModule extends HyVqModule {
         cwlp.gravity = android.view.Gravity.CENTER;
         ctrlWrap.addView(ctrl, cwlp);
 
-        int iconSize = dp(34);
-        int iconPad = dp(7);
+        // 触摸目标 48dp（Android 无障碍规范）：图标本身不放大，靠 padding 补齐。
+        // 旧值 iconSize=34dp 是**整个点击区**，低于 48dp 标准近 30%，
+        // 运动障碍用户基本点不中（这是全项目最严重的触摸目标问题之一）。
+        final int iconSize = dp(UiKit.TOUCH_MIN_DP);
+        final int iconPad = dp(11);   // 48 - 11*2 = 26dp 可见图标，比原 20dp 略大
         int tint = UiKit.color(ctx,
                 com.google.android.material.R.attr.colorPrimary);
         int tintDim = UiKit.color(ctx,
@@ -14913,7 +14937,7 @@ public class FileManagerModule extends HyVqModule {
         sbLevel.setProgress(2);   // 默认「标准」
         box.addView(sbLevel);
         final TextView tvLevelHint = new TextView(ctx);
-        tvLevelHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        tvLevelHint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         tvLevelHint.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         tvLevelHint.setAlpha(0.75f);
@@ -15065,7 +15089,7 @@ public class FileManagerModule extends HyVqModule {
     private TextView labelText(String text) {
         TextView tv = new TextView(ctx);
         tv.setText(text);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tv.setTypeface(null, android.graphics.Typeface.BOLD);
         tv.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
@@ -16703,7 +16727,7 @@ public class FileManagerModule extends HyVqModule {
         box.setPadding(dp(24), dp(24), dp(24), dp(24));
         TextView tv = new TextView(ctx);
         tv.setText(text);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         box.addView(tv);
         return box;
     }
@@ -16758,7 +16782,7 @@ public class FileManagerModule extends HyVqModule {
 
         TextView meta = new TextView(ctx);
         meta.setText(path + "\n合计 " + FileOps.formatSize(totalSize) + " · " + items.size() + " 项");
-        meta.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        meta.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         meta.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
         meta.setPadding(dp(4), 0, dp(4), dp(8));
@@ -16778,7 +16802,7 @@ public class FileManagerModule extends HyVqModule {
 
             TextView icon = new TextView(ctx);
             icon.setText(item[3]);
-            icon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+            icon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
             row.addView(icon);
 
             TextView name = new TextView(ctx);
@@ -16793,7 +16817,7 @@ public class FileManagerModule extends HyVqModule {
 
             TextView size = new TextView(ctx);
             size.setText(item[1]);
-            size.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            size.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
             size.setTextColor(UiKit.color(ctx,
                     com.google.android.material.R.attr.colorPrimary));
             size.setPadding(dp(4), 0, 0, 0);
@@ -16839,7 +16863,7 @@ public class FileManagerModule extends HyVqModule {
 
             TextView icon = new TextView(ctx);
             icon.setText(exists ? "📄" : "❌");
-            icon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+            icon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
             row.addView(icon);
 
             LinearLayout textCol = new LinearLayout(ctx);
