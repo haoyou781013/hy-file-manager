@@ -115,10 +115,31 @@ public class FileManagerModule extends HyVqModule {
             {"apk", "APK安装包", ".apk .aab .xapk .apks .zipx"},
             {"archives", "压缩包", ".zip .rar .7z .tar .gz .bz2 .xz .tgz .iso .jar .zst .lz4 .z .lzh .cab .ace .arj .uue .bz .tbz .tbz2 .txz .war .ear .deb .rpm .pkg .dmg .apk"},
     };
-    /** 轻量任务队列：耗时操作（粘贴/压缩/解压/搜索/分类扫描/回收站）统一排队，
-     *  避免多线程并发写同一目录；⋮菜单可查排队数 */
+    /**
+     * 待执行任务的队列上限。
+     *
+     * <p><b>为什么要上限</b>：旧实现用 {@code newSingleThreadExecutor()}，
+     * 它内部是无界 {@code LinkedBlockingQueue}——用户连续点 20 次解压就会
+     * 堆 20 个 Runnable，每个都要串行跑完，中间还各拉起一次前台服务
+     * （acquire/release 20 次）。看起来"没反应"的用户会继续点，越堆越多。</p>
+     *
+     * <p>上限 16 的依据：单线程队列里一个任务动辄几秒到几分钟，
+     * 16 个已经意味着用户排了半小时的活；再多的正确做法是等前一批完成。</p>
+     */
+    private static final int TASK_QUEUE_MAX = 16;
+
+    /**
+     * 轻量任务队列：耗时操作（粘贴/压缩/解压/搜索/分类扫描/回收站）统一排队，
+     * 避免多线程并发写同一目录；⋮菜单可查排队数。
+     *
+     * <p>有界队列 + 拒绝策略：超限时返回 false（见 {@link #runTask}），
+     * 由调用方提示用户，而不是静默堆积。</p>
+     */
     private static final java.util.concurrent.ExecutorService TASK_QUEUE =
-            java.util.concurrent.Executors.newSingleThreadExecutor();
+            new java.util.concurrent.ThreadPoolExecutor(
+                    1, 1, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
+                    new java.util.concurrent.LinkedBlockingQueue<Runnable>(TASK_QUEUE_MAX),
+                    new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
     /** 偏好落盘的专用线程：commit() 是同步 fsync，不能放 UI 线程 */
     private static final android.os.HandlerThread PREF_THREAD =
             new android.os.HandlerThread("hy-prefs");
@@ -3236,7 +3257,10 @@ public class FileManagerModule extends HyVqModule {
         } else if (sortMode == SORT_SIZE) {
             cmp = (a, b) -> Long.compare(b.length, a.length);
         } else {
-            cmp = (a, b) -> naturalCompare(a.name, b.name);
+            // 用 lowerName() 缓存：每个名字只小写一次，比较时零分配。
+            // 旧写法 naturalCompare(a.name, b.name) 在比较器内部做 toLowerCase，
+            // n log n 次比较 → 2·n·log₂n 次字符串分配（1 万文件约 26 万个）。
+            cmp = (a, b) -> naturalCompareLower(a.lowerName(), b.lowerName());
         }
         Collections.sort(p.entries, (a, b) -> {
             // ".."返回上级条目永远置顶（不参与排序）
@@ -3249,11 +3273,14 @@ public class FileManagerModule extends HyVqModule {
 
     // ── 借鉴工具方法（开源参考调研 2026-08-16 合入） ──
 
-    /** 自然排序比较（移植自 Prism naturalCompare，无 regex 纯扫描）：数字块按数值比较，
-     *  file2 < file10、chapter1 < chapter10；非数字按字符序。名称排序体验对齐主流管理器。 */
-    private static int naturalCompare(String a, String b) {
-        String s1 = a == null ? "" : a.toLowerCase(Locale.getDefault());
-        String s2 = b == null ? "" : b.toLowerCase(Locale.getDefault());
+    /**
+     * 自然排序核心：<b>入参必须已经是小写</b>。
+     *
+     * <p>拆出来是为了让排序器能复用 {@code FileEntry.lowerName()} 的缓存——
+     * 旧版比较器每次比较都对两个原始名各调一次 {@code toLowerCase()}，
+     * 1 万文件 = 13 万次比较 = 26 万个临时字符串。现在每个名字只小写一次。</p>
+     */
+    private static int naturalCompareLower(String s1, String s2) {
         int i1 = 0, i2 = 0;
         while (i1 < s1.length() && i2 < s2.length()) {
             char c1 = s1.charAt(i1);
@@ -8577,6 +8604,9 @@ public class FileManagerModule extends HyVqModule {
                 uiTheme = idx;
                 savePrefInt(PREF_UI_THEME, idx);
                 persistState();
+                // 主题变了 → UiKit 的主题色缓存必须清空，否则重建后的界面
+                // 仍会用旧主题的颜色（缓存是 static，不随 Activity 销毁）。
+                UiKit.invalidateColorCache();
                 UiKit.dismissWithAnim(d);
                 // 主题只能在 onCreate 前 setTheme，必须重建 Activity
                 final android.app.Activity act = hostActivity;
@@ -14603,15 +14633,22 @@ public class FileManagerModule extends HyVqModule {
                 try {
                     task.run();
                 } catch (Throwable t) {
-                    UiKit.alert(ctx, "任务失败：" + t.getMessage());
+                    // 这里本来就在 TASK_QUEUE 的后台线程上，alert 必须转主线程
+                    handler.post(() -> UiKit.alert(ctx, "任务失败：" + t.getMessage()));
                 } finally {
                     queuedTasks.decrementAndGet();
                     com.aliya.hyfilemgr.service.TaskKeepAliveService.release(ctx);
                 }
             });
             queuedTasks.incrementAndGet();
+        } catch (java.util.concurrent.RejectedExecutionException full) {
+            // 队列满：明确告诉用户在排队，而不是"无法提交任务"。
+            // ⚠ 必须 post 回主线程：UiKit.alert 会创建 View/Dialog，
+            // 而 runTask 可能被后台线程调用（如 withArchiveSecret 的回调）。
+            handler.post(() -> UiKit.alert(ctx, "任务排队已满（" + TASK_QUEUE_MAX
+                    + " 个），请等前面的任务完成后再试"));
         } catch (Throwable submitFail) {
-            UiKit.alert(ctx, "无法提交任务：" + submitFail.getMessage());
+            handler.post(() -> UiKit.alert(ctx, "无法提交任务：" + submitFail.getMessage()));
         }
     }
 

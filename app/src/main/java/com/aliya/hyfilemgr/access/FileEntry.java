@@ -34,6 +34,29 @@ public class FileEntry {
     /** 是否为强制置顶的".."返回上级条目（不算在列出的文件/统计中） */
     public final boolean parent;
 
+    /**
+     * 小写名缓存（供 {@code naturalCompare} 排序用）。{@code null} 表示尚未计算。
+     *
+     * <p><b>为什么需要</b>：名称排序用 {@code Collections.sort}，比较次数约
+     * 2·n·log₂n。1 万文件的目录 ≈ 13 万次比较，每次比较对两个名字各调一次
+     * {@code toLowerCase()} —— 就是 <b>26 万个临时字符串</b>，在主线程上
+     * 造成约 10MB 的分配抖动和 GC 停顿。
+     *
+     * <p>缓存后每次名字只小写一次（n 次），比较时零分配。
+     * 用惰性初始化而不是构造时算：不是所有条目都会被排序（比如虚拟视图、
+     * 直接展示不排序的场景），没必要为没用到的条目付这个成本。
+     */
+    private volatile String lowerNameCache;
+
+    /** 取小写名（惰性计算并缓存），供排序比较器使用 */
+    public String lowerName() {
+        String cached = lowerNameCache;
+        if (cached != null) return cached;
+        cached = name == null ? "" : name.toLowerCase(java.util.Locale.getDefault());
+        lowerNameCache = cached;
+        return cached;
+    }
+
     public FileEntry(String path, String name, Type type, long length, long lastModified,
                      boolean virtual, String subText) {
         this(path, name, type, length, lastModified, virtual, subText, false);

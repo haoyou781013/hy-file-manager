@@ -241,10 +241,52 @@ public final class UiKit {
         return best;
     }
 
+    /**
+     * 主题属性 → 颜色值的缓存（attrResId → ARGB）。
+     *
+     * <p><b>为什么必须缓存</b>：{@code resolveAttribute} 每次调用要新建一个
+     * {@code TypedValue} 并查主题表。而 {@code FileListAdapter.onBindViewHolder}
+     * 每绑定一行就调 4~8 次（背景 1~2 次 + 文件图标色 + 文字色），
+     * 一屏 15~20 行 ≈ 每帧 60~160 次属性解析。缓存后同 attr 只解析一次。</p>
+     *
+     * <p><b>失效时机</b>：主题（深/浅色、配色方案、莫奈取色）变化后旧值失效。
+     * 用 {@link #invalidateColorCache()} 显式清空，由模块在切换主题时调用；
+     * 同时记录 {@code uiMode} 作为兜底——系统深色模式切换后即使没人调用
+     * invalidate，也能靠这个探测到。</p>
+     */
+    private static final android.util.SparseIntArray COLOR_CACHE = new android.util.SparseIntArray();
+
+    /** 缓存对应的 uiMode（Configuration.UI_MODE_NIGHT_* 位）；变化即清缓存 */
+    private static volatile int cachedUiMode = -1;
+
+    /** 清空主题色缓存。切换主题/配色/莫奈取色后必须调用。 */
+    public static void invalidateColorCache() {
+        synchronized (COLOR_CACHE) {
+            COLOR_CACHE.clear();
+            cachedUiMode = -1;
+        }
+    }
+
     public static int color(Context context, int attr) {
+        if (context == null) return 0;
+        // 系统深色模式切换兜底：没人调 invalidateColorCache 也能自愈
+        int uiMode = context.getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+        synchronized (COLOR_CACHE) {
+            if (uiMode != cachedUiMode) {
+                COLOR_CACHE.clear();
+                cachedUiMode = uiMode;
+            }
+            int idx = COLOR_CACHE.indexOfKey(attr);
+            if (idx >= 0) return COLOR_CACHE.valueAt(idx);
+        }
         TypedValue tv = new TypedValue();
         context.getTheme().resolveAttribute(attr, tv, true);
-        return tv.data;
+        int value = tv.data;
+        synchronized (COLOR_CACHE) {
+            COLOR_CACHE.put(attr, value);
+        }
+        return value;
     }
 
     /** 按名称解析模块图标（如 "ic_chat"），找不到时用兜底图标 */

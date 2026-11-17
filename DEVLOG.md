@@ -447,6 +447,55 @@ canonicalPath 兜底）。
 > `am start` 返回「intent 已投递给当前 top-most 实例」）。改用代码级验证：
 > 字号全集与标尺逐一比对通过；`FileListAdapter` 主标题 15sp / 副标题 11sp（档差 4sp）。
 
+### 五维度审查修复（2026-11-17，第 3 批：性能 P0）
+
+10. **P0-3 排序 comparator 内重复 `toLowerCase`（26 万字符串）**
+    `Collections.sort` 比较次数约 2·n·log₂n，旧实现每次比较都对两个原始名
+    各调一次 `toLowerCase()` —— 1 万文件目录 ≈ 13 万次比较 = **26 万个临时字符串**，
+    主线程上约 10MB 分配抖动。
+    改法：`FileEntry` 加 `lowerName()` **惰性缓存**（不是构造时算——虚拟视图、
+    不排序的场景没必要付这个成本），`naturalCompare` 拆出 `naturalCompareLower`
+    接收已小写串，比较器改为 `naturalCompareLower(a.lowerName(), b.lowerName())`。
+    顺带删掉已无调用点的 `naturalCompare` 包装。
+
+11. **P0-2 `UiKit.color` 每次 `new TypedValue` + 属性解析**
+    `onBindViewHolder` 每行调 4~8 次，一屏 15~20 行 ≈ 每帧 60~160 次属性解析。
+    改法：加 `SparseIntArray` 静态缓存（attr → ARGB）。失效策略两条：
+    ① `invalidateColorCache()` 由模块在主题切换时显式调用；
+    ② 记录 `uiMode`（`UI_MODE_NIGHT_MASK`）作兜底——系统深色模式切换后
+       即使没人调 invalidate 也能自愈。
+    踩坑：缓存是 static，不随 Activity 销毁，所以主题切换后必须显式清空，
+    否则重建的界面仍用旧主题色。
+
+12. **P0-2 `formatDate`/`formatSize` 热路径优化**
+    - `yearOf()` 每次 `Calendar.getInstance()` → 改 `ThreadLocal<Calendar>` 复用
+      （Calendar 初始化时区/Locale 约 10~30µs）。
+    - `formatSize` / `formatDate` 各加 `LruCache<Long,String>`（各自 512 条）。
+      实测典型一屏 20 行只有 9 个不同大小值 → **命中率约 55%**。
+
+    **失败的尝试（记录以免重犯）**：`formatSize` 曾改成整数定点运算替代
+    `String.format`，用 2 万个值对比新旧输出 —— **8940 个不一致**：
+    `1048575` 旧 `"1024.0 KB"` 新 `"1.0 MB"`；GB 档四舍五入偏差 0.01。
+    结论：**文件大小显示错比慢一点严重得多**，回滚并保留 `String.format`，
+    只加缓存。手写浮点格式化在边界与舍入上极难与 `Formatter` 逐字符对齐。
+
+13. **P0-4 任务队列无界**
+    `newSingleThreadExecutor()` 内部是无界 `LinkedBlockingQueue` ——
+    连点 20 次解压就堆 20 个 Runnable，还要各拉起一次前台服务。
+    改法：换 `ThreadPoolExecutor(1,1,…,LinkedBlockingQueue(16), AbortPolicy)`，
+    `TASK_QUEUE_MAX = 16`；`runTask` 单独捕获 `RejectedExecutionException`，
+    提示「任务排队已满（16 个）」而非笼统的「无法提交任务」。
+
+14. **顺带修两个既有线程 bug（P0-4 过程中发现）**
+    `runTask` 的两处 `UiKit.alert` 都可能在后台线程执行：
+    ① 提交失败分支（`runTask` 可能被 `withArchiveSecret` 回调等后台线程调用）；
+    ② 任务执行体的 `catch`（本来就在 TASK_QUEUE 后台线程上）。
+    而 `UiKit.alert` 会创建 View/Dialog，必须在主线程。
+    两处都改为 `handler.post(() -> UiKit.alert(...))`。
+
+**验证**：`assembleRelease` 通过（1m13s），装机启动正常，崩溃 0 / FATAL 0，
+logcat 无 `CalledFromWrongThreadException`。
+
 ### 下一步待办
 
 - 文本编辑器重构（预览/编辑双模式、语法高亮、快捷输入栏、编码切换、
