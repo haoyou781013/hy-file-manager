@@ -1,6 +1,7 @@
 package com.aliya.hyfilemgr.module;
 
 import com.aliya.hyfilemgr.util.Exts;
+import com.aliya.hyfilemgr.util.FileNames;
 
 import android.app.Activity;
 import android.content.Context;
@@ -649,17 +650,9 @@ public class FileManagerModule extends HyVqModule {
      * @param name 原始文件名（如 {@code backup.tar.gz}）
      * @return 基名（如 {@code backup}）；全部剥完为空时返回 {@code "extracted"}
      */
+    /** 去掉压缩扩展名得输出目录基名。实现见 {@link FileNames#archiveBaseName}。 */
     private static String archiveBaseName(String name) {
-        if (name == null || name.isEmpty()) return "extracted";
-        String base = name;
-        String lower = name.toLowerCase(java.util.Locale.ROOT);
-        for (String suffix : com.aliya.hyfilemgr.archive.ArchiveExtractor.NAME_SUFFIXES) {
-            if (lower.endsWith(suffix)) {
-                base = name.substring(0, name.length() - suffix.length());
-                break;
-            }
-        }
-        return base.isEmpty() ? "extracted" : base;
+        return FileNames.archiveBaseName(name);
     }
 
     /** 双窗格共用的 ViewHolder 回收池（两栏 item 布局一致，可安全共享） */
@@ -3329,51 +3322,16 @@ public class FileManagerModule extends HyVqModule {
      * 旧版比较器每次比较都对两个原始名各调一次 {@code toLowerCase()}，
      * 1 万文件 = 13 万次比较 = 26 万个临时字符串。现在每个名字只小写一次。</p>
      */
+    /** 自然排序核心（入参须已小写）。实现见 {@link FileNames#naturalCompareLower}。 */
     private static int naturalCompareLower(String s1, String s2) {
-        int i1 = 0, i2 = 0;
-        while (i1 < s1.length() && i2 < s2.length()) {
-            char c1 = s1.charAt(i1);
-            char c2 = s2.charAt(i2);
-            if (Character.isDigit(c1) && Character.isDigit(c2)) {
-                long n1 = 0, n2 = 0;
-                while (i1 < s1.length() && Character.isDigit(s1.charAt(i1))) {
-                    n1 = n1 * 10 + (s1.charAt(i1) - '0');
-                    i1++;
-                }
-                while (i2 < s2.length() && Character.isDigit(s2.charAt(i2))) {
-                    n2 = n2 * 10 + (s2.charAt(i2) - '0');
-                    i2++;
-                }
-                if (n1 != n2) return Long.compare(n1, n2);
-            } else {
-                if (c1 != c2) {
-                    // 数字块与非数字相邻：数字排前（对齐 Prism 行为）
-                    if (Character.isDigit(c1) && !Character.isDigit(c2)) return -1;
-                    if (!Character.isDigit(c1) && Character.isDigit(c2)) return 1;
-                    return Character.compare(c1, c2);
-                }
-                i1++;
-                i2++;
-            }
-        }
-        return Integer.compare(s1.length(), s2.length());
+        return FileNames.naturalCompareLower(s1, s2);
     }
 
     /** 文件名合法性校验（参考 Fossify isAValidFilename）：空名/非法字符/尾点/保留名拒绝。
      *  与 SafStrategy.sanitizeName（净化）互补：这里在 UI 层直接拦截，提示用户改输入。 */
+    /** 文件名合法性。实现见 {@link FileNames#isValidFileName}。 */
     private static boolean isValidFileName(String name) {
-        if (name == null || name.trim().isEmpty()) return false;
-        String n = name.trim();
-        if (n.equals(".") || n.equals("..")) return false;
-        // Windows/常见文件系统非法字符：/ \ : * ? " < > |
-        for (int i = 0; i < n.length(); i++) {
-            char c = n.charAt(i);
-            if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?'
-                    || c == '"' || c == '<' || c == '>' || c == '|') return false;
-        }
-        // 尾点/尾空格：部分文件系统/SAF provider 会吞掉或报错（Windows 语义）
-        if (n.endsWith(".") || n.endsWith(" ")) return false;
-        return true;
+        return FileNames.isValidFileName(name);
     }
 
     /** 防自嵌套（参考 MiCode canMove）：源目录不能移动到自身或其子目录；文件不能移动到自己/父目录。
@@ -3404,9 +3362,9 @@ public class FileManagerModule extends HyVqModule {
         return s2.startsWith(s1 + "/");
     }
 
+    /** 去尾斜杠。实现见 {@link FileNames#trimSlash}。 */
     private static String trimSlash(String s) {
-        while (s.endsWith("/") && s.length() > 1) s = s.substring(0, s.length() - 1);
-        return s;
+        return FileNames.trimSlash(s);
     }
 
     /** 目标是否就是源所在目录（剪切到原地无意义，拦截防误操作；参考 MT 同目录粘贴行为） */
@@ -3429,21 +3387,14 @@ public class FileManagerModule extends HyVqModule {
 
     /** 目标重名自动改名："name (1)"、"name (2)"…（参考 AnExplorer buildUniqueFile，防覆盖丢数据）。
      *  existing 为 null 时逐个 File.exists 检查（真实路径）；否则查名字集合（SAF 预列子项）。 */
+    /** 重名自动改名。实现见 {@link FileNames#uniqueName}。 */
     private static String uniqueName(String dest, String name, Set<String> existing) {
-        if (!nameExists(dest, name, existing)) return name;
-        int dot = name.lastIndexOf('.');
-        String base = dot > 0 ? name.substring(0, dot) : name;
-        String ext = dot > 0 ? name.substring(dot) : "";
-        for (int i = 1; i < 1000; i++) {
-            String cand = base + " (" + i + ")" + ext;
-            if (!nameExists(dest, cand, existing)) return cand;
-        }
-        return name; // 理论不可达（1000 个重名）
+        return FileNames.uniqueName(dest, name, existing);
     }
 
+    /** 同名判断。实现见 {@link FileNames#nameExists}。 */
     private static boolean nameExists(String dest, String name, Set<String> existing) {
-        if (existing != null) return existing.contains(name);
-        return new File(dest, name).exists();
+        return FileNames.nameExists(dest, name, existing);
     }
 
     private void updateClipBar() {

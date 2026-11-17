@@ -591,6 +591,46 @@ box.setPadding(touchPad, touchPad, touchPad, touchPad);
 所以凡是有自定义背景的可点控件，扩热区时必须用 `InsetDrawable` / `TouchDelegate`，
 不能只加 padding。
 
+### 架构拆分 + 建立测试底座（2026-11-17，第 6 批）
+
+22. **抽出 `util/FileNames.java`（6 个纯函数）**
+    从 17k 行的 `FileManagerModule` 里抽出零外部依赖的纯函数：
+    `trimSlash` / `nameExists` / `uniqueName` / `isValidFileName` /
+    `naturalCompareLower` / `archiveBaseName`。
+    抽取判据不是「看起来独立」，而是脚本验证了这 6 个方法体里
+    **不出现 `ctx` / `handler` / `fmPrefs` / `SafStrategy` / `Uri` 任何一个**。
+    模块内保留同名转发方法，调用点零改动。`FileManagerModule` 17351 → 17302 行。
+
+    为什么只抽 6 个：`isSelfNested` / `isSameParent` / `baseNameOf` 都依赖
+    `SafStrategy` 的 uri 解析，抽出去会把两个类的耦合变成跨包耦合，收益为负。
+
+23. **建立单元测试底座（项目此前零测试）**
+    - `app/build.gradle.kts` 加 `testImplementation("junit:junit:4.13.2")`
+    - 新建 `app/src/test/java/com/aliya/hyfilemgr/util/FileNamesTest.java`（24 个用例）
+    - `gradle testReleaseUnitTest` 通过：**24 tests, 0 skipped, 0 failures**
+
+    用例的价值不在「证明代码对」，而在**锁住已踩过的坑**，每条 assert 背后
+    都有一次真实故障：
+    - `.tbz/.tbz2/.txz/.tzst` 剥名（第 1 批那个「打开即崩」的 bug）
+    - `.xapk` 剥名（两份后缀表不一致导致手动/自动解压目录名不同）
+    - `a.tar.gz → a` 而非 `a.tar`（复合后缀必须整体剥掉）
+    - `file2 < file10`（自然排序的核心价值）
+    - `name (1).jpg` 扩展名要保留
+    - `.gitignore → .gitignore (1)`（隐藏文件的点不是扩展名分隔符）
+
+24. **测试跑出来的一个发现（如实记录）**
+    `isValidFileName` 里 `n.endsWith(" ")` 是**死代码**——前面 `name.trim()`
+    已经把尾空格删光了。测试第一次跑就挂在断言上。
+
+    但进一步核查发现：**所有调用方都先 `.trim()` 再传进来**
+    （`showNewFolderDialog:4189`、`rename:10563`），所以这条分支在实际链路上
+    本来就到不了。把判断移到 trim 之前只是补全了函数自身的语义契约，
+    **对现有行为无影响**——这点已写进代码注释与测试注释，避免后人误以为
+    修了个线上 bug。
+
+**验证**：`assembleRelease` 通过（1m23s），`testReleaseUnitTest` 24/24 通过，
+装机启动正常，崩溃 0 / FATAL 0，验证后已 `am force-stop` 关闭。
+
 ### 下一步待办
 
 - 文本编辑器重构（预览/编辑双模式、语法高亮、快捷输入栏、编码切换、

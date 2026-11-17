@@ -77,6 +77,11 @@ dependencies {
     // （Supplier / Consumer / computeIfAbsent / removeIf / String.repeat 等）
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
+    // 单元测试（JVM 上跑，不需要设备）：只覆盖 util/ 下的纯函数。
+    // 项目此前无任何测试；这几块纯函数（文件名/格式化/扩展名判断）是
+    // 唯一能低门槛单测的部分——其余方法都直接依赖 Context。
+    testImplementation("junit:junit:4.13.2")
+
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.12.0")
