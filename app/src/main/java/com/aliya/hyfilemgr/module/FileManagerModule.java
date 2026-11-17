@@ -2296,26 +2296,29 @@ public class FileManagerModule extends HyVqModule {
         box.setClickable(true);
         box.setFocusable(true);
 
+        final int VISUAL_DP = 40;   // 与左右导航按钮同高，视觉一致
+        final int touchPad = Math.max(0, (dp(UiKit.TOUCH_MIN_DP) - dp(VISUAL_DP)) / 2);
+
         int stroke = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimary);
         int fill = UiKit.color(ctx, com.google.android.material.R.attr.colorPrimaryContainer);
         android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable();
         gd.setShape(android.graphics.drawable.GradientDrawable.OVAL);
         gd.setColor((fill & 0x00FFFFFF) | 0x33000000);
         gd.setStroke(Math.round(dp(1) * 1.5f), stroke);
-        box.setBackground(gd);
+        // ⚠ 背景必须用 InsetDrawable 向内缩 touchPad：
+        // GradientDrawable 会画在 View 的**完整边界**（含 padding）上，
+        // 直接 setBackground 会让椭圆外径等于 48dp —— 截图里就是
+        // 「蓝圈明显比左右按钮大一圈、还挤到邻居」的样子。
+        // inset 之后椭圆正好只占中间的 40dp 视觉区，四周 4dp 是透明热区。
+        box.setBackground(new android.graphics.drawable.InsetDrawable(
+                gd, touchPad, touchPad, touchPad, touchPad));
 
         syncIcon = new ImageView(ctx);
         syncIcon.setImageResource(R.drawable.ic_swap_paths);
         syncIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
         syncIcon.setColorFilter(stroke);
         syncIcon.setPadding(dp(8), dp(8), dp(8), dp(8));
-        // 视觉保持 40dp（与其它导航按钮同高），点击区由 box 的透明 padding 补到 48dp。
-        //
-        // ⚠ 踩过的坑：先前直接把 syncIcon 改成 48dp，结果 box 的 OVAL 背景
-        // 跟着撑大 —— 截图里它变成一个明显比其他按钮大的蓝色圆圈，风格突兀。
-        // 正确做法是「视觉尺寸不变，靠父容器 padding 扩热区」。
-        box.addView(syncIcon, new LinearLayout.LayoutParams(dp(40), dp(40)));
-        final int touchPad = Math.max(0, (dp(UiKit.TOUCH_MIN_DP) - dp(40)) / 2);
+        box.addView(syncIcon, new LinearLayout.LayoutParams(dp(VISUAL_DP), dp(VISUAL_DP)));
         box.setPadding(touchPad, touchPad, touchPad, touchPad);
 
         box.setOnClickListener(v -> syncByFocus());

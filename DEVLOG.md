@@ -567,6 +567,30 @@ logcat 无 `CalledFromWrongThreadException`。
 **验证**：`assembleRelease` 通过（1m34s），装机启动正常，崩溃 0 / FATAL 0。
 `FileManagerModule` 17348 行（本轮去重净减约 30 行，其余被注释抵消）。
 
+### 修复：底部同步按钮圆圈偏大（2026-11-17）
+
+**现象**（第 4 批截图发现）：底部导航栏中间的同步按钮，蓝圈明显比左右箭头大一圈，
+还挤到相邻按钮。
+
+**第一次尝试失败**：以为是 40dp→48dp 的视觉尺寸变了，改回「视觉 40dp + box padding 4dp」。
+再次截图 —— **还是大的**。原因：`GradientDrawable` 会画在 View 的**完整边界（含 padding）**
+上，`box` 尺寸 = 内容 40 + padding 8 = 48dp，所以椭圆外径仍是 48dp。
+
+**正确做法**：背景用 `InsetDrawable` 向内缩 `touchPad`，让椭圆只占中间的 40dp 视觉区，
+四周 4dp 是透明热区：
+
+```java
+box.setBackground(new InsetDrawable(gd, touchPad, touchPad, touchPad, touchPad));
+box.setPadding(touchPad, touchPad, touchPad, touchPad);
+```
+
+**验证**：截图确认圆圈直径与左右按钮视觉高度一致，不再挤邻居。
+（这次按新约定：启动 App 截图 → `am force-stop` 关闭 → 确认进程退出、前台回到 AI 应用。）
+
+**教训**：**「扩触摸热区」和「扩背景绘制区」是两件事**。padding 同时影响两者——
+所以凡是有自定义背景的可点控件，扩热区时必须用 `InsetDrawable` / `TouchDelegate`，
+不能只加 padding。
+
 ### 下一步待办
 
 - 文本编辑器重构（预览/编辑双模式、语法高亮、快捷输入栏、编码切换、
