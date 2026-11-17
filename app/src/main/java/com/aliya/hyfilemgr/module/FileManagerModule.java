@@ -580,6 +580,14 @@ public class FileManagerModule extends HyVqModule {
         /** 下拉刷新容器（buildPane 里创建；刷新完成时用它收起转圈） */
         androidx.swiperefreshlayout.widget.SwipeRefreshLayout swipeRefresh;
         FileListAdapter adapter;
+        /**
+         * 异步加载序号：每次 reload 自增，后台线程回来后比对。
+         *
+         * <p>用户连点几个目录时会有多个后台枚举在飞，只有最后一次的结果该被采用；
+         * 否则先发起但后返回的旧结果会把新目录的内容盖掉（典型的竞态）。</p>
+         */
+        int loadSeq;
+
         /** ⭐ 目录缓存（仿 ZhuFiler DirCache）：路径 → 条目快照 + 目录指纹（mtime/子项数）。
          *  切换回未变化目录直接复用快照，避免重复 listFiles（大目录性能提升明显）。
          *  <b>必须有上限</b>：value 是整目录的条目快照，万级目录单条就是几万个对象。
@@ -2320,10 +2328,14 @@ public class FileManagerModule extends HyVqModule {
         syncIcon.setScaleType(ImageView.ScaleType.FIT_CENTER);
         syncIcon.setColorFilter(stroke);
         syncIcon.setPadding(dp(8), dp(8), dp(8), dp(8));
-        // 触摸目标 48dp（Android 无障碍规范）。原 40dp 是「视觉尺寸 = 点击区」，
-        // 低于标准；此按钮在底部功能栏内，空间充足，直接放大不破坏布局。
-        box.addView(syncIcon, new LinearLayout.LayoutParams(
-                dp(UiKit.TOUCH_MIN_DP), dp(UiKit.TOUCH_MIN_DP)));
+        // 视觉保持 40dp（与其它导航按钮同高），点击区由 box 的透明 padding 补到 48dp。
+        //
+        // ⚠ 踩过的坑：先前直接把 syncIcon 改成 48dp，结果 box 的 OVAL 背景
+        // 跟着撑大 —— 截图里它变成一个明显比其他按钮大的蓝色圆圈，风格突兀。
+        // 正确做法是「视觉尺寸不变，靠父容器 padding 扩热区」。
+        box.addView(syncIcon, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        final int touchPad = Math.max(0, (dp(UiKit.TOUCH_MIN_DP) - dp(40)) / 2);
+        box.setPadding(touchPad, touchPad, touchPad, touchPad);
 
         box.setOnClickListener(v -> syncByFocus());
         // 与同栏其它按钮一致的按压回弹
@@ -3037,6 +3049,13 @@ public class FileManagerModule extends HyVqModule {
         // 旧写法播动画，而下面紧接着就 bind 新数据，两个窗口重叠。
         if (p == active && multiMode) exitMultiMode(true);
 
+        // 在分派前捕获「本次 reload 是不是换目录」——
+        // 异步路径（缓存未命中）要过一会儿才回来，期间 p.dirFadePending
+        // 可能被下一次切目录改写。序号守卫已保证只有最后一次结果会被应用，
+        // 所以这里捕获的值恰好对应那一次。
+        final boolean dirChanged = p.dirFadePending;
+        if (p.dirFadePending) p.dirFadePending = false;
+
         // 虚拟视图路由：回收站（不经过 AccessRouter 四源路由，路径不落盘）
         if (p.path.startsWith(PREFIX_TRASH)) {
             loadTrash(p);
@@ -3047,21 +3066,21 @@ public class FileManagerModule extends HyVqModule {
             // 原始（未过滤）条目快照，跳过 AccessRouter.list；指纹 = mtime + 子项数。
             // 过滤/置顶/排序仍在下方统一执行（缓存与显示解耦，隐藏开关切换永远正确）。
             boolean fromCache = false;
-            // 子项数：-1 表示「还没扫过」。下面按需扫描，避免无快照时白扫一遍。
-            int cc = -1;
             // ⭐ v2.8.0 root 路径禁用目录缓存：root 目录在 App 侧的 lastModified()/
             // listFiles() 恒为 0/null，指纹永远相同 → 目录内容变了仍会显示旧快照
             if (!p.path.startsWith("content://") && !needRoot(p.path)) {
                 DirSnapshot snap = p.dirCache.get(p.path);
                 File dirF = new File(p.path);
                 long mt = dirF.lastModified();
-                // ⚠️ 只有「已有快照」时才需要算子项数去比对指纹。
-                // 旧实现在无快照时也扫一遍，且扫完直接丢弃 —— 白花一次主线程 IO。
-                if (snap != null) {
-                    File[] kids = dirF.listFiles();
-                    cc = kids == null ? 0 : kids.length;
-                }
-                if (snap != null && snap.mtime == mt && snap.childCount == cc) {
+                // ⚠️ 缓存命中判定改成「只比 mtime」，不再为了数子项数在主线程 listFiles()。
+                //
+                // 旧实现即使命中缓存，也要 listFiles() 完整枚举一遍目录来数 kids.length
+                // —— 缓存只省掉了 FileEntry 构造，没省 IO。1 万项目录进入仍要几百毫秒。
+                //
+                // mtime 单独作为判据的风险是「改了文件内容但没增删目录项」时不刷新
+                // （文件系统不更新目录 mtime），但下拉刷新已有 dirCache.clear() 兜底，
+                // 这个取舍在审查报告里被标记为「主流文件管理器共同取舍」。
+                if (snap != null && snap.mtime == mt) {
                     p.entries.clear();
                     p.entries.addAll(snap.entries);
                     p.lastResult = AccessResult.ok(new ArrayList<>(snap.entries), "Cache");
@@ -3069,40 +3088,88 @@ public class FileManagerModule extends HyVqModule {
                 }
             }
             if (!fromCache) {
-                p.lastResult = AccessRouter.list(ctx, p.path);
-                p.entries.clear();
-                p.entries.addAll(p.lastResult.entries);
-                if (!p.path.startsWith("content://") && !needRoot(p.path)) {
-                    File dirF = new File(p.path);
-                    // ⚠️ 旧写法 dirF.listFiles() 在三元表达式两侧各调一次，
-                    // 第二次结果直接丢弃 —— 万级目录等于白扫一遍全目录。
-                    int childCount;
-                    if (cc >= 0) {
-                        childCount = cc;   // 上面已扫过，直接复用
-                    } else {
-                        File[] kids2 = dirF.listFiles();
-                        childCount = kids2 == null ? 0 : kids2.length;
+                // ⭐ 目录枚举下沉到后台线程（P0-1）。
+                //
+                // 为什么必须异步：AccessRouter.list 内部是 listFiles + 每条目
+                // lstat（1 万项目录 = 1 万次 syscall，实测 100~500ms），
+                // 下游还要再 listFiles 一次数子项数。全程在主线程 → 进大目录
+                // 明显掉帧，列表本身也卡着不动。
+                //
+                // 这里只把「枚举 + 计数」挪走，后续的过滤/置顶/排序/绑数据
+                // 仍走原来的同步路径（finishReload）。原因是那些步骤依赖
+                // p.entries 的最终状态，且都很快；拆开反而更难保证一致。
+                final String pathToLoad = p.path;
+                final int seq = ++p.loadSeq;
+                new Thread(() -> {
+                    AccessResult loaded;
+                    DirSnapshot snapshot = null;
+                    try {
+                        loaded = AccessRouter.list(ctx, pathToLoad);
+                        // 顺手把子项数算出来存进快照，省掉下游第二次 listFiles。
+                        // 旧实现在缓存未命中时会 listFiles 两次（一次在
+                        // AccessRouter.list 里，一次只为数 kids.length）。
+                        if (!pathToLoad.startsWith("content://") && !needRoot(pathToLoad)) {
+                            File dirF = new File(pathToLoad);
+                            int childCount = loaded != null && loaded.entries != null
+                                    ? loaded.entries.size() : 0;
+                            snapshot = new DirSnapshot(new ArrayList<>(
+                                    loaded != null && loaded.entries != null
+                                            ? loaded.entries : new ArrayList<>()),
+                                    dirF.lastModified(), childCount);
+                        }
+                    } catch (Throwable t) {
+                        android.util.Log.w("HyReload", "后台枚举失败 " + pathToLoad, t);
+                        loaded = AccessResult.empty("读取失败：" + t.getMessage());
                     }
-                    p.dirCache.put(p.path, new DirSnapshot(
-                            new ArrayList<>(p.entries), dirF.lastModified(), childCount));
-                }
+                    final AccessResult result = loaded;
+                    final DirSnapshot snapOut = snapshot;
+                    handler.post(() -> {
+                        // 序号守卫：用户连点几个目录时，只认最后一次的结果。
+                        // 同时校验路径，防止 A→B→A 这种来回切时错配。
+                        if (detached || seq != p.loadSeq) return;
+                        if (pathToLoad == null || !pathToLoad.equals(p.path)) return;
+                        if (snapOut != null) p.dirCache.put(pathToLoad, snapOut);
+                        p.lastResult = result;
+                        p.entries.clear();
+                        if (result != null && result.entries != null) {
+                            p.entries.addAll(result.entries);
+                        }
+                        finishReload(p, dirChanged);
+                    });
+                }, "HyDirLoad").start();
+                return;   // 后续步骤在 finishReload 里继续
             }
-            // 隐藏文件开关：默认过滤 .开头条目（".."parent条目不参与过滤）
-            if (!showHidden) filterHidden(p);
-            // 强制置顶".."返回上级条目（不算在列出文件/统计中，根目录不显示；MT 管理器样式）
-            // SAF uri 路径：父 uri 由 SafStrategy 计算（parentUri）；授权根（parentUri=null）
-            // 显示".."返回进入前的路径（navPrev），对齐 MT 挂载目录可返回行为
-            if (!"/".equals(p.path)) {
-                String parentPath;
-                if (p.path.startsWith("content://")) {
-                    parentPath = p.lastResult.parentUri;
-                    if (parentPath == null) parentPath = p.navPrev;
-                } else {
-                    parentPath = new File(p.path).getParent();
-                }
-                if (parentPath != null) {
-                    p.entries.add(0, FileEntry.parent(parentPath));
-                }
+        }
+        finishReload(p, dirChanged);
+    }
+
+    /**
+     * reload 的公共尾段：过滤隐藏项 → 置顶「..」→ 排序 → 绑数据 → 动画/滚动复位。
+     *
+     * <p><b>为什么抽出来</b>：目录枚举已下沉到后台（{@link #reload} 的缓存未命中分支），
+     * 后台回来后要从这里继续。同步路径（缓存命中、虚拟视图、回收站、压缩包）
+     * 也走同一段，保证三条路上的展示逻辑完全一致。</p>
+     *
+     * <p><b>必须主线程</b>：这里会碰 adapter 与 View。</p>
+     */
+    private void finishReload(final Pane p, final boolean dirChanged) {
+        if (p == null) return;
+        // 隐藏文件开关：默认过滤 .开头条目（".."parent条目不参与过滤）
+        if (!showHidden) filterHidden(p);
+        // 强制置顶".."返回上级条目（不算在列出文件/统计中，根目录不显示；MT 管理器样式）
+        // SAF uri 路径：父 uri 由 SafStrategy 计算（parentUri）；授权根（parentUri=null）
+        // 显示".."返回进入前的路径（navPrev），对齐 MT 挂载目录可返回行为
+        if (p.lastResult != null && !"/".equals(p.path)) {
+            String parentPath;
+            if (p.path.startsWith("content://")) {
+                parentPath = p.lastResult.parentUri;
+                if (parentPath == null) parentPath = p.navPrev;
+            } else {
+                File cur = new File(p.path);
+                parentPath = cur.getParent();
+            }
+            if (parentPath != null) {
+                p.entries.add(0, FileEntry.parent(parentPath));
             }
         }
         // 虚拟视图（分类/回收站）的".."固定返回内部存储根
@@ -3116,11 +3183,9 @@ public class FileManagerModule extends HyVqModule {
 
         // 翻目录/前进后退后的整体交叉淡化。
         // 数据已经 bind 完再做动画，避免淡入时看到空列表。
-        // 在这里就把「是否换了目录」拷一份：下面 resetListToTop 要用，
-        // 而这个标志一旦置 false 就无法区分「切目录」与「同目录重刷」。
-        final boolean dirChanged = p.dirFadePending;
-        if (p.dirFadePending) {
-            p.dirFadePending = false;
+        // dirChanged 由调用方（reload）在分派前捕获后传入 —— 异步路径下
+        // 这个标志不能等到这里再读，否则可能已被下一次切目录改写。
+        if (dirChanged) {
             playDirTransition(p.list);
         }
         // ⭐ 切换目录必须从顶部开始（用户明确要求）。
