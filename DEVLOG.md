@@ -10,626 +10,373 @@
 
 ## 待发布
 
-### 代码审查修复（2026-11-15，代码审查报告见 `docs/CODE-REVIEW-1.0.5.md`）
+> **本段组织方式**：按**主题**归类，不是按时间流水。
+> 每项只保留**最终状态**；被后续改动推翻的内容标「⚠ 已推翻」并说明。
+> 这样读的人不会把已被删掉的机制当成现存的。
+>
+> 累计来源：6 次代码审查（1 次自查 + 3 视角 + 5 维度）+ 2 次用户反馈修复，
+> 共 8 个提交区间、30 项改动。
 
-1. **四处缓存加上限**（`FileManagerModule`）
-   `dirCache` / `scrollStateByDir` 原来是无界 `HashMap`，每浏览一个新目录就 +1。
-   其中 `dirCache` 的 value 是**整目录条目快照**，万级目录单条就几万个对象，
-   浏览上百目录后内存常驻几十万对象。
-   改法：照同文件 `archiveItemsCache` 的写法换成 `LinkedHashMap(accessOrder=true)` LRU，
-   `DIR_CACHE_MAX=24`、`SCROLL_STATE_MAX=20`。
-   `backStack` / `fwdStack` 加 `pushHistory()` 辅助方法，超 `HISTORY_MAX=50` 丢最旧项
-   （4 处 `push` 调用全部收口到该方法）。
+---
 
-2. **下拉刷新失败不再静默**（`FileManagerModule`）
-   原 `catch (Throwable ignored) {}` 整个吞掉。`reload` 里含 `AccessRouter.list` /
-   `listFiles` / SAF 查询 / 权限判定，任一失败（权限被撤、目录被删、路径失效），
-   用户只看到转圈消失但列表没变，且零提示。
-   改为 `Log.w("HyRefresh", ...)` + toast 显示异常类型与消息。
+### 1. 修掉的真实缺陷
 
-3. **移除 5 处调试 `Log.d` 并配置 R8 剥离**
-   位置：`syncByFocus`、`setActive`、`HYOpenWith`、`loadZip path=`、`loadZip result`。
-   其中 `loadZip path=` 在**每次进入压缩包**时拼接 `p.path`（用户真实路径）+
-   `inner` + `items.size()`，既是热路径开销也是隐私泄露。
-   `proguard-rules.pro` 追加 `-assumenosideeffects class android.util.Log { d; v; }`。
-   **注意保留 `Log.w` / `Log.e`** —— 排障依赖它们。
-   实测验证：反编译 dex，`syncByFocus`/`HYFM`/`loadZip path=` 全部消失，
-   而 `HyReload`/`HyRefresh`/`HyZipCache`/`HyArchive` 仍在。
+#### 1.1 崩溃类
 
-4. **`maybePurgeArchiveCache` 加日志**
-   该方法整个被 `catch (Throwable ignored)` 包住，但它负责**释放压缩包解出的磁盘缓存**。
-   失败时缓存白占空间，用户只会看到存储莫名变少。改为 `Log.w("HyZipCache", ...)`。
+**`.tbz/.tbz2/.txz/.tzst` 压缩包打开即崩**
+`splitZipPath`（切分 `zip://` 虚拟路径）的后缀表漏了这 4 个，
+而解压侧（`ArchiveExtractor.canExtract`）与侧边栏分类都支持它们 →
+用户能看到、能点开，切分失败后回退到首个 `/`，点「解压」时 `substring` 越界。
+根因是**同一份后缀知识散在三个地方各自维护**（详见 3.1）。
 
-5. **清理 2 处未使用导入**
-   `ZipCache.java` 的 `java.util.Enumeration`、`IcoDecoder.java` 的 `java.io.File`。
+**`minSdk 23` 却调用 API 26 的 `java.nio.file.Files`**
+`AccessRouter.toEntry` 每个条目都调 `Files.isSymbolicLink` →
+Android 6.x/7.x 进任何目录必崩（`NoClassDefFoundError`）。
+当时同文件的 `isSymlink()` 已有正确的版本判断，这两处漏了。
 
-6. **下拉刷新不清 `dirCache` —— 刷新等于没刷**（后续发现，真 bug）
-   `refresh.setOnRefreshListener` 里只清了压缩包的 `archiveItemsCache`，
-   没清目录快照缓存。`reload()` 发现指纹（mtime + 子项数）没变 → 直接读旧快照。
-   **实测复现**：文件从 2 字节改写为 49 字节，目录 mtime 与子项数均未变
-   → 旧代码会显示旧的 2 字节，用户下拉刷新也刷不出来。
-   修复：刷新回调开头加 `p.dirCache.clear()`（注释说明「下拉刷新=用户明确要求最新内容，
-   必须绕过快照缓存」）。
-   「更多 → 刷新」走 `reloadAll()`，那里本来就有 `dirCache.clear()`，无需改。
+**未启用 `coreLibraryDesugaring` 却用 API 24/33 库**
+代码用了 `Supplier`/`Consumer`（24）、`computeIfAbsent`/`removeIf`（24）、
+`String.repeat`（33）。`lint.abortOnError=false` 把 NewApi 检查掩盖了。
 
-7. **Manifest 缩进统一**
-   4 处 `<activity>` 误缩进 12 格（`<application>` 子级应为 8 格）。
-   验证：去空白后逐行对比完全一致，纯缩进修正，零实质改动。
+**`runTask` 的两处 `UiKit.alert` 在后台线程执行**（既有 bug）
+`UiKit.alert` 创建 View/Dialog，必须主线程。一处是提交失败分支
+（`runTask` 可能被 `withArchiveSecret` 回调等后台线程调用），
+一处是任务执行体的 `catch`（本来就在 TASK_QUEUE 线程上）。
 
-**未修（评估后决定不动）**：
-- `reload()` 主线程同步 IO：架构级改动（需序号守卫防竞态、空窗期 UI、缓存写入时机、
-  `reloadAll` 同步语义变更），风险大于收益。且已有目录指纹缓存覆盖「返回上一目录」最高频场景。
-  仅在用户反馈「某目录打开很卡」时再动。
-- `ImageViewerActivity` / `MediaPlayerActivity` 的 `configChanges` 不一致
-  （前者无 `screenLayout`）：两者均未实现 `onConfigurationChanged`，也未做分屏处理，
-  差异不会导致行为不一致，保持原样。
+#### 1.2 丢数据类
 
-**验证**：`assembleRelease` 通过（1m13s），装机后主界面双窗格渲染正常，logcat 无崩溃。
+**SAF 复制失败被当成功 → 删源**
+`copyFileToSaf` 里 `listFiles()` 返回 null（无读权限/目录已删/SELinux 拦截）
+时静默跳过循环，`ok` 保持 true → 目标只建成空目录却报成功；
+而 `moveInto` 第③步是「copyInto 成功 → deleteDocument(源)」
+→ **源目录连同内容被删，界面报「成功」**。
+同类问题在 `copySafToSaf`（`listChildren` 失败与真空目录都返回空 list）。
 
-### 三视角审查修复（2026-11-16，第 1 批）
+**编辑器保存非原子 + dirty 竞态**
+① `new FileOutputStream(tab.file)` 原地截断，写一半被杀/掉电 → 原文件变半截或 0 字节；
+② 保存期间用户继续输入（TextWatcher 置 dirty=true），worker 完成后
+**无条件** `tab.dirty = false` → 关闭标签判 `!dirty` 直接移除，新输入静默丢弃。
 
-按 `docs/REVIEW-3PERSPECTIVE.md` 修复崩溃/丢数据/性能共 11 项。
+**`FileOps.deleteRecursive` 不判 symlink**
+`f.isDirectory()` 对「指向目录的 symlink」返回 true，旧实现递归进去真删目标内容。
+调用链：跨分区移动删源、移入回收站删源、从回收站恢复删临时。
+（模块内 `deleteTree` 与 `ArchiveExtractor.deleteTreeQuietly` 都判了，唯独这里漏）
 
-#### 崩溃类
+**`deleteDirQuiet` 同样是递归 + 不判 symlink + 深目录栈溢出**
+已改为委托 `deleteTree`（显式栈 + symlink 判断）。
 
-1. **minSdk 23 却用 API 26 的 `java.nio.file.Files`**（最严重）
-   `AccessRouter.toEntry()` 每条目调 `Files.isSymbolicLink` → Android 6.x/7.x
-   **进任何目录必崩**（`NoClassDefFoundError`）。同项目 `FileManagerModule.isSymlink()`
-   早有版本判断，这两处漏了。
-   改法：`toEntry` 全面改用 `android.system.Os.lstat`（API 21+，无版本问题），
-   一次拿到 `st_mode/st_size/st_mtime`，用 `st_mode & S_IFMT` 判 DIR/LINK/FILE。
-   顺手解决 **P4c**：旧实现每条目 4 次 syscall（isSymbolicLink + isDirectory +
-   length + lastModified）+ 1 个 `UnixPath` 对象，万项目录 = 4 万次 syscall；
-   现在 1 次 `lstat` 搞定。失败时退回纯 `java.io.File` 的 `toEntryFallback`（零 nio 依赖）。
-   `RootVirtualStrategy.listRoot()` 改为直接复用 `AccessRouter.toEntry`，删掉重复逻辑。
+**解压到已存在目录会清空整棵树**
+`extract()` 签名允许 `destDir` 已存在，但 GBK 乱码重解路径里有
+`deleteTreeQuietly(destDir)` → 把用户原有文件整棵删掉。
+改为只在「本次新建的空目录」上允许清空重解。
 
-2. **未启用 coreLibraryDesugaring 却用 API 24/33 库**
-   代码用了 `Supplier`/`Consumer`（API 24）、`computeIfAbsent`/`removeIf`（API 24）、
-   `String.repeat`（API 33）。`lint.abortOnError=false` 把 NewApi 掩盖了。
-   改法：`build.gradle.kts` 启用 `isCoreLibraryDesugaringEnabled = true` +
-   `desugar_jdk_libs:2.1.5`；`String.repeat` 改用项目已有的 `repeatSpaces()`
-   （脱糖不一定覆盖 String 的新实例方法）。
-   `exportDiagnosticLog` 的 `Files.readAllBytes` 改为自写 `readFileBytes`。
+#### 1.3 数据错乱类
 
-#### 数据安全类
+**下拉刷新不清 `dirCache` —— 刷新等于没刷**
+刷新回调只清了压缩包缓存，没清目录快照；`reload` 发现指纹没变 →
+直接读旧快照。**实测复现**：文件 2 字节 → 改写为 49 字节，
+目录 mtime 与子项数均未变，界面显示旧大小，下拉也刷不出来。
 
-3. **SAF 复制失败当成功 → 删源丢数据**
-   `copyFileToSaf` 里 `File[] children = src.listFiles(); if (children != null) {...}`，
-   `listFiles()` 返回 null（无读权限/目录已删/SELinux 拦截）时静默跳过循环，
-   `ok` 保持 true → 目标只建成空目录却报成功。而 `moveInto` 第③步是
-   「copyInto 成功 → deleteDocument(源)」→ **源目录连同内容被删，界面报「成功」**。
-   改法：`children == null` 时写错误、删已建目标目录、返回 false。
-   注意真正的空目录 `listFiles()` 返回长度 0 的数组（非 null），不会误伤。
-   同类问题在 `copySafToSaf`：`listChildren()` 无论失败还是空目录都返回空 list。
-   新增 `listChildrenOrNull()`（读失败返回 null）来区分，递归复制改用它。
+**属性框两个占位符互相顶掉**
+「项目数」与「大小」两个后台线程都调
+`tv.getText().replace("计算中…", x)`。项目数先回来会把「大小：计算中…」
+一并替掉，大小再回来找不到占位符 → 显示成「项目数：1.2 MB」。
 
-4. **编辑器保存非原子 + dirty 竞态**
-   ① `new FileOutputStream(tab.file)` 原地截断，写一半被杀/掉电 → 原文件变半截或 0 字节。
-   ② 保存大文件期间用户继续输入（TextWatcher 置 dirty=true），worker 完成后
-   handler **无条件** `tab.dirty = false` → 关闭标签判 `!dirty` 直接移除，**新输入静默丢弃**。
-   改法：写同目录 `xxx.hysave.tmp` → `getFD().sync()` → `renameTo`（原子）；
-   rename 失败（跨分区/被占用）降级为「备份原文件 + 复制 + 失败回滚」。
-   dirty 改为「保存前快照 vs 完成时 content」比对，不一致则保持 dirty，
-   toast 也区分「已保存」与「已保存（保存期间又有修改未存）」。
+**`uniqueName()` 未回写 `existing`**
+同批粘贴两个不同目录的同名文件，各自都看到集合里没有它 → 拿到同一个名字
+→ provider 侧后写覆盖前写，用户少一个文件。
 
-#### OOM 类
+**`ZipCache.extract` 无锁无临时文件**
+缩略图线程 + 查看器 + 播放器可能同时请求同一条目。旧实现直接写最终路径，
+线程 B 看到 `length()>0` 就当缓存命中 → 读到半截文件，且半截文件被长期复用。
 
-5. **图片查看器高清模式上限 16× 屏幕**
-   `calcHdSample` 判据是「原始边不超屏幕 4 倍就 sample=1」，1080×2400 屏的 4 倍
-   单边是 4320px —— 手机原图（4000×3000）全落在 sample=1，即 48MB 单张；
-   5000 万像素（8160×6120）仍不降级 = **200MB** 必 OOM，而 `hdMode` 默认 true。
-   改法：判据 4× → 2×，上界 8 → 32，新增 `MAX_DECODE_PIXELS = 16_000_000`
-   总像素硬闸（单边判据拦不住两边都大的方图）。`calcSample` 也加同一硬闸。
+**回收站过期清理留孤儿 `.trashmeta`**
+删条目但没删配对 meta → 残留永久占位；下次同名条目复用旧 meta →
+**恢复到错误路径**。
 
-#### 性能类
+**`isImageName` 只认 6 种扩展名**
+手写 `endsWith×6`（jpg/jpeg/png/webp/bmp/gif），而 `Exts.IMAGE` 有 19 种 →
+背景图浏览器里 **HEIC/HEIF/SVG/TIFF/RAW 照片全部不显示**（相机默认 HEIC 的用户看不到自己的图）。
 
-6. **拖动框选每帧全表重绑**
-   `applyRangeSelection` 里 `if (changed || true)` 让 changed 判断完全失效，
-   每个 `onInterceptTouchEvent(MOVE)` 都 `setSelected()` → `notifyDataSetChanged()`
-   → 16 行全部重绑，60~120 MOVE/秒 = **1000~2000 次 bind/秒**。
-   改法：新增 `FileListAdapter.applySelection()`（只换引用不刷新）+
-   `PAYLOAD_SELECTION` + `onBindViewHolder(VH, int, payloads)` 走轻量
-   `bindSelection()`（只重算背景/缩放/勾选框，不碰名称/图标/缩略图），
-   并只对「上次区间 ∪ 本次区间」`notifyItemRangeChanged`。
+**`.xapk` 解压目录名不一致**
+两份后缀表只在一份里有 `.xapk` → 同一个包手动解压得到 `foo`、
+自动解压得到 `foo.xapk`。
 
-7. **`formatDate` 每行构造 SDF ×1 + Calendar ×2**
-   `buildSub()` 每个文件行都调，绑定 100 行 = 200 次 Calendar + 100 次
-   `new SimpleDateFormat`（构造要解析 pattern 并建 DateFormatSymbols）。
-   改法：两个 pattern 各缓存一份 `ThreadLocal<SimpleDateFormat>`（非线程安全，
-   相册扫描后台线程也会调）；「今年」只每年算一次（`volatile int cachedYear`）。
+#### 1.4 体验缺陷
 
-8. **`trimDisk` 每写一张缩略图就全盘扫描**
-   `writeDisk()` 结尾无条件 `trimDisk()`：全目录 `listFiles()` + 每文件 `length()`
-   + 超限时全量排序（comparator 内还再调 `lastModified()`，N log N 次 syscall）。
-   缓存 5000 张时每解一张 ≈ 5000 次 stat，而 POOL 只有 3 线程
-   —— 这就是「大目录滚动后段缩略图越出越慢」的成因。
-   改法：`AtomicLong` 内存累加字节数 + 30 秒最小间隔，只在超限时才真扫盘；
-   排序前把 `length`/`lastModified` 读进数组，改用下标排序避免 comparator 重复 syscall。
+**底部同步按钮圆圈偏大**
+把按钮从 40dp 改成 48dp 后，`box` 的 OVAL 背景跟着撑大 → 截图里明显比其他
+导航按钮大一圈。**修了两次才对**：
+1. 第一次改回「视觉 40dp + box padding 4dp」→ 还是大的；
+2. 根因：`GradientDrawable` 画在 View 的**完整边界（含 padding）**上；
+3. 正解：`InsetDrawable` 向内缩 `touchPad`，让椭圆只占中间 40dp。
 
-9. **`cardStyleMap` 强引用泄漏**
-   用 `IdentityHashMap`（key 强引用）而配对的是 `WeakReference` 列表。
-   设置页每次重建 200~300 个 View 全进 map，旧 View 永不回收；清理阈值
-   `size() > refs.size()*2 + 32` 随两者同步增长，基本不触发。
-   改法：换 `WeakHashMap`（`android.view.View` 未重写 equals/hashCode，语义等价），
-   并删掉那段已无意义的阈值反向清理。
+> **教训**：「扩触摸热区」和「扩背景绘制区」是两件事。凡是有自定义背景的
+> 可点控件，扩热区必须用 `InsetDrawable` / `TouchDelegate`，不能只加 padding。
 
-10. **`appIconCache` 无上限**
-    `Android/data` 下 3000 个包名 → 缓存 3000 个 Drawable（30~100KB each）= 90~300MB。
-    改法：加 `appIconOrder` 队列 + `APP_ICON_CACHE_MAX = 64`，
-    超限时按插入顺序淘汰（`appIconQueried` 同步清理，保证能重新查询）。
+**切换目录不回到顶部**（用户反馈）
+两层原因叠加：
+① `p.entries` 是同一个 List 实例（`clear()` + `addAll()`），
+   `notifyDataSetChanged()` 后 RecyclerView 保留旧锚点；
+② 旧的滚动位置记忆机制（`scrollStateByDir` + `restoreScrollOnLoad`）
+   虽然门控在 `restoreScrollOnLoad` 上，但 `markReturnToForeground()` 全项目零调用，
+   **从未真正执行**——它白存了一堆 Parcelable，还让问题看起来像「设计如此」。
+现为：三个切目录入口（`navigateTo`/`navBack`/`navForward`）显式滚到顶部；
+排序、写操作后刷新、下拉刷新都保留当前位置。
 
-11. **`savePrefInt`/`savePrefBool` 主线程 `commit()`**
-    25 处主线程调用，每次 fsync 2~10ms（低端机 20ms+）；滑块松手还会紧接
-    `persistState()`（又一次 24 键 commit）= **2 次 fsync**，表现为「拖完卡一下」。
-    改法：方法体改为 `PREF_HANDLER.post(...)`（专用后台线程，`persistState` 已走这条），
-    签名不变 → 25 个调用点零改动。
+---
 
-**验证**：`assembleRelease` 通过（1m37s），装机启动正常，
-无崩溃、无 `NoSuchMethodError`/`NoClassDefFoundError`，双窗格渲染正常
-（`Os.lstat` 改造后文件大小与 mtime 显示均正确）。
+### 2. 性能优化
 
-### 三视角审查修复（2026-11-16，第 2 批）
+#### 2.1 主线程 IO 移出
 
-12. **X2 属性框两个占位符互相顶掉**
-    目录属性框同时起两个后台线程（项目数 / 大小），回填都用
-    `tv.getText().toString().replace("计算中…", x)`。项目数先回来时它的 replace
-    会把「大小：计算中…」一并替掉，大小再回来已找不到占位符 → 显示成
-    「项目数：1.2 MB」这种错乱。
-    改法：两个值分别存 `String[]`，每次回填用 `propHeadLine` + 当前已知值
-    重拼整段文本（`rerenderProp`）。
+**目录枚举下沉到后台**
+`reload()` 缓存未命中时原在主线程跑 `AccessRouter.list()` + 再 `listFiles()`
+数子项 —— 万级目录 100~500ms，进大目录明显掉帧。
+现只把「枚举 + 计数」挪到 `HyDirLoad` 线程，回主线程后走
+`finishReload(p, dirChanged)` 继续做过滤/置顶/排序/绑数据/动画。
+配套：`Pane.loadSeq` 序号守卫（连点几个目录只认最后一次，A→B→A 也不会错配）+
+`dirChanged` 在分派前捕获（异步回来后该标志可能已被下一次切目录改写）。
 
-13. **X3 `uniqueName()` 未回写 `existing`**
-    同一批粘贴里两个不同目录的同名文件，各自都看到 `existing` 里没有它 →
-    拿到同一个名字 → provider 侧后写覆盖前写（或 provider 造出 `name (1) (1)`），
-    用户少一个文件。改法：分配后立即 `existing.add(name)`。
+**缓存命中不再 `listFiles()`**
+旧实现即使命中缓存也要完整枚举目录数 `kids.length` —— 缓存只省了
+`FileEntry` 构造，没省 IO。现只比 mtime；下拉刷新有 `dirCache.clear()` 兜底。
 
-14. **X4 `ZipCache.extract` 无锁无临时文件**
-    缩略图线程 + 查看器 + 播放器可能同时请求同一条目。旧实现直接写最终路径，
-    线程 A 写到一半，线程 B 看到 `length()>0` 就当缓存命中 → 读到半截文件；
-    而半截文件满足 `length()>0` 会被后续调用长期复用，错误内容驻留缓存。
-    改法：按绝对路径的细粒度锁（`ConcurrentHashMap` 取锁对象）+ 写 `.tmp`
-    后原子 rename；`purgeArchive` 删文件时同步移除锁表条目防泄漏。
+**冷启动主线程清扫回收站 → 后台 + 24h 节流**
+`purgeExpiredTrash()` 在 `createMainView` 内、首帧之前，递归遍历过期目录树再删
+→ 5000 文件的过期目录 = 白屏 1~3 秒，且每次启动都跑。
+⚠ 第一版误用 `runTask()`，它会 `TaskKeepAliveService.acquire()` 拉前台服务，
+冷启动时与 `reloadAll` 抢主线程 → 实测触发
+`ForegroundServiceDidNotStartInTimeException` FATAL 崩溃。改裸线程后消失。
 
-15. **P8 冷启动主线程清扫回收站**
-    `purgeExpiredTrash()` 在 `createMainView` 内、`reloadAll()` 之前，对每个过期
-    条目调 `countTree`（递归遍历整棵被删目录树）再 `deleteTree`。5000 文件的
-    过期目录 = 冷启动白屏 1~3 秒，且每次启动都跑。
-    改法：移到独立线程 `HyTrashPurge` + 24 小时节流（`PREF_LAST_TRASH_PURGE`）。
-    **踩坑**：第一版用了 `runTask()`，而 `runTask` 会 `TaskKeepAliveService.acquire()`
-    拉起前台服务 → 冷启动时前台服务与 `reloadAll()` 抢主线程，实测触发
-    `ForegroundServiceDidNotStartInTimeException` 崩溃（FATAL，进程死）。
-    回收站清扫是启动维护，用户没发起任何操作，不该弹「正在处理文件」通知，
-    改用裸线程（不碰前台服务）后崩溃消失。
+**`savePrefInt`/`savePrefBool` 主线程 `commit()` → 后台**
+25 处主线程调用，每次 fsync 2~10ms；滑块松手还会紧接 `persistState()`
+（又一次 24 键 commit）= **两次 fsync**。改用已有的 `PREF_HANDLER`，签名不变。
 
-16. **P5 缩略图黑帧 Bitmap 泄漏**
-    `decodeVideoThumb` 里黑帧重试的 `f2` 若也是全黑，既不使用也不 `recycle`
-    直接丢弃。`getFrameAtTime` 的位图在 native 堆，不 recycle 要等 GC finalizer；
-    批量加载黑场视频缩略图会累积多张 1080p 位图（每张 ~4MB）。
-    同类：`ImageViewerActivity` 解码完成但 `seq` 已变时 `fb` 直接丢弃未回收；
-    顺带补上「换图时回收旧 drawable 的位图」。
+**任务队列无界 → 有界 16**
+`newSingleThreadExecutor()` 内部是无界队列，连点 20 次解压就堆 20 个 Runnable
++ 20 次前台服务 acquire。超限时提示「任务排队已满」而非笼统的「无法提交任务」。
 
-17. **D3 解压到已存在目录会清空整棵树**
-    `extract()` 签名明确允许 `destDir` 已存在，但 GBK 乱码重解路径里有
-    `deleteTreeQuietly(destDir)` —— 会把用户原有文件整棵删除。
-    改法：`extract()` 记录 `destPreexisted` 并传给 `extractZip`；
-    只有「本次新建的空目录」才允许清空重解，目标原本存在时跳过清空并打日志。
+#### 2.2 热路径减少分配
 
-**验证（第 2 批）**：`assembleRelease` 通过，装机启动正常，
-崩溃 0 / FATAL 0 / 前台服务异常 0，进程存活，双窗格渲染正常。
-（第 1 次构建曾引入 `ForegroundServiceDidNotStartInTimeException`，已修复并复测通过。）
+**排序 comparator 内 `toLowerCase`（26 万字符串）**
+1 万文件目录约 13 万次比较 × 2 = 26 万个临时字符串、约 10MB 抖动。
+改为 `FileEntry.lowerName()` **惰性缓存**（不是构造时算——虚拟视图、
+不排序的场景没必要付这个成本）。
 
-### 切换目录回到顶部（2026-11-16，用户反馈修复）
+**`UiKit.color` 每次 `new TypedValue` + 属性解析**
+`onBindViewHolder` 每行调 4~8 次，一屏 ≈ 每帧 60~160 次。
+加 `SparseIntArray` 缓存 + **双重失效**：`invalidateColorCache()` 由模块在主题
+切换时调用；记录 `uiMode` 作兜底（系统深色模式切换后即使没人调也能自愈）。
+⚠ 缓存是 `static`，不随 Activity 销毁，主题切换后必须显式清空。
 
-**用户反馈**：「切换目录从头滑动没有了（切换目录不要保存上个目录的滑动位置）」
+**`formatDate`/`formatSize` 加 LruCache**
+`yearOf()` 的 `Calendar.getInstance()` 改 `ThreadLocal<Calendar>` 复用；
+两个格式化方法各加 `LruCache<Long,String>`（512 条）。
+实测典型一屏 20 行只有 9 个不同大小值 → 命中率约 55%。
 
-**根因（两层叠加）**：
+> ⚠ **失败的尝试（记录以免重犯）**：`formatSize` 曾改成整数定点运算替代
+> `String.format`，用 2 万个值对比新旧输出 —— **8940 个不一致**
+> （`1048575` 旧 `"1024.0 KB"` 新 `"1.0 MB"`；GB 档四舍五入偏差 0.01）。
+> 结论：**文件大小显示错比慢一点严重得多**，回滚并保留 `String.format`，只加缓存。
 
-1. 切换目录走 `adapter.setData(p.entries)` → `notifyDataSetChanged()`。
-   而 `p.entries` 是**同一个 List 实例**（`reload` 里一直 `clear()` + `addAll()`），
-   RecyclerView 在 `notifyDataSetChanged` 后会保留原来的 `LinearLayoutManager` 锚点
-   → 从第 N 行进去仍然停在第 N 行。
-2. 旧的「滚动位置记忆」机制（`scrollStateByDir` + `restoreScrollOnLoad`）
-   虽然门控在 `restoreScrollOnLoad` 上，但 `markReturnToForeground()` 全项目
-   **零调用**，等于白存了一堆 `Parcelable`；同时它让代码看起来「有恢复逻辑」，
-   掩盖了真正的问题。
+**`trimDisk` 每写一张缩略图就全盘扫描**
+5000 张缓存时每解一张 ≈ 5000 次 stat。改 `AtomicLong` 累加 + 30 秒节流 +
+下标排序（避免 comparator 重复 `lastModified()`）。
 
-**修复**：
+**拖动框选每帧全表重绑**
+`if (changed || true)` 让判断完全失效，每个 MOVE 事件都
+`notifyDataSetChanged()` → 1000~2000 bnd/秒。
+改为 `PAYLOAD_SELECTION` + 轻量 `bindSelection()`，只刷「上次区间 ∪ 本次区间」。
 
-1. 新增 `resetListToTop(Pane)`：`scrollToPosition(0)` →
-   `post()` 到下一帧再 `scrollToPositionWithOffset(0, 0)`。
-   分两拍是因为 `notifyDataSetChanged` 的 layout 在下一帧才完成，
-   只调一次会出现「偶尔停在老位置」。
-2. 在 `reload()` 里用 `dirChanged` 标志控制：
-   ```java
-   final boolean dirChanged = p.dirFadePending;   // 必须在消费前拷贝
-   if (p.dirFadePending) { p.dirFadePending = false; playDirTransition(p.list); }
-   ...
-   if (dirChanged) resetListToTop(p);
-   ```
-   **踩坑**：第一版直接在后面判 `p.dirFadePending`，但它在上面淡入动画块里
-   已被置 false，导致逻辑永不执行。改为先拷一份。
-3. **彻底删除** `scrollStateByDir` / `restoreScrollOnLoad` / `lastLoadedPath` /
-   `markReturnToForeground()` / `SCROLL_STATE_MAX` 整套机制（用户明确不要恢复，
-   留着只是死代码 + 内存占用）。
-4. 删除 `reload()` 里 `onSaveInstanceState` / `onRestoreInstanceState` 调用。
+#### 2.3 内存上限
 
-**边界正确性**（已用脚本逐一核对）：
-
-| 场景 | 入口 | 是否重置滚动 |
+| 对象 | 原状态 | 现上限 |
 |---|---|---|
-| 进入目录 | `navigateTo` | ✅ 重置 |
-| 后退 | `navBack` | ✅ 重置 |
-| 前进 | `navForward` | ✅ 重置 |
-| 排序 | `reloadAll` | ❌ 保留（否则列表突然跳顶） |
-| 写操作后刷新 | `reloadAll` | ❌ 保留 |
-| 下拉刷新 | 直接调 `reload` | ❌ 保留（不清 dirFadePending） |
+| `dirCache` | 无界 HashMap | LRU 24 |
+| `scrollStateByDir` | 无界 HashMap | **⚠ 已推翻：整套机制已删除**（见 1.4 切换目录不回到顶部） |
+| `backStack`/`fwdStack` | 无界 ArrayDeque | 50（`pushHistory()` 收口） |
+| `appIconCache` | 无界 HashMap | 64 + 插入序淘汰 |
+| `cardStyleMap` | `IdentityHashMap` **强引用** View | `WeakHashMap` |
+| `SIZE_CACHE`/`DATE_CACHE` | 无 | 各 512 条 |
+| `archiveItemsCache`/`ZipCache` | 已有 LRU | 未动（原本就对） |
 
-**网格模式**：`GridLayoutManager` 是 `LinearLayoutManager` 的子类，
-`instanceof` 判断覆盖两种布局，`scrollToPositionWithOffset` 同样适用。
+**`cardStyleMap` 用强引用的后果**：设置页每次重建 200~300 个 View 全进 map，
+旧 View 永不回收；清理阈值 `size() > refs.size()*2 + 32` 随两者同步增长，
+**基本不会触发**。
 
-**验证**：`assembleRelease` 通过（1m16s），装机启动正常，崩溃 0 / FATAL 0 / 进程存活。
+**图片查看器高清模式上限 16× 屏幕**
+1080×2400 屏的 4 倍单边是 4320px —— 4000×3000 照片落在 `sample=1`
+（48MB 单张），5000 万像素 = 200MB 必 OOM，而 `hdMode` 默认 true。
+改为判据 4×→2×、上界 8→32、新增 `MAX_DECODE_PIXELS = 16MP` 总像素硬闸。
 
-### 去重与死代码清理（2026-11-16）
+**缩略图黑帧 Bitmap 泄漏**
+黑帧重试的 `f2` 若也全黑则既不使用也不 `recycle`（native 堆，每张 ~4MB）。
+`ImageViewerActivity` 的 `seq` 已变分支同样漏回收。
 
-按三视角审查的「架构」部分执行。原则：**只做移动/委托，不改逻辑行为**
-（唯二例外是 `.xapk`/`.tbz` 后缀补齐与 `extOf` 的 NPE 修复，都是修 bug）。
+---
 
-#### 1. 扩展名知识库统一到 `util/Exts`
+### 3. 架构与代码卫生
 
-改之前同一批扩展名在 **3 个文件里各写一份**，内容逐字相同却毫无关联：
+#### 3.1 重复逻辑消除
 
-| 位置 | 集合 |
+**压缩包后缀表：三份 → 一份（曾因此崩过）**
+原三处等价但形式不同、互相独立维护：
+① `ArchiveExtractor.canExtract` 的 switch；
+② `ARCHIVE_NAME_SUFFIXES` 带点数组（剥名用）；
+③ `splitZipPath` 内联 if 链（切分虚拟路径）。
+③ 漏了 `.tbz/.tbz2/.txz/.tzst` 而 ①② 都有 → 1.1 那个「打开即崩」。
+现统一到 `ArchiveExtractor`：`EXTRACTABLE_EXTS`（16 项）+
+`NAME_SUFFIXES`（20 项，长后缀在前）。验证：两表双向差集为空。
+
+**`fmtStorageSize` 并入 `AccessUtil.formatStorageSize`**
+两份只差「TB 档 + 负值占位符（`—` 而非 `-`）」，改精度时容易漏改一边。
+验证：20011 个值（含边界与随机）对比新旧输出，**零差异**。
+
+**扩展名集合：10 套 → 1 套（`util/Exts`）**
+原先散在 `FileListAdapter`（5 套）、`FileManagerModule`（4 套）、
+`MediaPlayerActivity`（1 套），内容逐字相同却毫无关联。
+新增格式时必须改三处，漏一处就出现「详情页说是图片、列表却不显示缩略图」。
+
+**`formatSize`/`formatDate`/`extOf` 各合并为一份**
+`FileOps.formatDate` 是旧版拷贝（**没有** ThreadLocal 缓存——上一轮性能优化
+只改了一半）；`extOf` 三份合一，顺带修了 `FileManagerModule` 那份
+**没判 `name == null`** 的 NPE 隐患。
+
+**`deleteDirQuiet` 委托 `deleteTree`、`isImageName` 改走 `Exts`**
+
+#### 3.2 死代码清理
+
+| 项 | 情况 |
 |---|---|
-| `FileListAdapter` | IMG/VIDEO/AUDIO/DOC/ARCHIVE_EXTS（5 套） |
-| `FileManagerModule` | IMAGE/VIDEO_ONLY/AUDIO_ONLY/MEDIA_EXTS（4 套） |
-| `MediaPlayerActivity` | VIDEO_EXTS（1 套） |
-
-后果：新增一个格式（如 `avif` 图片）必须记得改三处，漏一处就出现
-「详情页说是图片，列表却不显示缩略图」这种诡异不一致。
-
-新建 `util/Exts.java`：`IMAGE`/`VIDEO`/`AUDIO`/`DOC`/`ARCHIVE`/`MEDIA`
-六个不可变集合 + `isImage/isVideo/isAudio/isMedia/isDoc/isArchive` 谓词 +
-`extOf()` 帮助方法。10 套定义合并为 1 套，16 处 `XXX_EXTS.contains(...)`
-改为 `Exts.isXxx(...)`。
-
-#### 2. `formatSize` / `formatDate` 合并到 `AccessUtil`
-
-`FileOps.formatSize` 与 `AccessUtil.formatSize` 是**逐字相同**的拷贝；
-`FileOps.formatDate` 是 `AccessUtil.formatDate` 的旧版拷贝（**没有** ThreadLocal
-缓存 —— 也就是上一轮性能优化只改了一半）。现在 `FileOps` 两个方法都改为
-转发到 `AccessUtil`，调用方零改动。
-
-#### 3. 解压后缀表统一 + 修 `.xapk` 不一致
-
-`tryUnzip`（自动解压）与 `extractZip`（手动解压）各写一个后缀剥离表，且**内容不同**：
-
-```
-extractZip 版：..., ".apk", ".xapk", ".7z", ...   ← 有 .xapk、.tbz
-tryUnzip 版：  ..., ".apk", ".7z", ...             ← 两者都没有
-```
-
-结果：同一个 `foo.xapk` 手动解压得到目录 `foo`，自动解压得到 `foo.xapk`
-—— **用户能看到的现网行为不一致**。
-
-改为 `ARCHIVE_NAME_SUFFIXES` 常量 + `archiveBaseName(String)` 方法，两处共用。
-顺序要求已写进注释：`.tar.gz` 必须排在 `.gz` 前，否则 `a.tar.gz` 会被剥成 `a.tar`。
-
-#### 4. `deleteTreeQuietly` 改为非递归
-
-`ArchiveExtractor.deleteTreeQuietly` 原为递归实现，两个问题：
-① 深目录（node_modules、分层备份）有栈溢出风险；
-② 不判符号链接 —— 目录里若有指向父目录的 symlink 会无限递归。
-
-改为与 `FileManagerModule.deleteTree` 同构的显式栈版本，并新增
-`isSymlinkStatic`（零 `java.nio.file` 依赖，API 26+ 用 Files，低版本用
-canonicalPath 兜底）。
-
-#### 5. `extOf` 三份合一份，顺带修 NPE
-
-`FileListAdapter.extOf`、`FileManagerModule.extOf`、新增的 `Exts.extOf` 三份。
-前两份改为委托。**其中 `FileManagerModule` 那份没判 `name == null`**，
-而调用方有传 `e.name`（虚拟条目可能为 null）的地方 → 潜在 NPE，委托后修掉。
-
-#### 6. 删死代码
-
-| 项 | 说明 |
-|---|---|
+| `fixGbkName` | 零调用（与 `ArchiveExtractor` 的同名实现重复） |
 | `PREFIX_CAT` | 分类功能已移除，零使用 |
-| `catCache` / `catCacheKey` | 只声明，全项目零读写 |
-| `findBySuffix()` | 零调用 |
-| `buildBookmarkSection()` | 零调用 |
-| `itemMenuGridRow()` | 零调用（含其 javadoc 中的 `{@link}` 引用） |
+| `catCache`/`catCacheKey` | 只声明，全项目零读写 |
+| `findBySuffix()` / `buildBookmarkSection()` / `itemMenuGridRow()` | 零调用 |
+| `naturalCompare` 包装 | 拆分后无调用点 |
+| `REQ_PICK_BG` | **⚠ 注释写错了**：自称「retired」但 `8116` 仍在用（Android 13+ 主路径）。改注释，不删代码 |
+| 未使用 import | 去重后失效的 6 个（`Arrays`/`HashSet`/`Set`/`Date`/`Locale`） |
 
-顺带清理因去重而失效的 6 个 import（`Arrays`/`HashSet`/`Set`/`Date`/`Locale`）。
+#### 3.3 设计系统
 
-#### 评估后决定不改
+**字号 14 种 → 6 种（213 处）**
+原标尺 `{11,12,13,14,16,20,26}` **自身就有问题**——12/13/14 三个 1sp 相邻档，
+1sp 差构不成视觉层级。实测 11/12/13 三档合计 **135 次（63%）**，
+读者分不出轻重；另有 8 个孤值。新标尺 6 档、档差 ≥2sp：
+`9/10/11/11.5→11`、`12/13→13`、`14/15→15`、`16/17/18→17`、`20/22→20`、`26/28→26`。
+核对后全项目只剩这 6 种值。
 
-| 项 | 理由 |
+**圆角标尺重定**
+`RADIUS_*` 原**外部引用 0 次**（纯摆设），实际散写 12 种半径。
+新标尺：`XS=6 / SMALL=10 / MEDIUM=14 / LARGE=16 / XL=24 / PILL=999`
+（16 是最常用的卡片角，原来反而没常量）。
+
+**触摸目标补 48dp**
+新增 `UiKit.TOUCH_MIN_DP = 48`。音乐控制 34→48dp、底部同步按钮 40→48dp、
+编辑器标签 30→44dp（空间取舍）、标签关闭「×」加 `minWidth/minHeight=44dp`
+（原热区约 25×30dp）。
+**故意不改的两处**：`trashArrow` 14dp（不可点，父容器有 12dp padding）、
+顶栏 `toolIcon` 40dp（注释有设计推理：36→48→40，用户反馈顶栏太大）。
+
+**3 处对比度不达标（实测值）**
+
+| 位置 | 原配色 | 实测 | 改为 |
+|---|---|---|---|
+| 失败原因红字 | `0xFFFF6B6B` 硬编码配浅玻璃底 | **2.78:1** | 按明暗动态：深色 `FF6B6B`，浅色 `D32F2F`（4.98:1） |
+| 编辑器浅色强调 | `0xFF42A5F5` 配白底 | **2.65:1** | `0xFF1565C0`（5.75:1） |
+| 标签激活态 | 白字压上述亮蓝 | **≈2.3:1** | 随背景变深自动达标 |
+
+为此在 `UiKit` 新增 `isDarkTheme()`（从 `colorSurface` 实际亮度判断，
+不读 `uiTheme` 三态设置）、`relativeLuminance()`、`contrastRatio()`。
+
+**`contentDescription` 6 处 → 11 处**
+补底部导航 4 个按钮与编辑器标签关闭键（后者原来读屏朗读「乘号」）。
+
+#### 3.4 拆分与测试
+
+**抽出 `util/FileNames.java`（6 个纯函数）**
+`trimSlash` / `nameExists` / `uniqueName` / `isValidFileName` /
+`naturalCompareLower` / `archiveBaseName`。
+抽取判据是**脚本验证方法体不出现 `ctx`/`handler`/`fmPrefs`/`SafStrategy`/`Uri`**，
+不是「看起来独立」。模块内保留转发方法，调用点零改动。
+未抽 `isSelfNested`/`isSameParent`/`baseNameOf`——依赖 `SafStrategy` 的 uri 解析，
+抽出去会把类内耦合变成跨包耦合。
+
+**建立单元测试底座（项目此前零测试）**
+`testImplementation("junit:junit:4.13.2")` + `FileNamesTest`（24 用例），
+`gradle testReleaseUnitTest` → **24 tests, 0 skipped, 0 failures**。
+用例价值在**锁住已踩过的坑**：`.tbz` 剥名、`.xapk` 剥名、
+`a.tar.gz→a`、`file2<file10`、`name (1).jpg`、`.gitignore→.gitignore (1)`。
+
+> **测试跑出来的一个发现（如实记录）**：`isValidFileName` 里
+> `n.endsWith(" ")` 是**死代码**——前面 `trim()` 已把尾空格删光。
+> 但进一步核查：**所有调用方都先 `.trim()` 再传入**（`4189`、`10563`），
+> 这条分支在实际链路上本来就到不了。把判断移到 `trim()` 之前只是补全
+> 函数语义契约，**对现有行为无影响**——写进注释避免后人误以为修了个线上 bug。
+
+#### 3.5 构建配置
+
+- 启用 `coreLibraryDesugaring`（`desugar_jdk_libs:2.1.5`）
+- `proguard-rules.pro` 加 `-assumenosideeffects` 剥 `Log.d`/`Log.v`
+  （**保留 `Log.w`/`Log.e`**，崩溃排查依赖）。反编译验证：`syncByFocus`/`HFM`/
+  `loadZip path=` 全部消失，`HyReload`/`HyRefresh`/`HyZipCache`/`HyArchive` 仍在
+- 移除 5 处调试 `Log.d`（其中一个在**每次进压缩包**都拼接 `p.path` 用户真实路径）
+- Manifest 4 处缩进统一（去空白后逐行对比确认零实质改动）
+
+---
+
+### 4. 审查中确认「已经做对」的部分
+
+以下项经审查验证**无需改动**，记录在此避免以后重复优化：
+
+| 项 | 结论 |
 |---|---|
-| `countTree` + `dirSize` 合并 | 一个数条目、一个数大小，调用场景完全不同；合并成「一次遍历返回两个值」会让两个简单方法变成带出参的复杂签名，收益不抵复杂度 |
-| `StatFs` 三处用法 | `FileOps.storageInfo` 返回字符串、另两处要算占用百分比，语义不同，强行合并反而要加参数分支 |
-| `mimeOf` | 全文只有一份，无重复 |
+| Zip Slip 防护 | 四后端统一过 `safeChild`（`getCanonicalPath` + 前缀比较），无绕过 |
+| 解压炸弹配额 | 条目数/单文件/总量 + 压缩比四道防线齐备 |
+| `ThumbLoader` | 3 线程池 + 8MB LruCache + 200MB 磁盘 + 30s 节流，设计正确 |
+| `archiveItemsCache` | 标准 LRU(8)，是后来参照的模板 |
+| 加密密码处理 | 不落盘、不进日志、不明文回显 |
+| SAF Cursor | 均 `finally` close，无泄漏 |
+| 25 处裸 `new Thread` | **全部正确把 UI 操作 post 回主线程**（做了括号匹配精确分析） |
+| 主题色引用 | 261 处 `UiKit.color(attr)` 走主题，方向正确 |
+| 删除安全性 | 有确认弹窗 + 回收站可恢复 + 重名自动改名防覆盖 |
 
-**效果**：`FileManagerModule.java` 从 **17364 降到 17224 行**（-140 行）。
-注意「去重」不等于「大幅瘦身」——删掉的 10 套扩展名定义只有约 40 行（都在长行里），
-而新增的解释性注释占了不少篇幅；真正的收益是**单一事实源**，不是行数。
-新增 `util/Exts.java`（125 行），项目总文件数 42 → 43，总行数 28661。
+---
 
-**验证**：`assembleRelease` 通过（1m22s），装机启动正常，崩溃 0 / FATAL 0，
-进程存活；双窗格渲染正常（文件夹图标、文件名、大小、修改时间全部正确）。
+### 5. 审查报告发现的「已知未修项」
 
-### 五维度审查修复（2026-11-17，第 1 批：4 个真 bug）
+以下是审查指出但**评估后决定暂不动**的，供后续参考：
 
-报告见 `docs/reviews/`（5 份 + 汇总 README）。
+| 项 | 位置 | 不做的原因 |
+|---|---|---|
+| 顶栏 `toolIcon` 40dp | `17047` | 注释有设计推理（36→48→40，用户反馈顶栏太大）；要改需上 `TouchDelegate` |
+| `createMainView` 同步建全部页 | `1088` | 冷启动 UI 构建 10~30ms，收益小于风险 |
+| `reloadAll` 两窗格都刷 | `2919` | 写操作后只刷受影响窗格需改调用约定，牵连面大 |
+| `reduce motion` 不生效 | `821-837` | 需监听 `accessibility_force_reduce_motion`（Android 14），本机 API 34 测不到 |
+| `bg_ripple_round` 无 focus 态 | — | 键盘/D-pad 用户才受影响，手机上罕见 |
+| 「打开方式」约 2100 次 IPC | `13304` | 200 应用机型 300~900ms，但需重排 UI 构建流程 |
+| 拆分编辑器 1.8k 行 | `10958` | 需先给 `ctx`/`fmPrefs()` 建构造器注入，风险中等，单独一轮做 |
+| `ZipCache` 锁表不清理 | `149` | 条目数受解出量约束，量级小 |
 
-1. **`.tbz/.tbz2/.txz/.tzst` 压缩包打开即崩**
-   `splitZipPath`（15528）的后缀表有 `.tgz` 但**漏了这 4 个**，而
-   `ARCHIVE_NAME_SUFFIXES`（629 行）与 `ArchiveExtractor.canExtract` 都支持它们，
-   侧边栏「压缩包」分类也包含 → 用户能看到、能点开。
-   切分失败 → `best<0` → 回退到首个 `/` → 整个 `zip://…/x.tbz` 被当包路径 →
-   `loadZip` 报「不存在」→ 点「解压」时 `substring` 越界崩溃。
-   改法：后缀表抽成局部 `SUP[]` 供两处共用（原来写了两遍），补 4 个后缀；
-   另加「整体即压缩包名」的防御分支（当前构造点都带尾斜杠，走不到，但避免空串下传）。
+---
 
-2. **`FileOps.deleteRecursive` 不判 symlink → 可能删掉链接目标内容**
-   `f.isDirectory()` 对「指向目录的 symlink」返回 true，旧实现直接递归进去真删目标。
-   对照：`FileManagerModule.deleteTree`（16954）与 `ArchiveExtractor.deleteTreeQuietly`
-   都判了 `isSymlink`，唯独这里漏了。
-   调用链：`moveAsync` 跨分区删源、`moveToTrash` 删源、`restoreFromTrash` 删临时。
-   改法：新增 `isSymlink`（与另两处同构，API 26+ 用 `Files`，低版本 canonicalPath 兜底），
-   `deleteRecursive` 加 `&& !isSymlink(f)`。
+### 6. 验证记录
 
-3. **回收站过期清理留孤儿 `.trashmeta`**
-   `purgeExpiredIn` 删条目但没删配对 meta → 残留永久占位；
-   更坑的是下次同名条目复用旧 meta → **恢复到错误路径**。
-   改法：删除前先 `deleteTrashMeta(f)`（顺序不能反，条目一消失就找不到 meta 名），
-   并显式 `continue` 跳过 meta 文件本身。
+| 提交 | 验证方式 | 结果 |
+|---|---|---|
+| `84a147a` | assembleRelease + 装机 + Python 复刻 `splitZipPath` 9 用例 | 通过（8/9，第 9 个是非压缩包路径，实际走不到） |
+| `2575655` | assembleRelease + 字号全集脚本核对 | 6 种值与标尺一致 |
+| `24c83b1` | assembleRelease + `formatSize` 20017 值对比 | 回滚后零差异 |
+| `7633459` | assembleRelease + **截图确认双窗格加载** | 通过，并发现同步按钮问题 |
+| `a26245b` | assembleRelease + 后缀表差集 + 20011 值对比 | 全部零差异 |
+| `a6ef42d` | **截图确认**同步按钮已与其他按钮等高 | 通过 |
+| `6f842e2` | `testReleaseUnitTest` + assembleRelease | 24/24 通过 |
 
-4. **重复实现与死代码**
-   - `isImageName`（8401）是漏网旧实现，手写 `endsWith×6` 只认 jpg/jpeg/png/webp/bmp/gif；
-     而 `Exts.IMAGE` 有 19 种。后果：背景图浏览器里 **HEIC/HEIF/SVG/TIFF/RAW 照片全部不显示**
-     （相机默认 HEIC 的用户看不到自己的图）。改为 `Exts.isImage(Exts.extOf(name))`。
-   - `fixGbkName`（15481）零调用，与 `ArchiveExtractor.fixGbkName` 重复 → 删本文件这份。
-   - `REQ_PICK_BG`（8054）注释自称「retired」但 `8116` 仍在用（Android 13+ 走
-     `ACTION_PICK_IMAGES` 的主路径）→ 注释写错了，改正而非删代码。
+**统一验证口径**：每次改动后 `assembleRelease` 必须通过；装机启动后
+崩溃 0 / FATAL 0；`logcat` 无 `CalledFromWrongThreadException`；
+验证完毕 `am force-stop` 关闭并确认进程退出。
 
-**验证**：`assembleRelease` 通过（1m22s），装机启动正常，崩溃 0 / FATAL 0；
-另用 Python 复刻 `splitZipPath` 逻辑跑了 9 个边界用例（含 `.tbz` 带/不带尾斜杠、
-`.tar.gz` 复合扩展名、非压缩包路径），8/9 符合预期（第 9 个是非压缩包路径返回空串，
-但该方法只在 `zip://` 下调用，实际走不到）。
-
-### 五维度审查修复（2026-11-17，第 2 批：设计系统与无障碍）
-
-5. **字号从 14 种收敛到 6 种（213 处）**
-   原标尺 `{11,12,13,14,16,20,26}` **自身就有问题**——12/13/14 三个 1sp 相邻档，
-   而 1sp 差无法构成视觉层级。实测全项目 11/12/13 三档合计 **135 次（63%）**，
-   读者根本分不出轻重；另有 8 个孤值（9/10/11.5/17/18/22/28）。
-   新标尺 6 档、档差 ≥2sp：
-   `9,10,11,11.5→11` / `12,13→13` / `14,15→15` / `16,17,18→17` / `20,22→20` / `26,28→26`
-   用 Python 脚本按 `setTextSize(...)` 两种形态精确替换 81 处（其余本来就是目标值）。
-   核对结果：全项目只剩 `11 13 15 17 20 26` 六种，与标尺完全一致。
-   `UiKit.TYPE_CAPTION`（原 12f）已删除，无残留引用。
-
-6. **圆角标尺重定并补全**
-   原 `RADIUS_*` 外部引用 **0 次**（纯摆设），实际散写 12 种半径。
-   新标尺对齐实际高频值：`XS=6 / SMALL=10 / MEDIUM=14 / LARGE=16 / XL=24 / PILL=999`。
-   16 是最常用的卡片角，原来反而没有常量。改值安全——确认无外部引用。
-
-7. **触摸目标补 48dp**
-   新增 `UiKit.TOUCH_MIN_DP = 48`（含 Android/iOS/Web 三平台标准说明）。
-   - 音乐控制 4 按钮：**34dp → 48dp**（原来整个点击区只有 34dp，低于标准近 30%）
-   - 底部同步按钮：**40dp → 48dp**（容器与图标同步）
-   - 编辑器标签：**30dp → 44dp**（空间取舍，44 是 Material 密集列表项下限），
-     「×」关闭按钮加 `minWidth/minHeight=44dp`（原热区约 25×30dp）
-   - `trashArrow` 14dp **不改**——它不可点，父容器 `trashHeader` 有 12dp padding 且整体可点
-   - 顶栏 `toolIcon` 40dp **不改**——注释有明确设计推理（36→48→40，用户反馈顶栏太大），
-     属有意取舍；要改得上 `TouchDelegate`，留待后续
-
-8. **3 处对比度不达标（实测值）**
-   | 位置 | 原配色 | 实测 | 改为 |
-   |---|---|---|---|
-   | 失败原因红字 `13361` | `0xFFFF6B6B` 硬编码配浅玻璃底 | **2.78:1** | 按明暗动态：深色 `FF6B6B`，浅色 `D32F2F`（4.98:1） |
-   | 编辑器浅色强调 `11730` | `0xFF42A5F5` 配白底 | **2.65:1** | `0xFF1565C0`（5.75:1） |
-   | 标签激活态 | 白字压上述亮蓝 | **≈2.3:1** | 随背景变深自动达标 |
-
-   为此在 `UiKit` 新增三个方法：`isDarkTheme()`（从 `colorSurface` 实际亮度判断，
-   不读 App 的 uiTheme 三态设置）、`relativeLuminance()`（WCAG 公式）、
-   `contrastRatio()`（可做运行时断言与测试）。
-
-9. **contentDescription 6 处 → 11 处**
-   补了底部导航 4 个按钮（后退/前进/上级/新建）与编辑器标签关闭键。
-   后者原来读屏朗读「乘号」，现在读「关闭标签 xxx」。
-
-**验证**：`assembleRelease` 通过（1m40s），装机启动正常，崩溃 0 / FATAL 0。
-字号映射经脚本核对，全项目只剩标尺内的 6 种值。
-
-> 注：想截图核验渲染，但 HY文件管理 一直无法置顶（`com.dsh.aihub` 抢占前台，
-> `am start` 返回「intent 已投递给当前 top-most 实例」）。改用代码级验证：
-> 字号全集与标尺逐一比对通过；`FileListAdapter` 主标题 15sp / 副标题 11sp（档差 4sp）。
-
-### 五维度审查修复（2026-11-17，第 3 批：性能 P0）
-
-10. **P0-3 排序 comparator 内重复 `toLowerCase`（26 万字符串）**
-    `Collections.sort` 比较次数约 2·n·log₂n，旧实现每次比较都对两个原始名
-    各调一次 `toLowerCase()` —— 1 万文件目录 ≈ 13 万次比较 = **26 万个临时字符串**，
-    主线程上约 10MB 分配抖动。
-    改法：`FileEntry` 加 `lowerName()` **惰性缓存**（不是构造时算——虚拟视图、
-    不排序的场景没必要付这个成本），`naturalCompare` 拆出 `naturalCompareLower`
-    接收已小写串，比较器改为 `naturalCompareLower(a.lowerName(), b.lowerName())`。
-    顺带删掉已无调用点的 `naturalCompare` 包装。
-
-11. **P0-2 `UiKit.color` 每次 `new TypedValue` + 属性解析**
-    `onBindViewHolder` 每行调 4~8 次，一屏 15~20 行 ≈ 每帧 60~160 次属性解析。
-    改法：加 `SparseIntArray` 静态缓存（attr → ARGB）。失效策略两条：
-    ① `invalidateColorCache()` 由模块在主题切换时显式调用；
-    ② 记录 `uiMode`（`UI_MODE_NIGHT_MASK`）作兜底——系统深色模式切换后
-       即使没人调 invalidate 也能自愈。
-    踩坑：缓存是 static，不随 Activity 销毁，所以主题切换后必须显式清空，
-    否则重建的界面仍用旧主题色。
-
-12. **P0-2 `formatDate`/`formatSize` 热路径优化**
-    - `yearOf()` 每次 `Calendar.getInstance()` → 改 `ThreadLocal<Calendar>` 复用
-      （Calendar 初始化时区/Locale 约 10~30µs）。
-    - `formatSize` / `formatDate` 各加 `LruCache<Long,String>`（各自 512 条）。
-      实测典型一屏 20 行只有 9 个不同大小值 → **命中率约 55%**。
-
-    **失败的尝试（记录以免重犯）**：`formatSize` 曾改成整数定点运算替代
-    `String.format`，用 2 万个值对比新旧输出 —— **8940 个不一致**：
-    `1048575` 旧 `"1024.0 KB"` 新 `"1.0 MB"`；GB 档四舍五入偏差 0.01。
-    结论：**文件大小显示错比慢一点严重得多**，回滚并保留 `String.format`，
-    只加缓存。手写浮点格式化在边界与舍入上极难与 `Formatter` 逐字符对齐。
-
-13. **P0-4 任务队列无界**
-    `newSingleThreadExecutor()` 内部是无界 `LinkedBlockingQueue` ——
-    连点 20 次解压就堆 20 个 Runnable，还要各拉起一次前台服务。
-    改法：换 `ThreadPoolExecutor(1,1,…,LinkedBlockingQueue(16), AbortPolicy)`，
-    `TASK_QUEUE_MAX = 16`；`runTask` 单独捕获 `RejectedExecutionException`，
-    提示「任务排队已满（16 个）」而非笼统的「无法提交任务」。
-
-14. **顺带修两个既有线程 bug（P0-4 过程中发现）**
-    `runTask` 的两处 `UiKit.alert` 都可能在后台线程执行：
-    ① 提交失败分支（`runTask` 可能被 `withArchiveSecret` 回调等后台线程调用）；
-    ② 任务执行体的 `catch`（本来就在 TASK_QUEUE 后台线程上）。
-    而 `UiKit.alert` 会创建 View/Dialog，必须在主线程。
-    两处都改为 `handler.post(() -> UiKit.alert(...))`。
-
-**验证**：`assembleRelease` 通过（1m13s），装机启动正常，崩溃 0 / FATAL 0，
-logcat 无 `CalledFromWrongThreadException`。
-
-### 五维度审查修复（2026-11-17，第 4 批：P0-1 主线程 IO 异步化）
-
-15. **目录枚举下沉到后台线程**
-    `reload()` 的缓存未命中分支原在主线程跑 `AccessRouter.list()` + 再 `listFiles()`
-    数子项，万级目录 100~500ms，进大目录明显掉帧。
-    改法：只把「枚举 + 计数」挪到 `HyDirLoad` 线程，回主线程后走
-    `finishReload(p, dirChanged)` 继续做过滤/置顶/排序/绑数据/动画。
-    为什么只挪这一段：后续步骤依赖 `p.entries` 的最终状态且都很快，
-    拆开反而更难保证一致。
-
-16. **序号守卫防竞态**
-    `Pane` 新增 `loadSeq`；每次 reload 自增，后台回来后校验
-    `seq != p.loadSeq` 与 `pathToLoad.equals(p.path)` 双重条件——
-    用户连点几个目录时只认最后一次，A→B→A 来回切也不会错配。
-
-17. **`dirChanged` 改为分派前捕获**
-    踩坑：最初在 `finishReload` 里读 `p.dirFadePending`，但异步路径要过一会儿
-    才回来，期间该标志可能被下一次切目录改写。改为在 `reload` 分派前捕获并传参。
-    序号守卫恰好保证了「被应用的那次结果」对应「被捕获的那个值」。
-
-18. **缓存命中也 `listFiles()` → 只比 mtime**
-    旧实现即使命中缓存，也要完整枚举目录数 `kids.length` —— 缓存只省了
-    `FileEntry` 构造，没省 IO。改为只比 mtime；下拉刷新已有 `dirCache.clear()`
-    兜底（审查报告把这条标记为「主流文件管理器共同取舍」）。
-    顺带删掉无用的 `cc` 变量。
-
-**验证**：`assembleRelease` 通过（1m18s），装机启动正常，崩溃 0 / FATAL 0；
-**截图确认双窗格列表正常加载**（文件名/时间全部显示，无空白列表）。
-
-#### 截图验证中发现并修复的视觉回归
-
-把底部同步按钮从 40dp 改成 48dp 后，`box` 的 OVAL 背景跟着撑大 ——
-截图里它变成一个明显比其他导航按钮大的蓝色圆圈，风格突兀。
-改为「视觉保持 40dp，点击区由 box 的透明 padding 4dp 补到 48dp」。
-教训：**触摸目标要扩的是热区，不是背景所在的那个 View**。
-
-> 截图过程反复受阻：`com.dsh.aihub` 抢前台、系统锁屏（`mWakefulness=Dozing`）、
-> 截到锁屏相机界面。已修复的参数经代码核对无误，但**修复后的视觉效果未再截图确认**。
-
-### 五维度审查修复（2026-11-17，第 5 批：架构去重）
-
-19. **压缩包后缀表：三份 → 一份**
-    原先有三处等价但形式不同的清单，互相独立维护：
-    ① `ArchiveExtractor.canExtract` 的 switch
-    ② `FileManagerModule.ARCHIVE_NAME_SUFFIXES` 带点数组（剥名用）
-    ③ `splitZipPath` 内联的 if 链（切分虚拟路径用）
-    实际出过事：③ 漏了 `.tbz/.tbz2/.txz/.tzst`，而 ①② 都有 → 这些包能看见、
-    能点开，但切分失败导致点「解压」时崩溃（第 1 批已修，但当时只是补了一份）。
-    现在统一到 `ArchiveExtractor`：`EXTRACTABLE_EXTS`（16 个，判能否解压）+
-    `NAME_SUFFIXES`（20 个带点后缀，长后缀在前，剥名与切分共用）。
-    验证：两表双向差集为空；`splitZipPath` 用 4 个真实测试包路径
-    （`.tbz`/`.tbz2`/`.txz` 及带子目录的）全部正确切分。
-
-20. **`fmtStorageSize` 并入 `AccessUtil.formatStorageSize`**
-    模块内那份与 `AccessUtil.formatSize` 只差「TB 档 + 负值占位符（`—` 而非 `-`）」，
-    改精度时容易只改一边。新增 `formatStorageSize`：GB 以内复用 `formatSize`
-    （含其 LruCache），超出才走 TB 分支。
-    验证：用 20011 个值（含边界 1023/1024/1024⁴/2⁶³-1 与随机值）
-    对比新旧输出，**零差异**。
-
-21. **`deleteDirQuiet` 改为委托 `deleteTree`**
-    旧实现是递归，两个问题：① **不判符号链接**——`k.isDirectory()` 对
-    「指向目录的 symlink」返回 true，会递归进链接目标真删内容；
-    ② 深目录（node_modules、分层备份）栈溢出。
-    而本文件里的 `deleteTree` 已正确处理（显式栈 + `isSymlink`）。
-    保留 boolean 返回值（调用方用它决定要不要记「已清理」日志），
-    语义改为「目录已不存在即视为成功」。
-
-**验证**：`assembleRelease` 通过（1m34s），装机启动正常，崩溃 0 / FATAL 0。
-`FileManagerModule` 17348 行（本轮去重净减约 30 行，其余被注释抵消）。
-
-### 修复：底部同步按钮圆圈偏大（2026-11-17）
-
-**现象**（第 4 批截图发现）：底部导航栏中间的同步按钮，蓝圈明显比左右箭头大一圈，
-还挤到相邻按钮。
-
-**第一次尝试失败**：以为是 40dp→48dp 的视觉尺寸变了，改回「视觉 40dp + box padding 4dp」。
-再次截图 —— **还是大的**。原因：`GradientDrawable` 会画在 View 的**完整边界（含 padding）**
-上，`box` 尺寸 = 内容 40 + padding 8 = 48dp，所以椭圆外径仍是 48dp。
-
-**正确做法**：背景用 `InsetDrawable` 向内缩 `touchPad`，让椭圆只占中间的 40dp 视觉区，
-四周 4dp 是透明热区：
-
-```java
-box.setBackground(new InsetDrawable(gd, touchPad, touchPad, touchPad, touchPad));
-box.setPadding(touchPad, touchPad, touchPad, touchPad);
-```
-
-**验证**：截图确认圆圈直径与左右按钮视觉高度一致，不再挤邻居。
-（这次按新约定：启动 App 截图 → `am force-stop` 关闭 → 确认进程退出、前台回到 AI 应用。）
-
-**教训**：**「扩触摸热区」和「扩背景绘制区」是两件事**。padding 同时影响两者——
-所以凡是有自定义背景的可点控件，扩热区时必须用 `InsetDrawable` / `TouchDelegate`，
-不能只加 padding。
-
-### 架构拆分 + 建立测试底座（2026-11-17，第 6 批）
-
-22. **抽出 `util/FileNames.java`（6 个纯函数）**
-    从 17k 行的 `FileManagerModule` 里抽出零外部依赖的纯函数：
-    `trimSlash` / `nameExists` / `uniqueName` / `isValidFileName` /
-    `naturalCompareLower` / `archiveBaseName`。
-    抽取判据不是「看起来独立」，而是脚本验证了这 6 个方法体里
-    **不出现 `ctx` / `handler` / `fmPrefs` / `SafStrategy` / `Uri` 任何一个**。
-    模块内保留同名转发方法，调用点零改动。`FileManagerModule` 17351 → 17302 行。
-
-    为什么只抽 6 个：`isSelfNested` / `isSameParent` / `baseNameOf` 都依赖
-    `SafStrategy` 的 uri 解析，抽出去会把两个类的耦合变成跨包耦合，收益为负。
-
-23. **建立单元测试底座（项目此前零测试）**
-    - `app/build.gradle.kts` 加 `testImplementation("junit:junit:4.13.2")`
-    - 新建 `app/src/test/java/com/aliya/hyfilemgr/util/FileNamesTest.java`（24 个用例）
-    - `gradle testReleaseUnitTest` 通过：**24 tests, 0 skipped, 0 failures**
-
-    用例的价值不在「证明代码对」，而在**锁住已踩过的坑**，每条 assert 背后
-    都有一次真实故障：
-    - `.tbz/.tbz2/.txz/.tzst` 剥名（第 1 批那个「打开即崩」的 bug）
-    - `.xapk` 剥名（两份后缀表不一致导致手动/自动解压目录名不同）
-    - `a.tar.gz → a` 而非 `a.tar`（复合后缀必须整体剥掉）
-    - `file2 < file10`（自然排序的核心价值）
-    - `name (1).jpg` 扩展名要保留
-    - `.gitignore → .gitignore (1)`（隐藏文件的点不是扩展名分隔符）
-
-24. **测试跑出来的一个发现（如实记录）**
-    `isValidFileName` 里 `n.endsWith(" ")` 是**死代码**——前面 `name.trim()`
-    已经把尾空格删光了。测试第一次跑就挂在断言上。
-
-    但进一步核查发现：**所有调用方都先 `.trim()` 再传进来**
-    （`showNewFolderDialog:4189`、`rename:10563`），所以这条分支在实际链路上
-    本来就到不了。把判断移到 trim 之前只是补全了函数自身的语义契约，
-    **对现有行为无影响**——这点已写进代码注释与测试注释，避免后人误以为
-    修了个线上 bug。
-
-**验证**：`assembleRelease` 通过（1m23s），`testReleaseUnitTest` 24/24 通过，
-装机启动正常，崩溃 0 / FATAL 0，验证后已 `am force-stop` 关闭。
+---
 
 ### 下一步待办
 
