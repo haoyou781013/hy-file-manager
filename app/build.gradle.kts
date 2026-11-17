@@ -11,8 +11,8 @@ android {
         minSdk = 23   // media3 1.11.1 要求
         targetSdk = 34   // 保持 34：升 36 会强制 edge-to-edge、onBackPressed 失效等
         // 版本号唯一来源：本文件
-        versionCode = 10
-        versionName = "1.0.5"
+        versionCode = 11
+        versionName = "1.0.6"
     }
 
     compileOptions {
