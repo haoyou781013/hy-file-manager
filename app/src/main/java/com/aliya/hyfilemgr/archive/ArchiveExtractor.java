@@ -58,18 +58,43 @@ public final class ArchiveExtractor {
     }
 
     /** 该文件能否被本解压器处理 */
+    /**
+     * 可解压的扩展名（小写、不含点）——<b>全项目唯一来源</b>。
+     *
+     * <p><b>为什么集中到这里</b>：原先有三份等价但形式不同的清单——
+     * ① 本类的 {@code canExtract} switch；② {@code FileManagerModule.ARCHIVE_NAME_SUFFIXES}
+     * 带点数组（用于剥名）；③ {@code splitZipPath} 里内联的 if 链（用于切分虚拟路径）。
+     * 三份互相独立维护，实际出过事：{@code splitZipPath} 漏了
+     * {@code .tbz/.tbz2/.txz/.tzst}，而另外两处都有 → 这些包能看见、能点开，
+     * 但切分失败导致点「解压」时崩溃。</p>
+     *
+     * <p>本类 {@code ArchiveExtractor} 是「能不能解压」这个知识的自然归属方；
+     * 模块层的剥名与切分都从这里派生。</p>
+     */
+    private static final java.util.Set<String> EXTRACTABLE_EXTS =
+            new java.util.HashSet<>(java.util.Arrays.asList(
+                    "zip", "jar", "apk", "xapk",
+                    "7z", "tar", "tgz", "tbz2", "tbz",
+                    "txz", "tzst", "gz", "bz2", "xz",
+                    "zst", "rar"));
+
     public static boolean canExtract(String fileName) {
         String e = ext(fileName);
-        switch (e) {
-            case "zip": case "jar": case "apk": case "xapk":
-            case "7z": case "tar": case "tgz": case "tbz2": case "tbz":
-            case "txz": case "tzst": case "gz": case "bz2": case "xz":
-            case "zst": case "rar":
-                return true;
-            default:
-                return false;
-        }
+        return e != null && EXTRACTABLE_EXTS.contains(e);
     }
+
+    /**
+     * 可解压扩展名的带点后缀表，<b>长后缀在前</b>（用于从文件名末尾逐个剥离）。
+     *
+     * <p>顺序要求：{@code .tar.gz} 必须排在 {@code .gz} 前面，否则
+     * {@code a.tar.gz} 会被剥成 {@code a.tar}；{@code .tbz2} 在 {@code .tbz} 前同理。</p>
+     */
+    public static final String[] NAME_SUFFIXES = {
+            ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst",
+            ".tgz", ".tbz2", ".tbz", ".txz", ".tzst",
+            ".zip", ".jar", ".apk", ".xapk",
+            ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst"
+    };
 
     /**
      * 解压到 destDir。

@@ -61,6 +61,36 @@ public final class AccessUtil {
         return out;
     }
 
+    /**
+     * 存储容量格式化（带 TB 档）。
+     *
+     * <p><b>为什么不直接用 {@link #formatSize}</b>：存储管理页要显示
+     * 整机容量（常见 128G~2T），需要 TB 档；且那里的 `—` 是「无数据」的
+     * 视觉约定（与 `-` 区分开）。曾有两份独立实现（`FileOps.formatSize`
+     * 到 GB、模块内 `fmtStorageSize` 到 TB），改精度时容易只改一边。</p>
+     *
+     * <p>本方法统一到 GB 以内走 {@link #formatSize}（共享其缓存），
+     * 超出才自己算 TB。</p>
+     */
+    public static String formatStorageSize(long bytes) {
+        if (bytes < 0) return "—";
+        if (bytes < 1024L * 1024 * 1024 * 1024) return formatSize(bytes);
+        String cached = STORAGE_CACHE.get(bytes);
+        if (cached != null) return cached;
+        double tb = bytes / 1024.0 / 1024 / 1024 / 1024;
+        String out = String.format(Locale.US, "%.2f TB", tb);
+        STORAGE_CACHE.put(bytes, out);
+        return out;
+    }
+
+    /** TB 档专用缓存（GB 以内复用 {@link #SIZE_CACHE}） */
+    private static final android.util.LruCache<Long, String> STORAGE_CACHE =
+            new android.util.LruCache<Long, String>(64) {
+                @Override protected int sizeOf(Long key, String value) {
+                    return 1;
+                }
+            };
+
     /** 把「已放大 10 倍的正整数」格式化成 {@code x.y}（等价 {@code %.1f}） */
     private static String fixed1(long v10) {
         return (v10 / 10) + "." + (v10 % 10);

@@ -642,25 +642,6 @@ public class FileManagerModule extends HyVqModule {
     /** 前进/后退历史栈上限：用户来回跳转时防无界增长 */
     private static final int HISTORY_MAX = 50;
 
-    /**
-     * 解压时要从压缩包名末尾剥掉的后缀表（长后缀在前，先匹配复合扩展名）。
-     *
-     * <p><b>曾经是两份漂移的拷贝</b>：`tryUnzip`（自动解压）与
-     * `extractZip`（手动解压）各写一个 `new String[]{...}`，而且内容不同：
-     * · extractZip 版有 `.tbz` 和 `.xapk`
-     * · tryUnzip 版两者都没有
-     * 结果：同一个 `foo.xapk` 手动解压得到目录 `foo`，自动解压得到 `foo.xapk`
-     * —— 用户能看到行为不一致。
-     *
-     * <p>顺序要求：`.tar.gz` 必须排在 `.gz` 前面，否则 `a.tar.gz` 会被剥成
-     * `a.tar`；`.tbz2` 在 `.tbz` 前面同理。新增格式时只改这一处。</p>
-     */
-    private static final String[] ARCHIVE_NAME_SUFFIXES = {
-            ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst",
-            ".tgz", ".tbz2", ".tbz", ".txz", ".tzst",
-            ".zip", ".jar", ".apk", ".xapk",
-            ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst"
-    };
 
     /**
      * 去掉压缩包的扩展名，得到用作输出目录名的基名。
@@ -672,7 +653,7 @@ public class FileManagerModule extends HyVqModule {
         if (name == null || name.isEmpty()) return "extracted";
         String base = name;
         String lower = name.toLowerCase(java.util.Locale.ROOT);
-        for (String suffix : ARCHIVE_NAME_SUFFIXES) {
+        for (String suffix : com.aliya.hyfilemgr.archive.ArchiveExtractor.NAME_SUFFIXES) {
             if (lower.endsWith(suffix)) {
                 base = name.substring(0, name.length() - suffix.length());
                 break;
@@ -5769,16 +5750,16 @@ public class FileManagerModule extends HyVqModule {
      * </ul>
      * <p>其余刻度与 formatSize 保持一致，避免同一屏里两种单位口径。</p>
      */
+    /**
+     * 存储容量格式化（带 TB 档，负值显示 {@code —}）。
+     *
+     * <p>实现已统一到 {@link AccessUtil#formatStorageSize}——原先是本文件里的
+     * 独立拷贝，与 {@code AccessUtil.formatSize} 只差「TB 档 + 负值占位符」，
+     * 改精度时容易只改一边。现在 GB 以内复用同一份实现（含其缓存），
+     * 超出才走 TB 分支。</p>
+     */
     private static String fmtStorageSize(long bytes) {
-        if (bytes < 0) return "—";
-        if (bytes < 1024) return bytes + " B";
-        double kb = bytes / 1024.0;
-        if (kb < 1024) return String.format(Locale.US, "%.1f KB", kb);
-        double mb = kb / 1024.0;
-        if (mb < 1024) return String.format(Locale.US, "%.1f MB", mb);
-        double gb = mb / 1024.0;
-        if (gb < 1024) return String.format(Locale.US, "%.2f GB", gb);
-        return String.format(Locale.US, "%.2f TB", gb / 1024.0);
+        return AccessUtil.formatStorageSize(bytes);
     }
 
 
@@ -7008,20 +6989,24 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 静默删目录（不抛异常，返回是否删掉了） */
+    /**
+     * 静默删除一个目录（含内容），返回「目录本身是否已被删除」。
+     *
+     * <p><b>为什么要改成委托 {@link #deleteTree}</b>：旧实现是递归，有两个问题——</p>
+     * <ul>
+     *   <li><b>不判符号链接</b>：{@code k.isDirectory()} 对「指向目录的 symlink」
+     *       返回 true，会递归进链接目标、把目标内容真删掉。而本文件里的
+     *       {@code deleteTree} 已经正确处理了（显式栈 + {@code isSymlink} 判断）。</li>
+     *   <li><b>深目录栈溢出</b>：node_modules、分层备份这类目录递归深度可达上千层。</li>
+     * </ul>
+     *
+     * <p>保留 boolean 返回值（调用方用它决定要不要记「已清理」日志），
+     * 语义改为「目录已不存在即视为成功」。</p>
+     */
     private boolean deleteDirQuiet(java.io.File dir) {
         if (dir == null || !dir.exists()) return false;
-        java.io.File[] kids = dir.listFiles();
-        if (kids != null) {
-            for (java.io.File k : kids) {
-                if (k.isDirectory()) deleteDirQuiet(k);
-                else {
-                    //noinspection ResultOfMethodCallIgnored
-                    k.delete();
-                }
-            }
-        }
-        //noinspection ResultOfMethodCallIgnored
-        return dir.delete();
+        deleteTree(dir);              // 显式栈 + 不跟随 symlink
+        return !dir.exists();
     }
 
     /** 用系统浏览器打开链接 */
@@ -15653,14 +15638,10 @@ public class FileManagerModule extends HyVqModule {
     /** 把 FileEntry 的 zip 路径拆成 [zip 文件绝对路径, 包内相对路径] */
     private static String[] splitZipPath(String virt) {
         String rest = virt.substring(PREFIX_ZIP.length());
-        // 后缀表只维护一份，供「按 '/' 逐段试切」与「整体即压缩包名」两处共用。
-        // 必须与 ARCHIVE_NAME_SUFFIXES（629 行）保持同步 —— 曾因这里漏了
-        // .tbz/.tbz2/.txz/.tzst 导致这些包切分失败、点解压时越界崩溃。
-        final String[] SUP = {
-                ".zip", ".jar", ".apk", ".xapk", ".7z", ".rar", ".tar",
-                ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst",
-                ".tgz", ".tbz2", ".tbz", ".txz", ".tzst"
-        };
+        // 后缀表来自 ArchiveExtractor.NAME_SUFFIXES（全项目唯一来源）。
+        // 曾因这里内联维护了一份、且漏了 .tbz/.tbz2/.txz/.tzst，
+        // 导致这些包切分失败、点解压时越界崩溃。
+        final String[] SUP = com.aliya.hyfilemgr.archive.ArchiveExtractor.NAME_SUFFIXES;
         // zip 路径自身可能含 "/"，逐个尝试已知后缀作为切分点
         int best = -1;
         for (int i = rest.length(); i > 0; i--) {

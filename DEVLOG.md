@@ -535,6 +535,38 @@ logcat 无 `CalledFromWrongThreadException`。
 > 截图过程反复受阻：`com.dsh.aihub` 抢前台、系统锁屏（`mWakefulness=Dozing`）、
 > 截到锁屏相机界面。已修复的参数经代码核对无误，但**修复后的视觉效果未再截图确认**。
 
+### 五维度审查修复（2026-11-17，第 5 批：架构去重）
+
+19. **压缩包后缀表：三份 → 一份**
+    原先有三处等价但形式不同的清单，互相独立维护：
+    ① `ArchiveExtractor.canExtract` 的 switch
+    ② `FileManagerModule.ARCHIVE_NAME_SUFFIXES` 带点数组（剥名用）
+    ③ `splitZipPath` 内联的 if 链（切分虚拟路径用）
+    实际出过事：③ 漏了 `.tbz/.tbz2/.txz/.tzst`，而 ①② 都有 → 这些包能看见、
+    能点开，但切分失败导致点「解压」时崩溃（第 1 批已修，但当时只是补了一份）。
+    现在统一到 `ArchiveExtractor`：`EXTRACTABLE_EXTS`（16 个，判能否解压）+
+    `NAME_SUFFIXES`（20 个带点后缀，长后缀在前，剥名与切分共用）。
+    验证：两表双向差集为空；`splitZipPath` 用 4 个真实测试包路径
+    （`.tbz`/`.tbz2`/`.txz` 及带子目录的）全部正确切分。
+
+20. **`fmtStorageSize` 并入 `AccessUtil.formatStorageSize`**
+    模块内那份与 `AccessUtil.formatSize` 只差「TB 档 + 负值占位符（`—` 而非 `-`）」，
+    改精度时容易只改一边。新增 `formatStorageSize`：GB 以内复用 `formatSize`
+    （含其 LruCache），超出才走 TB 分支。
+    验证：用 20011 个值（含边界 1023/1024/1024⁴/2⁶³-1 与随机值）
+    对比新旧输出，**零差异**。
+
+21. **`deleteDirQuiet` 改为委托 `deleteTree`**
+    旧实现是递归，两个问题：① **不判符号链接**——`k.isDirectory()` 对
+    「指向目录的 symlink」返回 true，会递归进链接目标真删内容；
+    ② 深目录（node_modules、分层备份）栈溢出。
+    而本文件里的 `deleteTree` 已正确处理（显式栈 + `isSymlink`）。
+    保留 boolean 返回值（调用方用它决定要不要记「已清理」日志），
+    语义改为「目录已不存在即视为成功」。
+
+**验证**：`assembleRelease` 通过（1m34s），装机启动正常，崩溃 0 / FATAL 0。
+`FileManagerModule` 17348 行（本轮去重净减约 30 行，其余被注释抵消）。
+
 ### 下一步待办
 
 - 文本编辑器重构（预览/编辑双模式、语法高亮、快捷输入栏、编码切换、
