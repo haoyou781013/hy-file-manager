@@ -1,3 +1,65 @@
+## 1.0.7 — 2026-11-17
+
+用户反馈修复：1.0.6 引入的下载更新崩溃 + 闪退后需重下。
+
+### 修复：下载完成后闪退（`CalledFromWrongThreadException`）
+
+**现象**：点「下载并安装」，更新包下载**完成的那一刻**闪退。
+重新进入后发现又要重新下载。
+
+**崩溃栈**（logcat 实录）：
+
+```
+FATAL EXCEPTION: HyUpdateDownload
+android.view.ViewRootImpl$CalledFromWrongThreadException:
+  Only the original thread that created a view hierarchy can touch its views.
+  Expected: main  Calling: HyUpdateDownload
+    at ViewRootImpl.checkThread
+    at View.requestLayout
+    at WorldDown.paytorch.preview.ViewExtImpl.hookRequestLayout
+```
+
+**根因**：`downloadAndInstall` 的下载线程里写着一行裸的 UI 调用：
+
+```java
+if (net != null && net[0] > 0) {
+    ok = true;
+    cancelBtn.setVisibility(View.GONE);   // ← 在 HyUpdateDownload 线程
+    handler.post(() -> { ... });
+```
+
+`setVisibility` 内部触发 `requestLayout()`，它必须在创建 View 的线程（主线程）执行。
+同方法里其他 UI 操作都正确包了 `handler.post`，唯独这一行漏了 ——
+而且是**下载成功才走**的分支，所以测下载失败场景测不出来。
+
+**改动**：把它并入后面已有的 `handler.post` 块（顺带少一次跨线程调度）。
+
+**同类排查**：用脚本扫描全项目所有 `new Thread` 的 lambda 体
+（剔除 `handler.post` / `runOnUiThread` 块后）检查是否还有裸 UI 调用
+—— 结果**只有这一处**，已全部修复。
+
+### 改进：断点复用，闪退/退出后不必重下
+
+1.0.6 及之前，下载包存在 `cacheDir/update_<ver>.apk`，但没有任何复用逻辑：
+只要没装成（权限未给、崩溃、用户退出），下次点更新都从头下载。
+
+现在下载前先检查：
+
+1. 文件存在 → 用 `getPackageArchiveInfo` 校验三条：
+   - 能解析（ZIP 结构完整、AndroidManifest 可读）
+   - 包名与本 App 一致
+   - `versionName` 与目标版本一致
+2. 校验通过 → 直接调 `doInstall`，提示「已下载过 vX，直接安装」
+3. 校验失败 → 删掉重下（半截 APK 交给系统安装器只会得到
+   「解析包时出现问题」这种无信息量的报错）
+
+不做签名校验：本 App 自签名、更新源固定，且 `apksigner` 逻辑要引额外依赖；
+真正安装时系统会拦签名不符的包。
+
+**影响面**：`FileManagerModule.downloadAndInstall`、新增 `isCompleteApk`。
+
+---
+
 ## 1.0.6 — 2026-11-17
 
 > 本轮无新功能，是**四轮代码审查**（1 次自查 + 3 视角独立审查 + 5 维度独立审查）

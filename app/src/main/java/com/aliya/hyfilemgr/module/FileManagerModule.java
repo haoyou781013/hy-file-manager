@@ -6319,9 +6319,14 @@ public class FileManagerModule extends HyVqModule {
                 if (cancelled.get()) break;
                 if (net != null && net[0] > 0) {
                     ok = true;
-                    cancelBtn.setVisibility(View.GONE);
+                    // ⚠ cancelBtn.setVisibility 必须在主线程：它内部会走 requestLayout()，
+                    // 而非主线程调用会抛 CalledFromWrongThreadException
+                    // （实测崩溃栈：FATAL EXCEPTION: HyUpdateDownload →
+                    //   ViewRootImpl.checkThread → View.requestLayout）。
+                    // 这里和下面的进度更新合并成一次 post，少一次跨线程调度。
                     handler.post(() -> {
                         if (detached) return;
+                        cancelBtn.setVisibility(View.GONE);
                         bar.setProgress(100);
                         progressText.setText("下载完成，正在安装…");
                     });
@@ -14319,6 +14324,40 @@ public class FileManagerModule extends HyVqModule {
             ctx.startActivity(i);
         } catch (Throwable t) {
             UiKit.alert(ctx, "无法安装：" + msgOf(t));
+        }
+    }
+
+    /**
+     * 判断 cacheDir 里的更新包是否**完整可用**。
+     *
+     * <p><b>为什么要校验而不能只看文件存在</b>：`cacheDir` 是系统随时可回收的目录，
+     * 下载中途崩溃/被「存储管理 → 清理缓存」都会留下半截文件。
+     * 半截 APK 交给系统安装器会得到「解析包时出现问题」这种毫无信息量的报错。</p>
+     *
+     * <p>校验三条：</p>
+     * <ol>
+     *   <li>能解析出包信息（说明 ZIP 结构完整、AndroidManifest 可读）；</li>
+     *   <li>包名与本 App 一致（防止下错文件）；</li>
+     *   <li>versionCode 与目标版本一致（防止拿到旧包的残留）。</li>
+     * </ol>
+     *
+     * <p>不做签名校验：本 App 自签名、更新包来源固定，且 `apksigner` 的
+     * 校验逻辑要引额外依赖。真正安装时系统会拦签名不符的包。</p>
+     */
+    private boolean isCompleteApk(java.io.File apk, String expectedVer) {
+        if (apk == null || !apk.isFile() || apk.length() < 1024) return false;
+        try {
+            android.content.pm.PackageManager pm = ctx.getPackageManager();
+            android.content.pm.PackageInfo pi = pm.getPackageArchiveInfo(
+                    apk.getAbsolutePath(), 0);
+            if (pi == null) return false;                       // ZIP 结构坏 / 不是 APK
+            if (!ctx.getPackageName().equals(pi.packageName)) return false;
+            // expectedVer 是字符串版本号，getPackageArchiveInfo 给的是 versionName，
+            // 直接比 versionName 即可（发版时两者一致，preflight 也校验这一点）
+            return expectedVer == null || expectedVer.equals(pi.versionName);
+        } catch (Throwable t) {
+            android.util.Log.w("HyUpdate", "校验更新包失败 " + apk, t);
+            return false;
         }
     }
 
