@@ -1,9 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  中央大播放按钮。
+
+  改前：纯白实心圆（#FFFFFFFF），黑底上刺眼，且与周围的半透明圆形按钮
+        视觉权重严重失衡 —— 用户的「丑」主要来自这里。
+
+  改后：白色 92% 不透明 + 外侧 1px 淡描边 + 轻微内外层次。
+  不用纯透明是刻意的：中央按钮需要一眼找到，太淡会找不到「怎么开始播」。
+-->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
     android:color="#33000000">
     <item>
         <shape android:shape="oval">
-            <solid android:color="#FFFFFFFF" />
+            <solid android:color="#EBFFFFFF" />
+            <stroke android:width="1dp" android:color="#40FFFFFF" />
         </shape>
     </item>
     <item android:id="@android:id/mask">

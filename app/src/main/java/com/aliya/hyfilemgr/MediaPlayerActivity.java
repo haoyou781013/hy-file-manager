@@ -207,8 +207,17 @@ public class MediaPlayerActivity extends Activity {
         }
     };
     private float downX, downY;
+    // ── 手势反馈 HUD ──
+    /** 手势提示浮层（双击暂停 / 长按倍速 / 滑动 seek 时短暂显示） */
+    private View gestureHud;
+    private ImageView hudIcon;
+    private TextView hudText;
+    private Runnable hudHideRunnable;
+    /** HUD 文字节流：上次更新时间戳，避免滑动 seek 时每帧重排 */
+    private long lastHudUpdateMs = 0L;
+
     private boolean horizontalMode, verticalMode;
-    private boolean longPressing;
+    private boolean longPressing = false;
     private long seekTargetMs = -1;
 
     private String[] playlist;
@@ -219,6 +228,10 @@ public class MediaPlayerActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean dragging = false;
     private boolean controlsVisible = true;
+    /** 控制条自动隐藏延时（毫秒）。3 秒是 B 站/YouTube 的通用值 */
+    private static final long CONTROLS_AUTO_HIDE_MS = 3000L;
+    /** 自动隐藏任务；显示控制条时重排，隐藏时撤掉 */
+    private Runnable controlsHideRunnable;
     /** 是否已进入可播状态（对应原 VideoView 的 prepared 语义） */
     private boolean prepared = false;
     /** 标记"是我们主动切换"的加载，用于区分播放结束与出错 */
@@ -256,6 +269,10 @@ public class MediaPlayerActivity extends Activity {
         tvCounter = findViewById(R.id.tv_player_counter);
         tvAudioName = findViewById(R.id.tv_audio_name);
         View root = findViewById(R.id.player_root);
+        // 手势反馈浮层：可见性由 showGestureHud() 控制
+        gestureHud = findViewById(R.id.player_gesture_hud);
+        hudIcon = findViewById(R.id.hud_icon);
+        hudText = findViewById(R.id.hud_text);
 
         // ── 请求头（网络源需要）──
         // 动漫模式：带上整条线路的集列表，播放器内即可选集
@@ -372,6 +389,8 @@ public class MediaPlayerActivity extends Activity {
 
             @Override public void onIsPlayingChanged(boolean isPlaying) {
                 updatePlayIcon(isPlaying);
+                // 播放状态变了：控制条若可见，重新计时（暂停 → 停表不隐藏；恢复播放 → 重新 3 秒）
+                if (controlsVisible) scheduleControlsAutoHide();
             }
         });
 
@@ -415,9 +434,13 @@ public class MediaPlayerActivity extends Activity {
             }
             @Override public void onStartTrackingTouch(SeekBar sb) {
                 dragging = true;
+                // 拖进度条时不许自动隐藏（否则拖到一半控制条没了）
+                cancelControlsAutoHide();
             }
             @Override public void onStopTrackingTouch(SeekBar sb) {
                 dragging = false;
+                // 松手后重新开始 3 秒倒计时
+                if (controlsVisible) scheduleControlsAutoHide();
                 if (prepared) player.seekTo(sb.getProgress());
             }
         });
@@ -453,6 +476,12 @@ public class MediaPlayerActivity extends Activity {
         switching = true;
         updatePlayIcon(false);
         seekBar.setProgress(0);
+        // 切歌/切集后把控制条显示出来并重新计时，让用户看到新标题
+        if (!controlsVisible) {
+            controlsVisible = true;
+            applyControlsVisible();
+        }
+        scheduleControlsAutoHide();
         seekBar.setMax(0);
         tvPos.setText("00:00");
         tvDur.setText("00:00");
@@ -574,10 +603,116 @@ public class MediaPlayerActivity extends Activity {
         btnPlay.setImageResource(playing ? R.drawable.ic_pause : R.drawable.ic_play);
     }
 
+    /**
+     * 显示手势反馈浮层。
+     *
+     * <p><b>为什么必须有</b>：双击暂停、长按 2× 加速、左右滑动 seek、上下滑亮度/音量
+     * ——这四类手势此前完全没有视觉反馈。用户不知道操作生效了没有，
+     * 长按加速时尤其毫无感知（1× 和 2× 的画面差别要盯几秒才看得出来）。</p>
+     *
+     * @param iconRes 图标资源；0 表示只显示文字
+     * @param text    提示文字（如「2.0× 加速中」「快进 00:30」）
+     * @param sticky  true 表示不自动消失（长按加速期间要一直显示，松手才收起）
+     */
+    private void showGestureHud(int iconRes, String text, boolean sticky) {
+        if (gestureHud == null) return;
+        // handler 是 final 字段（类初始化时已创建），不需要惰性初始化
+        // 先撤掉上一次的自动隐藏，避免它把这次的新内容提前收掉
+        if (hudHideRunnable != null) handler.removeCallbacks(hudHideRunnable);
+
+        if (iconRes != 0 && hudIcon != null) {
+            hudIcon.setImageResource(iconRes);
+            hudIcon.setVisibility(View.VISIBLE);
+        } else if (hudIcon != null) {
+            hudIcon.setVisibility(View.GONE);
+        }
+        if (hudText != null) hudText.setText(text);
+
+        if (gestureHud.getVisibility() != View.VISIBLE) {
+            gestureHud.setAlpha(0f);
+            gestureHud.setVisibility(View.VISIBLE);
+            gestureHud.animate().alpha(1f).setDuration(120).start();
+        }
+        if (!sticky) {
+            hudHideRunnable = this::hideGestureHud;
+            handler.postDelayed(hudHideRunnable, 700);
+        } else {
+            // sticky 也需要兜底：ACTION_UP/CANCEL 有可能收不到
+            // （系统手势、来电、多指切换都会吞掉 UP 事件）。
+            // 30 秒后强制收起——长按加速本来也不会持续更久。
+            hudHideRunnable = this::hideGestureHud;
+            handler.postDelayed(hudHideRunnable, 30_000L);
+        }
+    }
+
+    /** 收起手势反馈浮层（淡出 180ms） */
+    private void hideGestureHud() {
+        if (gestureHud == null || gestureHud.getVisibility() != View.VISIBLE) return;
+        gestureHud.animate().alpha(0f).setDuration(180)
+                .withEndAction(() -> {
+                    if (gestureHud != null) gestureHud.setVisibility(View.GONE);
+                }).start();
+    }
+
+    /**
+     * 显示/隐藏控制条。
+     *
+     * <p><b>新增自动隐藏</b>：以前只能手动点掉，用户看片时控制条一直挡着画面底部。
+     * 现在显示后 3 秒自动收起；播放中才自动隐藏——**暂停时不隐藏**，
+     * 否则用户暂停后找不到播放键。</p>
+     */
     private void toggleControls() {
         controlsVisible = !controlsVisible;
-        controls.setVisibility(controlsVisible ? View.VISIBLE : View.GONE);
-        topBar.setVisibility(controlsVisible ? View.VISIBLE : View.GONE);
+        applyControlsVisible();
+        if (controlsVisible) scheduleControlsAutoHide();
+        else cancelControlsAutoHide();
+    }
+
+    /** 按 controlsVisible 应用到 View，并处理淡入淡出 */
+    private void applyControlsVisible() {
+        if (controls == null || topBar == null) return;
+        if (controlsVisible) {
+            controls.setVisibility(View.VISIBLE);
+            topBar.setVisibility(View.VISIBLE);
+            controls.animate().alpha(1f).setDuration(120).start();
+            topBar.animate().alpha(1f).setDuration(120).start();
+        } else {
+            controls.animate().alpha(0f).setDuration(180)
+                    .withEndAction(() -> {
+                        if (controls != null && !controlsVisible) controls.setVisibility(View.GONE);
+                    }).start();
+            topBar.animate().alpha(0f).setDuration(180)
+                    .withEndAction(() -> {
+                        if (topBar != null && !controlsVisible) topBar.setVisibility(View.GONE);
+                    }).start();
+        }
+    }
+
+    /** 排定 3 秒后自动隐藏（只在「控制条可见 + 正在播放 + 没在拖动进度」时） */
+    private void scheduleControlsAutoHide() {
+        cancelControlsAutoHide();
+        controlsHideRunnable = () -> {
+            if (!controlsVisible) return;
+            // 暂停时不自动隐藏：用户暂停就是想操作
+            if (player == null || !player.isPlaying()) return;
+            // 拖动进度条时不隐藏
+            if (dragging) return;
+            // 手势 HUD 正在显示时不隐藏（避免同时两个浮层闪）
+            if (gestureHud != null && gestureHud.getVisibility() == View.VISIBLE) {
+                scheduleControlsAutoHide();   // 稍后重试
+                return;
+            }
+            controlsVisible = false;
+            applyControlsVisible();
+        };
+        handler.postDelayed(controlsHideRunnable, CONTROLS_AUTO_HIDE_MS);
+    }
+
+    private void cancelControlsAutoHide() {
+        if (controlsHideRunnable != null && handler != null) {
+            handler.removeCallbacks(controlsHideRunnable);
+            controlsHideRunnable = null;
+        }
     }
 
     private void syncProgress() {
@@ -587,6 +722,11 @@ public class MediaPlayerActivity extends Activity {
             seekBar.setProgress(pos);
             tvPos.setText(fmt(pos));
             updatePlayIcon(player.isPlaying());
+            // 缓冲进度：网络源 / HLS 分片时让用户看出「哪里已经缓冲好了」。
+            // 之前完全没有 secondaryProgress，seek 到未缓冲区域只会卡住不给提示，
+            // 用户以为播放器死了。
+            long buf = player.getBufferedPosition();
+            if (buf > 0) seekBar.setSecondaryProgress((int) Math.min(buf, Integer.MAX_VALUE));
         } catch (Throwable ignored) {
         }
     }
@@ -601,6 +741,10 @@ public class MediaPlayerActivity extends Activity {
 
             @Override public boolean onDoubleTap(MotionEvent e) {
                 togglePlay();
+                // 双击的反馈必须立刻给：暂停/继续的画面变化在暗场景下看不出来
+                boolean playing = player != null && player.isPlaying();
+                showGestureHud(playing ? R.drawable.ic_play : R.drawable.ic_pause,
+                        playing ? "播放" : "暂停", false);
                 return true;
             }
 
@@ -610,6 +754,8 @@ public class MediaPlayerActivity extends Activity {
                 try {
                     if (player != null) player.setPlaybackSpeed(2.0f);
                     if (tvSpeed != null) tvSpeed.setText("2.0×");
+                    // sticky：加速期间一直显示，否则用户看不出现在是 2×
+                    showGestureHud(R.drawable.ic_play, "2.0× 加速中", true);
                 } catch (Throwable ignored) {
                 }
             }
@@ -643,6 +789,16 @@ public class MediaPlayerActivity extends Activity {
                                 player.getCurrentPosition() + delta));
                         seekTargetMs = target;
                         tvPos.setText(fmt((int) target) + "  ⟶");
+                        // HUD 里显示目标时间 + 相对当前位置的方向
+                        // 节流：MOVE 每秒几十次，每次都 showGestureHud 会不停
+                        // removeCallbacks/重排，导致 HUD 永远不消失
+                        long nowMs = System.currentTimeMillis();
+                        if (nowMs - lastHudUpdateMs >= 100) {
+                            lastHudUpdateMs = nowMs;
+                            long diff = target - player.getCurrentPosition();
+                            String arrow = diff >= 0 ? "快进 " : "快退 ";
+                            showGestureHud(0, arrow + fmt((int) Math.abs(diff)), false);
+                        }
                     } else if (verticalMode) {
                         float ratio = -dy / Math.max(1f, v.getHeight());
                         if (downX < v.getWidth() / 2f) {
@@ -657,6 +813,7 @@ public class MediaPlayerActivity extends Activity {
                 case MotionEvent.ACTION_CANCEL: {
                     if (longPressing) {
                         longPressing = false;
+                        hideGestureHud();
                         try {
                             if (player != null) player.setPlaybackSpeed(SPEEDS[speedIdx]);
                             if (tvSpeed != null) tvSpeed.setText(SPEED_LABELS[speedIdx]);
@@ -669,6 +826,7 @@ public class MediaPlayerActivity extends Activity {
                         } catch (Throwable ignored) {
                         }
                         seekTargetMs = -1;
+                        hideGestureHud();
                     }
                     horizontalMode = verticalMode = false;
                     return true;
@@ -1093,6 +1251,9 @@ public class MediaPlayerActivity extends Activity {
     }
 
     @Override protected void onPause() {
+        // 切后台时收掉手势浮层，避免回来时看到上一轮的残留
+        hideGestureHud();
+        cancelControlsAutoHide();
         super.onPause();
         try {
             if (player != null && player.isPlaying()) player.pause();

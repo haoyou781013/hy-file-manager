@@ -100,7 +100,7 @@
         <TextView
             android:id="@+id/btn_player_retry"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="32dp"
             android:layout_marginTop="18dp"
             android:background="@drawable/bg_player_chip"
             android:clickable="true"
@@ -111,6 +111,38 @@
             android:textColor="#FFFFFF"
             android:textSize="14sp"
             android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btn_player_episodes"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_player_chip"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingHorizontal="14dp"
+                    android:minWidth="56dp"
+                    android:gravity="center"
+                    android:text="选集"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/btn_player_danmaku"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_player_chip"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingHorizontal="14dp"
+                    android:minWidth="56dp"
+                    android:gravity="center"
+                    android:text="弹幕"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
     </LinearLayout>
 
     <!-- 顶部：返回 + 文件名 -->
@@ -195,8 +227,8 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:layout_marginHorizontal="12dp"
-                android:maxHeight="3dp"
-                android:minHeight="3dp"
+                android:maxHeight="4dp"
+                android:minHeight="4dp"
                 android:progressDrawable="@drawable/progress_player"
                 android:thumb="@drawable/thumb_player"
                 android:thumbOffset="7dp"
@@ -264,7 +296,11 @@
                     app:tint="#FFFFFF" />
             </LinearLayout>
 
-            <!-- 右下角：倍速 / 画面比例（文字按钮，省去新图标；对齐 Kazumi 的播放器控制项） -->
+            <!--
+              右下角：倍速 / 画面比例。
+              选集与弹幕已移到顶部栏右侧（低频但需要空间的两个），
+              这里只留播放时最常调的这两项，避免和中央播放键挤在一行。
+            -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -273,44 +309,15 @@
                 android:orientation="horizontal">
 
                 <TextView
-                    android:id="@+id/btn_player_episodes"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="8dp"
-                    android:background="@drawable/bg_player_chip"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:paddingHorizontal="14dp"
-                    android:paddingVertical="7dp"
-                    android:text="选集"
-                    android:textColor="#FFFFFF"
-                    android:textSize="12sp"
-                    android:visibility="gone" />
-
-                <TextView
-                    android:id="@+id/btn_player_danmaku"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="8dp"
-                    android:background="@drawable/bg_player_chip"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:paddingHorizontal="14dp"
-                    android:paddingVertical="7dp"
-                    android:text="弹幕"
-                    android:textColor="#FFFFFF"
-                    android:textSize="12sp"
-                    android:visibility="gone" />
-
-                <TextView
                     android:id="@+id/btn_player_speed"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_height="32dp"
                     android:background="@drawable/bg_player_chip"
                     android:clickable="true"
                     android:focusable="true"
                     android:paddingHorizontal="14dp"
-                    android:paddingVertical="7dp"
+                    android:minWidth="56dp"
+                    android:gravity="center"
                     android:text="1.0×"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />
@@ -318,13 +325,14 @@
                 <TextView
                     android:id="@+id/btn_player_ratio"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_height="32dp"
                     android:layout_marginStart="8dp"
                     android:background="@drawable/bg_player_chip"
                     android:clickable="true"
                     android:focusable="true"
                     android:paddingHorizontal="14dp"
-                    android:paddingVertical="7dp"
+                    android:minWidth="56dp"
+                    android:gravity="center"
                     android:text="适应"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />
@@ -333,13 +341,55 @@
             <!-- 左下角：选择当前目录的音视频文件 -->
             <ImageView
                 android:id="@+id/btn_player_list"
-                android:layout_width="38dp"
-                android:layout_height="38dp"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
                 android:layout_gravity="start|center_vertical"
                 android:src="@drawable/ic_menu"
                 android:contentDescription="选择文件"
-                android:padding="9dp"
+                android:background="@drawable/bg_player_btn"
+                android:padding="11dp"
                 app:tint="#FFFFFF" />
         </FrameLayout>
+    </LinearLayout>
+
+    <!--
+      手势反馈浮层（HUD）。
+
+      为什么需要：双击暂停、长按倍速、左右滑动 seek、上下滑亮度/音量
+      这些操作此前**完全没有视觉反馈** —— 用户不知道操作生效了没有，
+      尤其是长按加速（画面上看不出 2× 和 1× 的区别）。
+
+      位置：屏幕中央偏上，纯贴图 + 一行文字，2 行以内。
+      不拦截触摸（clickable=false），显示后 700ms 自动淡出。
+    -->
+    <LinearLayout
+        android:id="@+id/player_gesture_hud"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_player_hud"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:paddingHorizontal="22dp"
+        android:paddingVertical="14dp"
+        android:visibility="gone"
+        android:clickable="false"
+        android:focusable="false">
+
+        <ImageView
+            android:id="@+id/hud_icon"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:importantForAccessibility="no"
+            app:tint="#FFFFFFFF" />
+
+        <TextView
+            android:id="@+id/hud_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textColor="#FFFFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold" />
     </LinearLayout>
 </FrameLayout>

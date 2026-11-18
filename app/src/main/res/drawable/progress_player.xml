@@ -1,16 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  播放进度条。
+
+  改前：3dp 细线，只有「底 + 已播」两层，没有缓冲层。
+  改后：
+    ① 主条加粗到 4dp（3dp 在深色画面上太细，拖动时难对准）
+    ② 加 secondaryProgress（缓冲层）—— 网络源/HLS 分片场景下，
+       用户能看出「哪里已经缓冲好了」，不会以为卡死
+    ③ 圆角从 3dp 提到 2dp —— 4dp 高的条用 3dp 圆角会接近半圆，
+       看起来像胶囊；2dp 更利落
+-->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 底：未播放区域 -->
     <item android:id="@android:id/background">
         <shape android:shape="rectangle">
-            <corners android:radius="3dp" />
+            <corners android:radius="2dp" />
             <solid android:color="#33FFFFFF" />
         </shape>
     </item>
+    <!-- 缓冲层：已下载但未播放 -->
+    <item android:id="@android:id/secondaryProgress">
+        <clip>
+            <shape android:shape="rectangle">
+                <corners android:radius="2dp" />
+                <solid android:color="#66FFFFFF" />
+            </shape>
+        </clip>
+    </item>
+    <!-- 已播放 -->
     <item android:id="@android:id/progress">
         <clip>
             <shape android:shape="rectangle">
-                <corners android:radius="3dp" />
-                <solid android:color="#FF1E88E5" />
+                <corners android:radius="2dp" />
+                <solid android:color="#FF4A9EFF" />
             </shape>
         </clip>
     </item>
