@@ -38,10 +38,24 @@ public final class Exts {
             "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "svg",
             "ico", "tif", "tiff", "raw", "cr2", "nef", "arw", "dng", "psd", "ai");
 
-    /** 视频：可交给内置播放器 */
+    /**
+     * 视频：可交给内置播放器。
+     *
+     * <p>包含两种**流媒体播放列表**：</p>
+     * <ul>
+     *   <li>{@code m3u8}——HLS。本地下载的片源通常是
+     *       {@code playlist.m3u8 + seg_00000.ts ...} 一整个目录；
+     *       播放器解析清单后按序拉本地分片，能连续播完整部片子。</li>
+     *   <li>{@code mpd}——MPEG-DASH。</li>
+     * </ul>
+     *
+     * <p>这两种不是「视频文件」而是「播放清单」，但用户视角就是视频，
+     * 所以归到视频类里（点开直接进播放器，不弹「打开方式」）。</p>
+     */
     public static final Set<String> VIDEO = unmodifiableSet(
             "mp4", "mkv", "avi", "mov", "wmv", "flv", "3gp", "webm", "ts", "m4v",
-            "mpg", "mpeg", "rm", "rmvb", "vob", "f4v", "m2ts", "mts", "ogv", "mxf");
+            "mpg", "mpeg", "rm", "rmvb", "vob", "f4v", "m2ts", "mts", "ogv", "mxf",
+            "m3u8", "mpd");
 
     /** 音频：用弹窗播放器（原生 MediaPlayer） */
     public static final Set<String> AUDIO = unmodifiableSet(
@@ -60,9 +74,10 @@ public final class Exts {
 
     /** 音视频合集（命中即用内置播放器，不走系统外部应用） */
     public static final Set<String> MEDIA = unmodifiableSet(
-            // 视频
+            // 视频（含 HLS/DASH 播放清单）
             "mp4", "mkv", "avi", "mov", "wmv", "flv", "3gp", "webm", "ts", "m4v",
             "mpg", "mpeg", "rm", "rmvb", "vob", "f4v", "m2ts", "mts", "ogv", "mxf",
+            "m3u8", "mpd",
             // 音频
             "mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "wma", "amr",
             "aiff", "ape", "wv", "mid", "midi", "ac3", "dts", "mka", "ra", "au", "caf");

@@ -162,7 +162,30 @@ public final class PlayerCore {
         } else {
             uri = Uri.fromFile(new File(path));
         }
-        return MediaItem.fromUri(uri);
+        MediaItem item = MediaItem.fromUri(uri);
+
+        // ⭐ 播放清单必须显式给 MIME，不能只靠后缀推断。
+        //
+        // 原因：DefaultMediaSourceFactory 在没有 MimeTypes 时可后缀推断，
+        // 但**带查询串的 URL**（`a.m3u8?token=x`）后缀会变成 `m3u8?token=x`，
+        // 推断失败 → 当作普通文件交给 ProgressiveMediaSource → 报
+        // 「播放列表格式无法解析」。本地文件虽然没查询串，但统一走这条更稳。
+        //
+        // 顺带：HLS 的分片（ts）不需要在这里处理——清单解析后由
+        // HlsMediaSource 自己按相对路径拼，外部不用管。
+        String lower = path.toLowerCase(java.util.Locale.ROOT);
+        int qm = lower.indexOf('?');
+        if (qm >= 0) lower = lower.substring(0, qm);
+        String mime = null;
+        if (lower.endsWith(".m3u8")) {
+            mime = androidx.media3.common.MimeTypes.APPLICATION_M3U8;
+        } else if (lower.endsWith(".mpd")) {
+            mime = androidx.media3.common.MimeTypes.APPLICATION_MPD;
+        }
+        if (mime != null) {
+            item = item.buildUpon().setMimeType(mime).build();
+        }
+        return item;
     }
 
     /**

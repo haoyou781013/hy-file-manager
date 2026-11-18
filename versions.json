@@ -1,7 +1,15 @@
 {
-  "updatedAt": "2026-11-17",
+  "updatedAt": "2026-11-19",
   "repo": "haoyou781013/hy-file-manager",
   "versions": [
+    {
+      "ver": "1.0.7",
+      "versionCode": 13,
+      "publishedAt": "2026-11-19",
+      "apkUrl": "https://gitee.com/haoyou781/hy-file-manager/releases/download/v1.0.7/HYFileManager-1.0.7.apk",
+      "prerelease": false,
+      "body": "这个版本新增：**直接播放本地 HLS 视频（m3u8）**。\n\n## 新增：点 m3u8 就能看整部片\n\n以前下载的 HLS 片源（一个 `playlist.m3u8` 加几百个 `seg_*.ts` 分片）\n在文件管理器里点了没反应 —— 因为播放器内核缺 HLS 模块。\n\n现在点 `playlist.m3u8` 会**从头到尾连续播放整部视频**，\n分片自动按清单顺序拼起来，跟播一个普通 mp4 没区别。\n\n实测场景：2 小时 23 分的片源、862 个分片、1.8 GB，能正常播完整。\n\n## 细节\n\n- **不像以前那样把 ts 分片当独立视频**：点 m3u8 时播放列表只有它自己一项，\n  左右滑不会滑到某个 10 秒的碎片\n- 单独点某个 `.ts` 分片仍然能播那一小段（如果你有这种需求）\n- `mpd`（DASH）也一并支持\n\n## 技术说明\n\nHLS 依赖 `media3-exoplayer-hls`，之前只引了基础 exoplayer 没引这个模块。\n另外给播放器显式设了 MIME 类型 —— 带查询串的 m3u8 地址\n（`a.m3u8?token=x`）靠后缀推断会失败，统一显式指定更稳。\n"
+    },
     {
       "ver": "1.0.6",
       "versionCode": 12,

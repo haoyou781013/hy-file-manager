@@ -12890,6 +12890,19 @@ public class FileManagerModule extends HyVqModule {
      *  找不到时返回仅含自身的单元素列表，保证播放器始终有可用列表。 */
     private java.util.ArrayList<String> collectPlayable(String curPath, boolean audioOnly) {
         java.util.ArrayList<String> out = new java.util.ArrayList<>();
+
+        // ⭐ 播放清单（m3u8 / mpd）单独成列表，不与同目录其它视频混排。
+        //
+        // 为什么必须特判：HLS 片源下载下来是「一个 playlist.m3u8 + 几百上千个 seg_*.ts」。
+        // 若按普通视频收集，列表会变成 862 项（1 个清单 + 861 个分片），
+        // 用户点 m3u8 播放时左右滑会滑到某个单独的 ts 分片（只有 10 秒），
+        // 而且分片本身不该被当作「另一部视频」。
+        String curExt = curPath == null ? "" : extOf(curPath);
+        if ("m3u8".equals(curExt) || "mpd".equals(curExt)) {
+            out.add(curPath);
+            return out;
+        }
+
         Pane p = active;
         if (p != null && p.entries != null) {
             for (FileEntry e : p.entries) {

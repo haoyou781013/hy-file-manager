@@ -11,8 +11,8 @@ android {
         minSdk = 23   // media3 1.11.1 要求
         targetSdk = 34   // 保持 34：升 36 会强制 edge-to-edge、onBackPressed 失效等
         // 版本号唯一来源：本文件
-        versionCode = 12
-        versionName = "1.0.6"
+        versionCode = 13
+        versionName = "1.0.7"
     }
 
     compileOptions {
@@ -95,6 +95,9 @@ dependencies {
     // 文件管理内置播放器（从 HY_VQ 剥离）
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
+    // HLS（m3u8）：解析播放列表 + 拉取 ts 分片。
+    // 没有这个模块，播放器遇到 .m3u8 只会报「无法播放该格式」。
+    implementation("androidx.media3:media3-exoplayer-hls:1.11.1")
 
     // 播放器网络数据源（PlayerCore 需要）
     implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
