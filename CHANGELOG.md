@@ -1,48 +1,4 @@
 
-## 1.0.7 — 2026-11-19
-
-### 新增：本地 HLS（m3u8）播放
-
-**问题**：下载的 HLS 片源（`playlist.m3u8` + 862 个 `seg_*.ts`，1.8 GB，
-2 小时 23 分）在文件列表里点击没反应。
-
-**根因**：两条链都断了。
-
-1. **扩展名未收录**：`Exts.VIDEO` / `Exts.MEDIA` 里没有 `m3u8`/`mpd`，
-   于是 `openFile` 三个 `if (Exts.isXxx)` 全不命中 → 落到
-   `showOpenWithDialog` 弹「打开方式」，用户以为点了没反应。
-2. **播放器缺 HLS 模块**：`app/build.gradle.kts` 只引了
-   `media3-exoplayer` + `media3-ui`，没引 `media3-exoplayer-hls`
-   → 即使勉强进播放器，`DefaultMediaSourceFactory` 也找不到
-   `HlsMediaSource.Factory`，报「播放列表格式无法解析」。
-
-**改动**：
-
-- `build.gradle.kts` 加 `androidx.media3:media3-exoplayer-hls:1.11.1`
-- `Exts.VIDEO` / `Exts.MEDIA` 收录 `m3u8`、`mpd`
-- `PlayerCore.buildItem` 显式设 MIME：
-  `.m3u8` → `APPLICATION_M3U8`，`.mpd` → `APPLICATION_MPD`
-- `collectPlayable` 对播放清单**特判**：点 m3u8 时播放列表只含它自己
-
-**为什么 collectPlayable 必须特判**：HLS 片源目录里是
-「1 个清单 + 861 个分片」。若按普通视频收集，列表会变成 862 项 ——
-用户点 m3u8 播放时左右滑会滑到某个单独的 ts 分片（只 10 秒），
-而分片本身不该被当作「另一部视频」。
-
-**为什么不靠 MediaItem 的后缀推断**：带查询串的 URL（`a.m3u8?token=x`）
-后缀会变成 `m3u8?token=x`，推断失败 → 当作普通文件交给
-`ProgressiveMediaSource` → 报错。本地文件虽无查询串，统一显式指定更稳。
-
-**保留的行为**：单独点某个 `.ts` 分片仍播那一段（用户明确要求保持）。
-
-**验证**：
-- `assembleRelease` 通过（HLS 依赖正常解析）
-- 判定链脚本验证：`playlist.m3u8` → 内置播放器、列表 1 项；
-  `seg_00000.ts` → 内置播放器、列表 861 项（未特判）
-- 装机启动正常，崩溃 0
-
----
-
 ## 1.0.6 — 2026-11-17（vc12，二次发布）
 
 > **本版曾二次发布**：vc11 的 1.0.6 存在「下载完成后闪退」，

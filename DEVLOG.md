@@ -15,7 +15,7 @@
 > 这样读的人不会把已被删掉的机制当成现存的。
 >
 > 累计来源：6 次代码审查（1 次自查 + 3 视角 + 5 维度）+ 2 次用户反馈修复，
-> 共 8 个提交区间、30 项改动。
+> 共 8 个提交区间、31 项改动（含 1 项待发布）。
 
 ---
 
@@ -357,6 +357,48 @@ Android 6.x/7.x 进任何目录必崩（`NoClassDefFoundError`）。
 | 「打开方式」约 2100 次 IPC | `13304` | 200 应用机型 300~900ms，但需重排 UI 构建流程 |
 | 拆分编辑器 1.8k 行 | `10958` | 需先给 `ctx`/`fmPrefs()` 建构造器注入，风险中等，单独一轮做 |
 | `ZipCache` 锁表不清理 | `149` | 条目数受解出量约束，量级小 |
+
+---
+
+### 新增：本地 HLS（m3u8）/ DASH（mpd）播放（2026-11-19，待发布）
+
+用户提供的测试样本：`/storage/emulated/0/DCIM/测试/492481_DM84/1/`
+—— `playlist.m3u8` + **862 个 `seg_*.ts`**、共 1.8 GB、**2.39 小时**。
+清单健康：有 `EXT-X-ENDLIST`、无加密、无 `EXT-X-MAP`、分片全是同级相对路径。
+
+**根因：两条链都断了**
+
+1. **扩展名未收录**：`Exts.VIDEO` / `Exts.MEDIA` 里没有 `m3u8`/`mpd`，
+   `openFile` 三个 `if (Exts.isXxx)` 全不命中 → 落到 `showOpenWithDialog`
+   弹「打开方式」，用户以为点了没反应。
+2. **播放器缺 HLS 模块**：`app/build.gradle.kts` 只引了 `media3-exoplayer` +
+   `media3-ui`，没引 `media3-exoplayer-hls` → 即使勉强进播放器，
+   `DefaultMediaSourceFactory` 也找不到 `HlsMediaSource.Factory`，
+   报「播放列表格式无法解析」。
+
+**改动**
+
+- `build.gradle.kts` 加 `androidx.media3:media3-exoplayer-hls:1.11.1`
+- `Exts.VIDEO` / `Exts.MEDIA` 收录 `m3u8`、`mpd`
+- `PlayerCore.buildItem` 显式设 MIME（`APPLICATION_M3U8` / `APPLICATION_MPD`）
+- `collectPlayable` 对播放清单**特判**：点 m3u8 时播放列表只含它自己
+
+**为什么 collectPlayable 必须特判**：HLS 目录是「1 个清单 + 861 个分片」。
+若按普通视频收集，列表会变成 862 项 —— 用户点 m3u8 播放时左右滑会滑到
+某个单独的 ts 分片（只 10 秒），而分片不该被当作「另一部视频」。
+
+**为什么不靠 MediaItem 的后缀推断**：带查询串的 URL（`a.m3u8?token=x`）
+后缀会变成 `m3u8?token=x`，推断失败 → 当作普通文件交给
+`ProgressiveMediaSource` → 报错。本地文件虽无查询串，统一显式指定更稳。
+
+**保留行为**：单独点某个 `.ts` 分片仍播那一段（用户明确要求保持）。
+
+**验证（未实测播放）**：
+- `assembleRelease` 通过（HLS 依赖正常解析，APK 6.8M→6.9M）
+- 判定链脚本验证：`playlist.m3u8` → 内置播放器 + 列表 1 项；
+  `seg_00000.ts` → 内置播放器 + 列表 861 项
+- 装机启动正常，崩溃 0（验证后已 `am force-stop` 关闭）
+- ⚠ **未做**：真正加载 862 个分片播完 2 小时的验证，需用户在真机确认
 
 ---
 
