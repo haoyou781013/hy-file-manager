@@ -12,7 +12,7 @@ android {
         targetSdk = 34   // 保持 34：升 36 会强制 edge-to-edge、onBackPressed 失效等
         // 版本号唯一来源：本文件
         versionCode = 12
-        versionName = "1.0.7"
+        versionName = "1.0.6"
     }
 
     compileOptions {
