@@ -346,7 +346,7 @@ public class MediaPlayerActivity extends Activity {
                     int dur = (int) Math.max(0, player.getDuration());
                     seekBar.setMax(dur);
                     tvDur.setText(fmt(dur));
-                    updatePlayIcon(player.isPlaying());
+                    updatePlayIcon();
                     handler.removeCallbacks(ticker);
                     handler.post(ticker);
                     syncDanmakuTime();
@@ -354,7 +354,7 @@ public class MediaPlayerActivity extends Activity {
                         // READY 但未播（如暂停后的 seek），保持用户意图不动
                     }
                 } else if (state == Player.STATE_ENDED) {
-                    updatePlayIcon(false);
+                    updatePlayIcon();
                     // 循环列表：播完自动下一个，最后一个播完回到第一个
                     playAt(idx < playlist.length - 1 ? idx + 1 : 0);
                 } else if (state == Player.STATE_BUFFERING) {
@@ -388,7 +388,7 @@ public class MediaPlayerActivity extends Activity {
             }
 
             @Override public void onIsPlayingChanged(boolean isPlaying) {
-                updatePlayIcon(isPlaying);
+                updatePlayIcon();
                 // 播放状态变了：控制条若可见，重新计时（暂停 → 停表不隐藏；恢复播放 → 重新 3 秒）
                 if (controlsVisible) scheduleControlsAutoHide();
             }
@@ -474,7 +474,7 @@ public class MediaPlayerActivity extends Activity {
 
         prepared = false;
         switching = true;
-        updatePlayIcon(false);
+        updatePlayIcon();
         seekBar.setProgress(0);
         // 切歌/切集后把控制条显示出来并重新计时，让用户看到新标题
         if (!controlsVisible) {
@@ -584,23 +584,42 @@ public class MediaPlayerActivity extends Activity {
         return com.aliya.hyfilemgr.util.Exts.isVideo(ext);
     }
 
+    /**
+     * 播放/暂停切换。
+     *
+     * <p><b>改用 Media3 官方 Util</b>：旧实现 {@code if (isPlaying()) pause(); else play();}
+     * 有两个问题——</p>
+     * <ul>
+     *   <li>播完后 ExoPlayer 处于 {@code STATE_ENDED}，此时 {@code play()} 是 no-op，
+     *       用户点播放键<b>毫无反应</b>，只能退出去重进；</li>
+     *   <li>缓冲中 / 被音频焦点抑制时 {@code isPlaying()} 返回 false，
+     *       但语义上不是「暂停」，点了会变成「又调一次 play」。</li>
+     * </ul>
+     * <p>{@link androidx.media3.common.util.Util#handlePlayPauseButtonAction}
+     * 内部已处理 ENDED（先 seekToDefaultPosition 再 play）、
+     * playbackSuppressionReason、以及 COMMAND_PLAY_PAUSE 可用性检查。</p>
+     */
     private void togglePlay() {
         if (player == null) return;
         if (!prepared) {
             playAt(idx);
             return;
         }
-        if (player.isPlaying()) {
-            player.pause();
-            updatePlayIcon(false);
-        } else {
-            player.play();
-            updatePlayIcon(true);
-        }
+        androidx.media3.common.util.Util.handlePlayPauseButtonAction(player);
+        updatePlayIcon();
     }
 
-    private void updatePlayIcon(boolean playing) {
-        btnPlay.setImageResource(playing ? R.drawable.ic_pause : R.drawable.ic_play);
+    /**
+     * 按播放器实际状态刷新中央按钮图标。
+     *
+     * <p>用 {@code Util.shouldShowPlayButton()} 而不是 {@code isPlaying()}：
+     * 后者在 ENDED / BUFFERING / 被抑制时都为 false，但应该显示「播放」还是「暂停」
+     * 取决于是不是「用户点了就能开始播」——这正是官方方法的判断语义。</p>
+     */
+    private void updatePlayIcon() {
+        if (btnPlay == null || player == null) return;
+        boolean showPlay = androidx.media3.common.util.Util.shouldShowPlayButton(player);
+        btnPlay.setImageResource(showPlay ? R.drawable.ic_play : R.drawable.ic_pause);
     }
 
     /**
@@ -754,7 +773,7 @@ public class MediaPlayerActivity extends Activity {
             int pos = (int) Math.max(0, player.getCurrentPosition());
             seekBar.setProgress(pos);
             tvPos.setText(fmt(pos));
-            updatePlayIcon(player.isPlaying());
+            updatePlayIcon();
             // 缓冲进度：网络源 / HLS 分片时让用户看出「哪里已经缓冲好了」。
             // 之前完全没有 secondaryProgress，seek 到未缓冲区域只会卡住不给提示，
             // 用户以为播放器死了。
@@ -1300,7 +1319,7 @@ public class MediaPlayerActivity extends Activity {
             if (player != null && player.isPlaying()) player.pause();
         } catch (Throwable ignored) {
         }
-        updatePlayIcon(false);
+        updatePlayIcon();
         handler.removeCallbacks(ticker);
         saveHistoryProgress();                       // 离开页面即落盘
         historyHandler.removeCallbacks(historyTick);
