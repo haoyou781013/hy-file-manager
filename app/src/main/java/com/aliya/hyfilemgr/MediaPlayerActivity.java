@@ -30,6 +30,8 @@ import androidx.media3.ui.PlayerView;
 
 import com.aliya.hyfilemgr.ui.UiKit;
 import com.aliya.hyfilemgr.player.PlayerCore;
+import com.aliya.hyfilemgr.player.GestureController;
+import com.aliya.hyfilemgr.player.GestureSink;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -172,6 +174,11 @@ public class MediaPlayerActivity extends Activity {
     private boolean danmakuOn = false;
     private long danmakuSeasonId = -1;
     private int danmakuEpNo = 1;
+    /** 横向滑动：整屏宽对应的跳转时长（旧行为保留） */
+    private static final long SEEK_FULL_WIDTH_MS = 120_000L;
+    /** 双击左/右区域的跳转时长（对齐 YouTube / B 站） */
+    private static final long DOUBLE_TAP_SEEK_MS = 10_000L;
+
     private static final float[] SPEEDS = {1.0f, 1.25f, 1.5f, 2.0f, 0.5f, 0.75f};
     private static final String[] SPEED_LABELS = {"1.0×", "1.25×", "1.5×", "2.0×", "0.5×", "0.75×"};
     private static final int[] RATIOS = {
@@ -184,7 +191,10 @@ public class MediaPlayerActivity extends Activity {
     private int ratioIdx = 0;
 
     // ── 手势（对齐 Kazumi/主流播放器）：水平快进、左半亮度、右半音量、双击暂停、长按加速 ──
-    private GestureDetector gesture;
+    /** 手势识别器（阶段 2 抽出，只识别不执行） */
+    private GestureController gestureController;
+    /** 手势语义出口的实现（把比例换成秒数/亮度增量） */
+    private GestureSink gestureSink;
 
     // ── 动漫模式：播放器内选集 ──
     private boolean animeMode = false;
@@ -206,7 +216,6 @@ public class MediaPlayerActivity extends Activity {
             historyHandler.postDelayed(this, 5000L);
         }
     };
-    private float downX, downY;
     // ── 手势反馈 HUD ──
     /** 手势提示浮层（双击暂停 / 长按倍速 / 滑动 seek 时短暂显示） */
     private View gestureHud;
@@ -216,7 +225,6 @@ public class MediaPlayerActivity extends Activity {
     /** HUD 文字节流：上次更新时间戳，避免滑动 seek 时每帧重排 */
     private long lastHudUpdateMs = 0L;
 
-    private boolean horizontalMode, verticalMode;
     private boolean longPressing = false;
     private long seekTargetMs = -1;
 
@@ -783,24 +791,43 @@ public class MediaPlayerActivity extends Activity {
         }
     }
 
-    /** 手势区（对齐 Kazumi/主流播放器）：水平快进、左半亮度、右半音量、双击暂停、长按加速 */
+    /**
+     * 手势接入（阶段 2）：用 {@link GestureController} 替换原来 113 行内联实现。
+     *
+     * <p>这次接入同时对齐了主流播放器的双击分区（左 1/3 后退、中 1/3 暂停、
+     * 右 1/3 前进），并补上边缘 16dp 保护区（避免与系统返回手势打架）。</p>
+     */
     private void setupGestures(final View root) {
-        gesture = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
-            @Override public boolean onSingleTapConfirmed(MotionEvent e) {
+        gestureSink = new GestureSink() {
+
+            // ── 点击类 ──
+
+            @Override public void onSurfaceTap() {
                 toggleControls();
-                return true;
             }
 
-            @Override public boolean onDoubleTap(MotionEvent e) {
-                togglePlay();
-                // 双击的反馈必须立刻给：暂停/继续的画面变化在暗场景下看不出来
-                boolean playing = player != null && player.isPlaying();
-                showGestureHud(playing ? R.drawable.ic_play : R.drawable.ic_pause,
-                        playing ? "播放" : "暂停", false);
-                return true;
+            @Override public void onDoubleTap(GestureSink.Zone zone) {
+                switch (zone) {
+                    case LEFT:
+                        seekBy(-DOUBLE_TAP_SEEK_MS);
+                        showGestureHud(0, "后退 " + (DOUBLE_TAP_SEEK_MS / 1000) + " 秒", false);
+                        break;
+                    case RIGHT:
+                        seekBy(DOUBLE_TAP_SEEK_MS);
+                        showGestureHud(0, "前进 " + (DOUBLE_TAP_SEEK_MS / 1000) + " 秒", false);
+                        break;
+                    case CENTER:
+                    default:
+                        togglePlay();
+                        // 双击的反馈必须立刻给：暂停/继续的画面变化在暗场景下看不出来
+                        boolean playing = player != null && player.isPlaying();
+                        showGestureHud(playing ? R.drawable.ic_play : R.drawable.ic_pause,
+                                playing ? "播放" : "暂停", false);
+                        break;
+                }
             }
 
-            @Override public void onLongPress(MotionEvent e) {
+            @Override public void onLongPressStart() {
                 // 长按临时加速到 2×，松手恢复（Kazumi 同款）
                 longPressing = true;
                 try {
@@ -812,87 +839,69 @@ public class MediaPlayerActivity extends Activity {
                 }
             }
 
-            @Override public boolean onDown(MotionEvent e) {
-                downX = e.getX();
-                downY = e.getY();
-                horizontalMode = verticalMode = false;
-                seekTargetMs = -1;
-                return true;
+            @Override public void onLongPressEnd() {
+                endLongPressBoost();
             }
-        });
 
-        root.setOnTouchListener((v, ev) -> {
-            // 保护：手指移出 View 边界后系统不再派发事件到本 View，
-            // ACTION_UP 会丢 → 长按加速永远退不出来。
-            // 这里主动检测越界，一旦越界立即结束加速（并让手势状态复位）。
-            if (ev.getActionMasked() == MotionEvent.ACTION_MOVE && longPressing) {
-                if (ev.getX() < 0 || ev.getY() < 0
-                        || ev.getX() > v.getWidth() || ev.getY() > v.getHeight()) {
-                    endLongPressBoost();
+            // ── 滑动类 ──
+
+            @Override public void onSeekPreview(float deltaRatio) {
+                if (!prepared || player == null) return;
+                // 旧行为保留：全屏宽 = 2 分钟（SEEK_FULL_WIDTH_MS）
+                long delta = (long) (deltaRatio * SEEK_FULL_WIDTH_MS);
+                long target = Math.max(0, Math.min(player.getDuration(),
+                        player.getCurrentPosition() + delta));
+                seekTargetMs = target;
+                tvPos.setText(fmt((int) target) + "  ⟶");
+                // 节流：MOVE 每秒几十次，每次都 showGestureHud 会不停
+                // removeCallbacks/重排，导致 HUD 永远不消失
+                long nowMs = System.currentTimeMillis();
+                if (nowMs - lastHudUpdateMs >= 100) {
+                    lastHudUpdateMs = nowMs;
+                    long diff = target - player.getCurrentPosition();
+                    String arrow = diff >= 0 ? "快进 " : "快退 ";
+                    showGestureHud(0, arrow + fmt((int) Math.abs(diff)), false);
                 }
             }
-            gesture.onTouchEvent(ev);
-            switch (ev.getActionMasked()) {
-                case MotionEvent.ACTION_MOVE: {
-                    float dx = ev.getX() - downX;
-                    float dy = ev.getY() - downY;
-                    if (!horizontalMode && !verticalMode) {
-                        if (Math.abs(dx) > dpInt(12) || Math.abs(dy) > dpInt(12)) {
-                            horizontalMode = Math.abs(dx) > Math.abs(dy);
-                            verticalMode = !horizontalMode;
-                            // 一旦判定为滑动手势，立刻退出长按加速：
-                            // ① 用户的长按意图已被滑动取代
-                            // ② 2× 加速 + seek 同时进行会让「拖动预览」不准
-                            if (longPressing) endLongPressBoost();
-                        }
+
+            @Override public void onSeekCommit(float deltaRatio) {
+                if (!prepared || player == null) return;
+                if (seekTargetMs >= 0) {
+                    try {
+                        player.seekTo(seekTargetMs);
+                    } catch (Throwable ignored) {
                     }
-                    if (horizontalMode && prepared) {
-                        // 全屏宽 = 2 分钟；滑动中先预览目标时间，抬手才真正 seek
-                        float ratio = dx / Math.max(1f, v.getWidth());
-                        long delta = (long) (ratio * 120_000L);
-                        long target = Math.max(0, Math.min(player.getDuration(),
-                                player.getCurrentPosition() + delta));
-                        seekTargetMs = target;
-                        tvPos.setText(fmt((int) target) + "  ⟶");
-                        // HUD 里显示目标时间 + 相对当前位置的方向
-                        // 节流：MOVE 每秒几十次，每次都 showGestureHud 会不停
-                        // removeCallbacks/重排，导致 HUD 永远不消失
-                        long nowMs = System.currentTimeMillis();
-                        if (nowMs - lastHudUpdateMs >= 100) {
-                            lastHudUpdateMs = nowMs;
-                            long diff = target - player.getCurrentPosition();
-                            String arrow = diff >= 0 ? "快进 " : "快退 ";
-                            showGestureHud(0, arrow + fmt((int) Math.abs(diff)), false);
-                        }
-                    } else if (verticalMode) {
-                        float ratio = -dy / Math.max(1f, v.getHeight());
-                        if (downX < v.getWidth() / 2f) {
-                            adjustBrightness(ratio * 1.2f);
-                        } else {
-                            adjustVolume(ratio * 1.2f);
-                        }
-                    }
-                    return true;
+                    seekTargetMs = -1;
+                    hideGestureHud();
                 }
-                case MotionEvent.ACTION_UP:
-                case MotionEvent.ACTION_CANCEL: {
-                    // 统一出口：幂等，ACTION_UP/CANCEL 都走它
-                    endLongPressBoost();
-                    if (horizontalMode && seekTargetMs >= 0 && prepared) {
-                        try {
-                            player.seekTo(seekTargetMs);
-                        } catch (Throwable ignored) {
-                        }
-                        seekTargetMs = -1;
-                        hideGestureHud();
-                    }
-                    horizontalMode = verticalMode = false;
-                    return true;
-                }
-                default:
-                    return false;
             }
-        });
+
+            @Override public void onVerticalSwipe(float deltaRatio, boolean leftSide) {
+                if (leftSide) adjustBrightness(deltaRatio * 1.2f);
+                else adjustVolume(deltaRatio * 1.2f);
+            }
+        };
+
+        gestureController = new GestureController(this, gestureSink);
+        gestureController.attach(root);
+
+        root.setOnTouchListener((v, ev) ->
+                gestureController.onTouchEvent(ev, v.getWidth(), v.getHeight()));
+    }
+
+    /**
+     * 按增量跳转。用于双击快进/快退。
+     *
+     * @param deltaMs 正数前进、负数后退
+     */
+    private void seekBy(long deltaMs) {
+        if (!prepared || player == null) return;
+        try {
+            long target = Math.max(0, Math.min(player.getDuration(),
+                    player.getCurrentPosition() + deltaMs));
+            player.seekTo(target);
+        } catch (Throwable ignored) {
+        }
     }
 
     private void adjustBrightness(float delta) {
