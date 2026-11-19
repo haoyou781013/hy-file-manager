@@ -204,7 +204,6 @@ public class DanmakuView extends View {
                 it.remove();
                 continue;
             }
-            paint.setColor(d.color);
             float tf = d.sizeSp * getResources().getDisplayMetrics().scaledDensity;
             paint.setTextSize(tf);
             float y;
@@ -223,6 +222,20 @@ public class DanmakuView extends View {
             } else {
                 y = d.lane * laneH + laneH * 0.72f;
             }
+
+            // 先描黑边，再填本色文字。
+            //
+            // 为什么需要：弹幕颜色来自数据源（B 站接口会给白/黄/彩），
+            // 白字压在亮画面（雪景、白墙、天空）上完全看不清。
+            // 描边让任何颜色的弹幕在任何画面上都有轮廓。
+            // 描边宽度取字号 8%：太小看不见，太大字会糊。
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(Math.max(2f, tf * 0.08f));
+            paint.setColor(0xFF000000);
+            canvas.drawText(d.text, x, y, paint);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(d.color);
             canvas.drawText(d.text, x, y, paint);
         }
         if (!active.isEmpty() || playing) {

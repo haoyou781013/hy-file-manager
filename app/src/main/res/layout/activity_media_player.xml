@@ -244,16 +244,42 @@
                 android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- 第二行：控制键整体居中；左下角另有「选择文件」按钮 -->
-        <FrameLayout
+        <!--
+          第二行：三段式布局（左 / 中 / 右）。
+
+          之前用 FrameLayout 把三组元素各自 layout_gravity 叠在一起，
+          在窄屏上必然重叠：中间组宽 190dp（44+56+44 + 20×2 间距），
+          左侧按钮 44dp、右侧 chips ≈120dp，三者总需求 > 屏宽时，
+          「上一个」被左下角菜单按钮压住、「下一个」被倍速 chip 压住。
+
+          改成 LinearLayout + layout_weight 后：
+          · 左右两段固定 wrap_content
+          · 中间段 weight=1 并 gravity=center，在剩余空间里居中
+          · 空间不足时中间段挤压而非覆盖，不会视觉重叠
+        -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp">
+            android:layout_marginTop="4dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
+            <!-- 左侧：选择文件（固定宽 44dp）-->
+            <ImageView
+                android:id="@+id/btn_player_list"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:src="@drawable/ic_menu"
+                android:contentDescription="选择文件"
+                android:background="@drawable/bg_player_btn"
+                android:padding="11dp"
+                app:tint="#FFFFFF" />
+
+            <!-- 中间：上一个 / 播放 / 下一个（占满剩余空间，内部居中）-->
             <LinearLayout
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_gravity="center"
+                android:layout_weight="1"
                 android:gravity="center"
                 android:orientation="horizontal">
 
@@ -297,14 +323,13 @@
             </LinearLayout>
 
             <!--
-              右下角：倍速 / 画面比例。
+              右侧：倍速 / 画面比例（固定宽度，不再用 layout_gravity 叠放）。
               选集与弹幕已移到顶部栏右侧（低频但需要空间的两个），
-              这里只留播放时最常调的这两项，避免和中央播放键挤在一行。
+              这里只留播放时最常调的这两项。
             -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_gravity="end|center_vertical"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -337,19 +362,7 @@
                     android:textColor="#FFFFFF"
                     android:textSize="12sp" />
             </LinearLayout>
-
-            <!-- 左下角：选择当前目录的音视频文件 -->
-            <ImageView
-                android:id="@+id/btn_player_list"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:layout_gravity="start|center_vertical"
-                android:src="@drawable/ic_menu"
-                android:contentDescription="选择文件"
-                android:background="@drawable/bg_player_btn"
-                android:padding="11dp"
-                app:tint="#FFFFFF" />
-        </FrameLayout>
+        </LinearLayout>
     </LinearLayout>
 
     <!--
@@ -390,6 +403,10 @@
             android:layout_marginTop="6dp"
             android:textColor="#FFFFFFFF"
             android:textSize="14sp"
-            android:textStyle="bold" />
+            android:textStyle="bold"
+            android:shadowColor="#FF000000"
+            android:shadowDx="0"
+            android:shadowDy="1"
+            android:shadowRadius="4" />
     </LinearLayout>
 </FrameLayout>

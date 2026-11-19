@@ -2,12 +2,15 @@
 <!--
   手势反馈浮层的背景。
 
-  设计：黑色 72% + 28dp 大圆角，像一顆悬浮的胶囊。
-  不用纯黑（会把下面的画面完全挡住，用户看不清操作影响到了什么画面），
-  也不用浅色（在亮画面上看不清白字）。
+  设计：黑色 88% + 28dp 大圆角，像一颗悬浮的胶囊。
+
+  原来用 72%，实测在深色画面（暗场景/黑边）上白字仍显灰——
+  因为 #B8000000 叠加在黑底上还是黑，而白字失去了"亮底衬托"的对比。
+  提到 88% 后背景接近实心，白字对比度明显提升，同时仍能透出一点画面，
+  让用户知道操作影响了哪里。
 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <corners android:radius="28dp" />
-    <solid android:color="#B8000000" />
+    <solid android:color="#E0000000" />
 </shape>
