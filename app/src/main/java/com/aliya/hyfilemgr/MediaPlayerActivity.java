@@ -637,11 +637,44 @@ public class MediaPlayerActivity extends Activity {
             hudHideRunnable = this::hideGestureHud;
             handler.postDelayed(hudHideRunnable, 700);
         } else {
-            // sticky 也需要兜底：ACTION_UP/CANCEL 有可能收不到
-            // （系统手势、来电、多指切换都会吞掉 UP 事件）。
-            // 30 秒后强制收起——长按加速本来也不会持续更久。
-            hudHideRunnable = this::hideGestureHud;
-            handler.postDelayed(hudHideRunnable, 30_000L);
+            // sticky 兜底：ACTION_UP/CANCEL 可能收不到（手指移出边界、
+            // 系统手势、来电、多指操作都会吞掉 UP）。
+            //
+            // ⚠ 这里必须调 endLongPressBoost() 而不是 hideGestureHud()：
+            // 旧版兜底只隐藏 HUD，**没有恢复播放速度** → HUD 消失了但
+            // 速度永久停在 2.0×，用户只能退出去重进。
+            hudHideRunnable = this::endLongPressBoost;
+            handler.postDelayed(hudHideRunnable, 15_000L);
+        }
+    }
+
+    /**
+     * 结束「长按加速」，恢复用户选中的倍速。
+     *
+     * <p><b>为什么必须抽成单一出口</b>：之前只在 {@code ACTION_UP}/{@code ACTION_CANCEL}
+     * 里恢复速度，但有三种情况收不到这两个事件：</p>
+     * <ul>
+     *   <li>手指移出播放器 View 的边界（接收不到后续 MOVE/UP）</li>
+     *   <li>长按过程中被系统手势 / 来电 / 多指操作打断</li>
+     *   <li>长按后开始横向滑动 seek，手势被 seek 逻辑接管</li>
+     * </ul>
+     * <p>结果就是 <b>速度永久卡在 2.0×，HUD 也卡在屏幕上</b>——
+     * 用户只能退出去重进。</p>
+     *
+     * <p>现在它被三处调用：ACTION_UP/CANCEL、{@link #onPause}、
+     * 以及 {@link #showGestureHud} 的 sticky 兜底。幂等（重复调用无副作用）。</p>
+     */
+    private void endLongPressBoost() {
+        if (!longPressing) return;
+        longPressing = false;
+        // 保留这条日志：长按卡住是已上报过的 bug，出问题时能直接从
+        // logcat 看出「恢复逻辑有没有跑到」。频率极低，不影响性能。
+        android.util.Log.i("HYVQ_PLAYER", "endLongPressBoost: 恢复倍速 " + SPEED_LABELS[speedIdx]);
+        hideGestureHud();
+        try {
+            if (player != null) player.setPlaybackSpeed(SPEEDS[speedIdx]);
+            if (tvSpeed != null) tvSpeed.setText(SPEED_LABELS[speedIdx]);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -770,6 +803,15 @@ public class MediaPlayerActivity extends Activity {
         });
 
         root.setOnTouchListener((v, ev) -> {
+            // 保护：手指移出 View 边界后系统不再派发事件到本 View，
+            // ACTION_UP 会丢 → 长按加速永远退不出来。
+            // 这里主动检测越界，一旦越界立即结束加速（并让手势状态复位）。
+            if (ev.getActionMasked() == MotionEvent.ACTION_MOVE && longPressing) {
+                if (ev.getX() < 0 || ev.getY() < 0
+                        || ev.getX() > v.getWidth() || ev.getY() > v.getHeight()) {
+                    endLongPressBoost();
+                }
+            }
             gesture.onTouchEvent(ev);
             switch (ev.getActionMasked()) {
                 case MotionEvent.ACTION_MOVE: {
@@ -779,6 +821,10 @@ public class MediaPlayerActivity extends Activity {
                         if (Math.abs(dx) > dpInt(12) || Math.abs(dy) > dpInt(12)) {
                             horizontalMode = Math.abs(dx) > Math.abs(dy);
                             verticalMode = !horizontalMode;
+                            // 一旦判定为滑动手势，立刻退出长按加速：
+                            // ① 用户的长按意图已被滑动取代
+                            // ② 2× 加速 + seek 同时进行会让「拖动预览」不准
+                            if (longPressing) endLongPressBoost();
                         }
                     }
                     if (horizontalMode && prepared) {
@@ -811,15 +857,8 @@ public class MediaPlayerActivity extends Activity {
                 }
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL: {
-                    if (longPressing) {
-                        longPressing = false;
-                        hideGestureHud();
-                        try {
-                            if (player != null) player.setPlaybackSpeed(SPEEDS[speedIdx]);
-                            if (tvSpeed != null) tvSpeed.setText(SPEED_LABELS[speedIdx]);
-                        } catch (Throwable ignored) {
-                        }
-                    }
+                    // 统一出口：幂等，ACTION_UP/CANCEL 都走它
+                    endLongPressBoost();
                     if (horizontalMode && seekTargetMs >= 0 && prepared) {
                         try {
                             player.seekTo(seekTargetMs);
@@ -1251,7 +1290,9 @@ public class MediaPlayerActivity extends Activity {
     }
 
     @Override protected void onPause() {
-        // 切后台时收掉手势浮层，避免回来时看到上一轮的残留
+        // 切后台时：收浮层 + 结束长按加速 + 撤自动隐藏计时。
+        // 三个都要做——只隐藏 HUD 会让速度停在 2.0×（旧版的真 bug）。
+        endLongPressBoost();
         hideGestureHud();
         cancelControlsAutoHide();
         super.onPause();
