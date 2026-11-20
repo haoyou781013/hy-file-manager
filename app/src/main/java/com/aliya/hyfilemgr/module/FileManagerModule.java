@@ -4338,6 +4338,10 @@ public class FileManagerModule extends HyVqModule {
                 "高清模式 · 相册扫描路径", R.drawable.ic_img, v -> {
                     showInSettingsDialog("图片查看器", this::buildGallerySettings);
                 });
+        addSettingsRow(box, "视频播放器",
+                "控制条自动隐藏 · 长按倍速 · 双击跳转", R.drawable.ic_play, v -> {
+                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                });
 
         // ── 软件 ──
         box.addView(sectionHeaderInCard("软件"));
@@ -4871,6 +4875,187 @@ public class FileManagerModule extends HyVqModule {
      *
      * <p>内容：高清模式开关 + 扫描路径管理（增删 + 常用路径快捷添加）。</p>
      */
+    // ══════════ 视频播放器设置 ══════════
+
+    /** 自动隐藏延迟的可选档位（毫秒） */
+    private static final int[] HIDE_DELAY_OPTIONS = {1500, 3000, 5000, 10000};
+    private static final String[] HIDE_DELAY_LABELS = {
+            "1.5 秒", "3 秒（默认）", "5 秒", "10 秒"
+    };
+
+    /** 双击跳转的可选档位（毫秒） */
+    private static final int[] DOUBLE_TAP_OPTIONS = {5000, 10000, 15000, 30000};
+    private static final String[] DOUBLE_TAP_LABELS = {
+            "5 秒", "10 秒（默认）", "15 秒", "30 秒"
+    };
+
+    /** 长按倍速的可选档位 */
+    private static final float[] LONG_PRESS_OPTIONS = {1.5f, 2.0f, 2.5f, 3.0f};
+    private static final String[] LONG_PRESS_LABELS = {
+            "1.5×", "2×（默认）", "2.5×", "3×"
+    };
+
+    /**
+     * 视频播放器设置页。
+     *
+     * <p>此前播放器的所有行为参数都硬编码在 MediaPlayerActivity 里，
+     * 用户反馈「控制条 3 秒就没了我来不及点」却无处可改。这里把它们
+     * 全部暴露成可配置项。</p>
+     *
+     * <p>改完立即写 SharedPreferences，下次进入播放器生效（不做热重载：
+     * 播放中改参数会让正在进行的操作状态不一致，收益不抵风险）。</p>
+     */
+    private View buildPlayerSettings() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+
+        final com.aliya.hyfilemgr.player.PlayerSettings cur =
+                com.aliya.hyfilemgr.player.PlayerSettings.load(ctx);
+
+        // ── 控制条 ──
+        box.addView(sectionHeaderInCard("控制条"));
+
+        addInfoRow(box, "自动隐藏控制条",
+                cur.autoHide
+                        ? "已开启 · 播放时 " + fmtSeconds(cur.hideDelayMs) + "后自动隐藏"
+                        : "已关闭 · 控制条常驻显示",
+                cur.autoHide, v -> {
+                    boolean now = !cur.autoHide;
+                    com.aliya.hyfilemgr.player.PlayerSettings.saveAutoHide(ctx, now);
+                    hideSettingsDialog();
+                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                    UiKit.toast(ctx, now ? "控制条将自动隐藏" : "控制条将常驻显示");
+                });
+
+        TextView hideTip = new TextView(ctx);
+        hideTip.setText("关闭后控制条一直显示，不会自动收起。\n"
+                + "适合「经常要调进度」的场景，代价是遮挡部分画面。\n"
+                + "暂停播放时始终不自动隐藏（保留给需要操作的时刻）。");
+        hideTip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hideTip.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        hideTip.setLineSpacing(dp(2), 1f);
+        hideTip.setPadding(dp(14), dp(2), dp(14), dp(10));
+        box.addView(hideTip);
+
+        // 隐藏延迟：仅在开启自动隐藏时才有意义
+        if (cur.autoHide) {
+            addInfoRow(box, "自动隐藏延迟",
+                    "当前 " + fmtSeconds(cur.hideDelayMs) + " · 点击切换",
+                    true, v -> {
+                        int next = nextIntOption(HIDE_DELAY_OPTIONS, cur.hideDelayMs);
+                        com.aliya.hyfilemgr.player.PlayerSettings.saveHideDelay(ctx, next);
+                        hideSettingsDialog();
+                        showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                        UiKit.toast(ctx, "自动隐藏延迟：" + fmtSeconds(next));
+                    });
+        }
+
+        addInfoRow(box, "单击画面切换控制条",
+                cur.tapToggle ? "已开启 · 点一下显示/隐藏" : "已关闭",
+                cur.tapToggle, v -> {
+                    boolean now = !cur.tapToggle;
+                    com.aliya.hyfilemgr.player.PlayerSettings.saveTapToggle(ctx, now);
+                    hideSettingsDialog();
+                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                    UiKit.toast(ctx, now ? "单击切换已开启" : "单击切换已关闭");
+                });
+
+        // ── 手势 ──
+        box.addView(sectionHeaderInCard("手势"));
+
+        addInfoRow(box, "长按加速倍速",
+                "当前 " + fmtSpeed(cur.longPressSpeed) + " · 点击切换",
+                true, v -> {
+                    float next = nextFloatOption(LONG_PRESS_OPTIONS, cur.longPressSpeed);
+                    com.aliya.hyfilemgr.player.PlayerSettings.saveLongPressSpeed(ctx, next);
+                    hideSettingsDialog();
+                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                    UiKit.toast(ctx, "长按加速：" + fmtSpeed(next));
+                });
+
+        addInfoRow(box, "双击跳转时长",
+                "当前 " + fmtSeconds(cur.doubleTapSeekMs) + " · 左半屏后退 / 右半屏前进",
+                true, v -> {
+                    int next = nextIntOption(DOUBLE_TAP_OPTIONS, cur.doubleTapSeekMs);
+                    com.aliya.hyfilemgr.player.PlayerSettings.saveDoubleTapSeek(ctx, next);
+                    hideSettingsDialog();
+                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                    UiKit.toast(ctx, "双击跳转：" + fmtSeconds(next));
+                });
+
+        addInfoRow(box, "横向滑动灵敏度",
+                "整屏宽 = " + fmtSeconds(cur.seekFullWidthMs) + "（越小越灵敏）",
+                true, v -> {
+                    int[] opts = {60_000, 120_000, 180_000, 300_000};
+                    String[] names = {"1 分钟（灵敏）", "2 分钟（默认）", "3 分钟", "5 分钟（精细）"};
+                    int curIdx = 1;
+                    for (int i = 0; i < opts.length; i++) {
+                        if (opts[i] == cur.seekFullWidthMs) { curIdx = i; break; }
+                    }
+                    int nextIdx = (curIdx + 1) % opts.length;
+                    com.aliya.hyfilemgr.player.PlayerSettings.saveSeekFullWidth(
+                            ctx, opts[nextIdx]);
+                    hideSettingsDialog();
+                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                    UiKit.toast(ctx, "横向滑动：" + names[nextIdx]);
+                });
+
+        TextView gestureTip = new TextView(ctx);
+        gestureTip.setText("手势说明：\n"
+                + "· 双击左三分之一：后退　双击右三分之一：前进　双击中间：暂停\n"
+                + "· 横向滑动：拖动进度（松手生效）\n"
+                + "· 左侧上下滑：亮度　右侧上下滑：音量\n"
+                + "· 长按：临时加速，松手恢复");
+        gestureTip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        gestureTip.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        gestureTip.setLineSpacing(dp(3), 1f);
+        gestureTip.setPadding(dp(14), dp(2), dp(14), dp(10));
+        box.addView(gestureTip);
+
+        // ── 恢复默认 ──
+        box.addView(sectionHeaderInCard("其他"));
+        addInfoRow(box, "恢复默认设置",
+                cur.isAllDefault() ? "当前已是默认配置" : "点击恢复全部默认值",
+                !cur.isAllDefault(), cur.isAllDefault() ? null : v -> {
+                    com.aliya.hyfilemgr.player.PlayerSettings.resetAll(ctx);
+                    hideSettingsDialog();
+                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                    UiKit.toast(ctx, "已恢复默认设置");
+                });
+
+        return box;
+    }
+
+    /** 毫秒 → "3 秒" / "1.5 秒" / "2 分钟" */
+    private static String fmtSeconds(int ms) {
+        if (ms >= 60_000 && ms % 60_000 == 0) return (ms / 60_000) + " 分钟";
+        if (ms % 1000 == 0) return (ms / 1000) + " 秒";
+        return String.format(java.util.Locale.US, "%.1f 秒", ms / 1000f);
+    }
+
+    /** 倍速文案：2.0 → "2×" */
+    private static String fmtSpeed(float sp) {
+        if (sp == Math.round(sp)) return ((int) sp) + "×";
+        return sp + "×";
+    }
+
+    /** 在当前值的下一个档位循环 */
+    private static int nextIntOption(int[] options, int cur) {
+        for (int i = 0; i < options.length; i++) {
+            if (options[i] == cur) return options[(i + 1) % options.length];
+        }
+        return options[0];
+    }
+
+    private static float nextFloatOption(float[] options, float cur) {
+        for (int i = 0; i < options.length; i++) {
+            if (Float.compare(options[i], cur) == 0) return options[(i + 1) % options.length];
+        }
+        return options[0];
+    }
+
     private View buildGallerySettings() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);

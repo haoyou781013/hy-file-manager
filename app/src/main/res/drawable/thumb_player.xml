@@ -1,12 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   进度条拖动圆点。
-  改前：14dp 纯白圆，在 3dp 细条上显得头重脚轻。
-  改后：16dp + 2dp 蓝色描边，与进度条同色系，拖动时更容易看清位置。
+
+  ── 重做原因 ──
+  旧版：16dp 纯白圆 + 2dp 蓝描边，恒定大小。
+  问题：在 6dp 粗的轨道上，"恒定 16dp" 意味着无论是否在拖，
+  圆点都一样——用户无法从视觉上确认"我抓住了它"。
+
+  ── 改法 ──
+  用 selector 做两态：
+    · 常态 16dp：够显眼但不抢画面
+    · 按下 24dp：放大 50%，明确告诉用户"已抓住"
+
+  为什么放大而不变色：手指按上去时正被手指完全遮住，
+  变色用户看不见；放大后边缘会从指腹下露出来，才是有效反馈。
+
+  为什么不用纯白：纯白在亮画面（雪景、白墙）上会消失。
+  加 2dp 深色描边保证任何背景都有轮廓——与弹幕描边同一思路。
 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="oval">
-    <solid android:color="#FFFFFFFF" />
-    <stroke android:width="2dp" android:color="#FF4A9EFF" />
-    <size android:width="16dp" android:height="16dp" />
-</shape>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 按下状态：放大到 24dp + 加投影，边缘从指腹下露出 -->
+    <item android:state_pressed="true">
+        <shape android:shape="oval">
+            <solid android:color="#FFFFFFFF" />
+            <stroke android:width="2dp" android:color="#FF3D7FE0" />
+            <size android:width="24dp" android:height="24dp" />
+        </shape>
+    </item>
+
+    <!-- 常态：16dp -->
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="#FFFFFFFF" />
+            <stroke android:width="2dp" android:color="#FF3D7FE0" />
+            <size android:width="16dp" android:height="16dp" />
+        </shape>
+    </item>
+</selector>

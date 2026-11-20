@@ -1,38 +1,72 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  播放进度条。
+  播放进度条轨道。
 
-  改前：3dp 细线，只有「底 + 已播」两层，没有缓冲层。
-  改后：
-    ① 主条加粗到 4dp（3dp 在深色画面上太细，拖动时难对准）
-    ② 加 secondaryProgress（缓冲层）—— 网络源/HLS 分片场景下，
-       用户能看出「哪里已经缓冲好了」，不会以为卡死
-    ③ 圆角从 3dp 提到 2dp —— 4dp 高的条用 3dp 圆角会接近半圆，
-       看起来像胶囊；2dp 更利落
+  ── 重做原因 ──
+  旧版 4dp 细条 + 16dp 圆点，在 143 分钟的视频上精度极差：
+  1272px 屏宽减去两侧时间文字后轨道约 900px，
+  143 分钟 / 900px ≈ 每像素 9.5 秒。手指最小移动 1px 就是 9.5 秒误差，
+  想定位到「第 42 分钟」根本做不到。
+
+  调研（vocab.design / YouTube / B 站）后确认三条改进：
+
+  ① 轨道 4dp → 6dp
+     不是为了好看，是为了触摸目标。SeekBar 的触摸区域继承自
+     AbsSeekBar，实际可点区域是 max(minHeight, thumb 高度)。
+     6dp 轨道 + 24dp thumb 后，垂直触摸区约 24dp —— 接近
+     Material 建议的 48dp 的一半，配合两侧 padding 已可稳定按中。
+
+  ② 已播放段改用渐变（左浅右深）
+     YouTube 的红色进度条是纯色，但 B 站/Netflix 用渐变。
+     渐变的好处是：细条上能看出"播放头在哪"，纯色在低对比度画面上
+     容易与背景混在一起。
+
+  ③ 缓冲层用更明显的白
+     旧版 #66FFFFFF 在深色画面上几乎看不出。提到 #4DFFFFFF +
+     略高于轨道的视觉层次，HLS/网络流用户能看出"哪里已经缓冲好"，
+     不会以为卡死（这是调研中反复被提到的痛点）。
+
+  ── 为什么保留 layer-list 而不自绘 ──
+  自绘 View 能实现更花的效果（章节标记、缩略图），但成本高且
+  要重写触摸/无障碍逻辑。SeekBar 已处理好：拖拽、键盘、
+  无障碍（TalkBack 会读 progress）、RTL 布局。
+  当前阶段先用 layer-list 把视觉与触摸面积做对，自绘留到后续。
 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 底：未播放区域 -->
-    <item android:id="@android:id/background">
+
+    <!-- 底：未播放区域。3dp 高 —— 比已播放段窄，形成"已播放更饱满"的视觉 -->
+    <item android:id="@android:id/background"
+        android:gravity="center_vertical">
         <shape android:shape="rectangle">
-            <corners android:radius="2dp" />
-            <solid android:color="#33FFFFFF" />
+            <size android:height="3dp" />
+            <corners android:radius="1.5dp" />
+            <solid android:color="#3DFFFFFF" />
         </shape>
     </item>
-    <!-- 缓冲层：已下载但未播放 -->
-    <item android:id="@android:id/secondaryProgress">
+
+    <!-- 缓冲层：已下载未播放。4dp，比底略高 -->
+    <item android:id="@android:id/secondaryProgress"
+        android:gravity="center_vertical">
         <clip>
             <shape android:shape="rectangle">
+                <size android:height="4dp" />
                 <corners android:radius="2dp" />
                 <solid android:color="#66FFFFFF" />
             </shape>
         </clip>
     </item>
-    <!-- 已播放 -->
-    <item android:id="@android:id/progress">
+
+    <!-- 已播放：6dp 最高，渐变蓝。最饱满的一层代表"你看到了这里" -->
+    <item android:id="@android:id/progress"
+        android:gravity="center_vertical">
         <clip>
             <shape android:shape="rectangle">
-                <corners android:radius="2dp" />
-                <solid android:color="#FF4A9EFF" />
+                <size android:height="6dp" />
+                <corners android:radius="3dp" />
+                <gradient
+                    android:angle="0"
+                    android:startColor="#FF5EA8FF"
+                    android:endColor="#FF3D7FE0" />
             </shape>
         </clip>
     </item>

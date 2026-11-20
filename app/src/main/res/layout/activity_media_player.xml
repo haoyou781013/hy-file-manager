@@ -221,17 +221,33 @@
                 android:textSize="12sp"
                 android:textStyle="bold" />
 
+            <!--
+              进度条。
+
+              layout_height 固定 40dp 而不是 wrap_content：
+              SeekBar 的可触摸区域 = 控件高度。wrap_content 时高度由
+              max(minHeight, thumb 高度) 决定，约 24dp；
+              固定 40dp 后手指更容易按中，且不会因为按下时圆点放大
+              （16→24dp）而触发重新测量、导致布局跳动。
+
+              paddingHorizontal 0dp：让轨道延伸到控件两端，
+              否则 SeekBar 会预留 thumb 半径的空白，轨道实际变短、
+              有效精度进一步下降（调研中反复提到的坑）。
+
+              thumbOffset 归零：轨道已自行居中，偏移会让圆点位置
+              与进度值错位。
+            -->
             <SeekBar
                 android:id="@+id/seek_player"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="40dp"
                 android:layout_weight="1"
                 android:layout_marginHorizontal="12dp"
-                android:maxHeight="4dp"
-                android:minHeight="4dp"
+                android:paddingHorizontal="0dp"
+                android:paddingVertical="0dp"
                 android:progressDrawable="@drawable/progress_player"
                 android:thumb="@drawable/thumb_player"
-                android:thumbOffset="7dp"
+                android:thumbOffset="0dp"
                 android:splitTrack="false" />
 
             <TextView
@@ -375,6 +391,33 @@
       位置：屏幕中央偏上，纯贴图 + 一行文字，2 行以内。
       不拦截触摸（clickable=false），显示后 700ms 自动淡出。
     -->
+    <!--
+      进度条拖动时的时间气泡。
+
+      放在 root 层而不是控制条内部：气泡要按手指位置绝对定位，
+      若放进 LinearLayout 会占据布局空间、推挤其它元素。
+
+      可见性由 Java 侧控制（拖动时 VISIBLE，松手后 GONE）。
+      不拦截触摸：气泡在手指上方 40dp，但手指稍抬就可能碰到，
+      拦截了会让拖动中断。
+    -->
+    <TextView
+        android:id="@+id/seek_bubble"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:background="@drawable/bg_seek_bubble"
+        android:fontFeatureSettings="tnum"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="6dp"
+        android:textColor="#FFFFFFFF"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        android:clickable="false"
+        android:focusable="false"
+        android:elevation="6dp" />
+
     <LinearLayout
         android:id="@+id/player_gesture_hud"
         android:layout_width="wrap_content"

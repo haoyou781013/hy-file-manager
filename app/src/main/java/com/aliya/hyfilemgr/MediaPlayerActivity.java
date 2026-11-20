@@ -32,6 +32,7 @@ import com.aliya.hyfilemgr.ui.UiKit;
 import com.aliya.hyfilemgr.player.PlayerCore;
 import com.aliya.hyfilemgr.player.GestureController;
 import com.aliya.hyfilemgr.player.GestureSink;
+import com.aliya.hyfilemgr.player.PlayerSettings;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -165,6 +166,8 @@ public class MediaPlayerActivity extends Activity {
     private View placeholder, controls, topBar;
     private ImageView btnPlay, btnPrev, btnNext;
     private SeekBar seekBar;
+    /** 拖动进度条时跟随手指的时间气泡 */
+    private TextView seekBubble;
     private TextView tvPos, tvDur, tvTitle, tvCounter, tvAudioName;
     /** 播放器增强（对齐 Kazumi）：倍速与画面比例用文字按钮循环切换 */
     private TextView tvSpeed, tvRatio;
@@ -174,10 +177,8 @@ public class MediaPlayerActivity extends Activity {
     private boolean danmakuOn = false;
     private long danmakuSeasonId = -1;
     private int danmakuEpNo = 1;
-    /** 横向滑动：整屏宽对应的跳转时长（旧行为保留） */
-    private static final long SEEK_FULL_WIDTH_MS = 120_000L;
-    /** 双击左/右区域的跳转时长（对齐 YouTube / B 站） */
-    private static final long DOUBLE_TAP_SEEK_MS = 10_000L;
+    /** 播放器设置快照（onCreate 时读一次；改设置后下次进入生效） */
+    private PlayerSettings settings = PlayerSettings.defaults();
 
     private static final float[] SPEEDS = {1.0f, 1.25f, 1.5f, 2.0f, 0.5f, 0.75f};
     private static final String[] SPEED_LABELS = {"1.0×", "1.25×", "1.5×", "2.0×", "0.5×", "0.75×"};
@@ -237,7 +238,8 @@ public class MediaPlayerActivity extends Activity {
     private boolean dragging = false;
     private boolean controlsVisible = true;
     /** 控制条自动隐藏延时（毫秒）。3 秒是 B 站/YouTube 的通用值 */
-    private static final long CONTROLS_AUTO_HIDE_MS = 3000L;
+    /** 控制条自动隐藏延迟；由 settings.hideDelayMs 决定，不再硬编码 */
+    private long controlsAutoHideMs = PlayerSettings.DEFAULT_HIDE_DELAY_MS;
     /** 自动隐藏任务；显示控制条时重排，隐藏时撤掉 */
     private Runnable controlsHideRunnable;
     /** 是否已进入可播状态（对应原 VideoView 的 prepared 语义） */
@@ -256,6 +258,12 @@ public class MediaPlayerActivity extends Activity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
+        // 播放器设置快照（是否自动隐藏 / 隐藏延迟 / 长按倍速 / 双击跳转秒数）。
+        // 在 setContentView 之前读，保证首次布局就按用户配置走。
+        settings = PlayerSettings.load(this);
+        controlsAutoHideMs = settings.autoHide ? settings.hideDelayMs : 0L;
+
         setContentView(R.layout.activity_media_player);
 
         // 弹幕季 id / 集数：此前从未读取 extra，导致 initDanmaku() 首行
@@ -271,6 +279,7 @@ public class MediaPlayerActivity extends Activity {
         btnNext = findViewById(R.id.btn_player_next);
         ImageView btnBack = findViewById(R.id.btn_player_back);
         seekBar = findViewById(R.id.seek_player);
+        seekBubble = findViewById(R.id.seek_bubble);
         tvPos = findViewById(R.id.tv_player_pos);
         tvDur = findViewById(R.id.tv_player_dur);
         tvTitle = findViewById(R.id.tv_player_title);
@@ -438,18 +447,27 @@ public class MediaPlayerActivity extends Activity {
 
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
-                if (fromUser) tvPos.setText(fmt(progress));
+                if (!fromUser) return;
+                // 左侧时间同步更新（精度数字的第二个落点）
+                tvPos.setText(fmt(progress));
+                // 跟随气泡：143 分钟的视频每像素约 9.5 秒，
+                // 只有精确数字才让用户能定位。气泡比 tvPos 更近手指、字号更大。
+                showSeekBubble(sb, progress);
             }
+
             @Override public void onStartTrackingTouch(SeekBar sb) {
                 dragging = true;
                 // 拖进度条时不许自动隐藏（否则拖到一半控制条没了）
                 cancelControlsAutoHide();
+                if (seekBubble != null) seekBubble.setVisibility(View.VISIBLE);
             }
+
             @Override public void onStopTrackingTouch(SeekBar sb) {
                 dragging = false;
+                if (seekBubble != null) seekBubble.setVisibility(View.GONE);
                 // 松手后重新开始 3 秒倒计时
                 if (controlsVisible) scheduleControlsAutoHide();
-                if (prepared) player.seekTo(sb.getProgress());
+                if (prepared && player != null) player.seekTo(sb.getProgress());
             }
         });
 
@@ -705,6 +723,12 @@ public class MediaPlayerActivity extends Activity {
         }
     }
 
+    /** 倍速文案：2.0 → "2"，1.25 → "1.25"（去掉多余的 .0） */
+    private static String trimSpeed(float sp) {
+        if (sp == Math.round(sp)) return String.valueOf((int) sp);
+        return String.valueOf(sp);
+    }
+
     /** 收起手势反馈浮层（淡出 180ms） */
     private void hideGestureHud() {
         if (gestureHud == null || gestureHud.getVisibility() != View.VISIBLE) return;
@@ -751,6 +775,9 @@ public class MediaPlayerActivity extends Activity {
     /** 排定 3 秒后自动隐藏（只在「控制条可见 + 正在播放 + 没在拖动进度」时） */
     private void scheduleControlsAutoHide() {
         cancelControlsAutoHide();
+        // 用户在设置里关掉了自动隐藏（controlsAutoHideMs <= 0）→ 什么都不排。
+        // 这是设置项「是否自动隐藏控制条」的直接落点。
+        if (controlsAutoHideMs <= 0) return;
         controlsHideRunnable = () -> {
             if (!controlsVisible) return;
             // 暂停时不自动隐藏：用户暂停就是想操作
@@ -765,7 +792,7 @@ public class MediaPlayerActivity extends Activity {
             controlsVisible = false;
             applyControlsVisible();
         };
-        handler.postDelayed(controlsHideRunnable, CONTROLS_AUTO_HIDE_MS);
+        handler.postDelayed(controlsHideRunnable, controlsAutoHideMs);
     }
 
     private void cancelControlsAutoHide() {
@@ -773,6 +800,50 @@ public class MediaPlayerActivity extends Activity {
             handler.removeCallbacks(controlsHideRunnable);
             controlsHideRunnable = null;
         }
+    }
+
+    /**
+     * 显示并定位拖动时间气泡。
+     *
+     * <p>气泡水平跟随拇指，垂直固定在进度条上方 40dp（高于手指，
+     * 避免被指腹遮住）。位置计算走 {@link GestureController#clampBubbleX}
+     * 保证不会被屏幕边缘裁掉。</p>
+     */
+    private void showSeekBubble(SeekBar sb, int progressMs) {
+        if (seekBubble == null) return;
+        seekBubble.setText(fmt(progressMs));
+        seekBubble.setVisibility(View.VISIBLE);
+
+        // 拇指中心相对控制条容器的 X：按 progress/max 比例换算轨道位置
+        int max = Math.max(1, sb.getMax());
+        float ratio = Math.min(1f, Math.max(0f, progressMs / (float) max));
+        float trackW = sb.getWidth();
+        float thumbX = ratio * trackW;
+
+        // seekBar 相对于 root 的位置，用于把坐标搬到 root 坐标系
+        int[] sbLoc = new int[2];
+        int[] rootLoc = new int[2];
+        sb.getLocationInWindow(sbLoc);
+        View root = findViewById(R.id.player_root);
+        root.getLocationInWindow(rootLoc);
+
+        float fingerXInRoot = thumbX + (sbLoc[0] - rootLoc[0]);
+
+        // 先量出气泡宽度（wrap_content，文本变了宽度会变）
+        seekBubble.measure(
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int bubbleW = seekBubble.getMeasuredWidth();
+        float margin = dpInt(8);
+        float left = com.aliya.hyfilemgr.player.GestureController.clampBubbleX(
+                fingerXInRoot, bubbleW, root.getWidth(), margin);
+
+        // 垂直：贴在进度条上方。seekBar 顶边 - 气泡高度 - 8dp 间距
+        float sbTopInRoot = sbLoc[1] - rootLoc[1];
+        float top = sbTopInRoot - seekBubble.getMeasuredHeight() - dpInt(8);
+
+        seekBubble.setX(left);
+        seekBubble.setY(Math.max(dpInt(8), top));
     }
 
     private void syncProgress() {
@@ -803,18 +874,27 @@ public class MediaPlayerActivity extends Activity {
             // ── 点击类 ──
 
             @Override public void onSurfaceTap() {
-                toggleControls();
+                // 设置项「单击画面切换控制条」：
+                // 关闭后单击只在控制条隐藏时把它叫出来，不会反向隐藏——
+                // 适合习惯「点一下就出来、等它自己收」的用户。
+                if (settings.tapToggle) {
+                    toggleControls();
+                } else if (!controlsVisible) {
+                    controlsVisible = true;
+                    applyControlsVisible();
+                    scheduleControlsAutoHide();
+                }
             }
 
             @Override public void onDoubleTap(GestureSink.Zone zone) {
                 switch (zone) {
                     case LEFT:
-                        seekBy(-DOUBLE_TAP_SEEK_MS);
-                        showGestureHud(0, "后退 " + (DOUBLE_TAP_SEEK_MS / 1000) + " 秒", false);
+                        seekBy(-settings.doubleTapSeekMs);
+                        showGestureHud(0, "后退 " + (settings.doubleTapSeekMs / 1000) + " 秒", false);
                         break;
                     case RIGHT:
-                        seekBy(DOUBLE_TAP_SEEK_MS);
-                        showGestureHud(0, "前进 " + (DOUBLE_TAP_SEEK_MS / 1000) + " 秒", false);
+                        seekBy(settings.doubleTapSeekMs);
+                        showGestureHud(0, "前进 " + (settings.doubleTapSeekMs / 1000) + " 秒", false);
                         break;
                     case CENTER:
                     default:
@@ -831,10 +911,11 @@ public class MediaPlayerActivity extends Activity {
                 // 长按临时加速到 2×，松手恢复（Kazumi 同款）
                 longPressing = true;
                 try {
-                    if (player != null) player.setPlaybackSpeed(2.0f);
-                    if (tvSpeed != null) tvSpeed.setText("2.0×");
-                    // sticky：加速期间一直显示，否则用户看不出现在是 2×
-                    showGestureHud(R.drawable.ic_play, "2.0× 加速中", true);
+                    float sp = settings.longPressSpeed;
+                    if (player != null) player.setPlaybackSpeed(sp);
+                    if (tvSpeed != null) tvSpeed.setText(trimSpeed(sp) + "×");
+                    // sticky：加速期间一直显示，否则用户看不出现在是几倍
+                    showGestureHud(R.drawable.ic_play, trimSpeed(sp) + "× 加速中", true);
                 } catch (Throwable ignored) {
                 }
             }
@@ -847,8 +928,8 @@ public class MediaPlayerActivity extends Activity {
 
             @Override public void onSeekPreview(float deltaRatio) {
                 if (!prepared || player == null) return;
-                // 旧行为保留：全屏宽 = 2 分钟（SEEK_FULL_WIDTH_MS）
-                long delta = (long) (deltaRatio * SEEK_FULL_WIDTH_MS);
+                // 整屏宽对应的跳转时长由设置决定（默认 2 分钟）
+                long delta = (long) (deltaRatio * settings.seekFullWidthMs);
                 long target = Math.max(0, Math.min(player.getDuration(),
                         player.getCurrentPosition() + delta));
                 seekTargetMs = target;

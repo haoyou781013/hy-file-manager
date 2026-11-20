@@ -130,6 +130,43 @@ public class GestureControllerTest {
         assertTrue(GestureController.isInEdgeGuard(19, 20, 16));
     }
 
+    // ══════════ clampBubbleX：拖动时间气泡定位 ══════════
+
+    @Test
+    public void clampBubbleX_centersOnFinger() {
+        // 手指在正中间，气泡应居中对齐：600 - 100/2 = 550
+        assertEquals(550f, GestureController.clampBubbleX(600, 100, 1200, 8), 0.01f);
+    }
+
+    @Test
+    public void clampBubbleX_clampsAtLeftEdge() {
+        // 手指在最左（x=0），气泡会算出 -50 → 必须夹到 margin
+        assertEquals(8f, GestureController.clampBubbleX(0, 100, 1200, 8), 0.01f);
+        // 手指稍往右但仍会溢出
+        assertEquals(8f, GestureController.clampBubbleX(30, 100, 1200, 8), 0.01f);
+    }
+
+    @Test
+    public void clampBubbleX_clampsAtRightEdge() {
+        // 手指在最右（x=1200），算出 1150，但右边要留 margin：
+        // maxLeft = 1200 - 100 - 8 = 1092
+        assertEquals(1092f, GestureController.clampBubbleX(1200, 100, 1200, 8), 0.01f);
+    }
+
+    @Test
+    public void clampBubbleX_bubbleWiderThanContainer() {
+        // 气泡比容器还宽（极窄屏 / 长文本）：贴左边，不能算出负的 maxLeft
+        float r = GestureController.clampBubbleX(100, 500, 300, 8);
+        assertEquals("气泡过宽时贴 margin", 8f, r, 0.01f);
+    }
+
+    @Test
+    public void clampBubbleX_unknownContainerWidth() {
+        // 容器宽度未知（首次 layout 前）：返回 0，不崩
+        assertEquals(0f, GestureController.clampBubbleX(100, 100, 0, 8), 0.01f);
+        assertEquals(0f, GestureController.clampBubbleX(100, 100, -1, 8), 0.01f);
+    }
+
     // ══════════ 组合场景 ══════════
 
     @Test

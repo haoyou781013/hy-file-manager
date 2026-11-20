@@ -268,4 +268,27 @@ public final class GestureController {
         if (width <= 0) return false;
         return x < guard || x > width - guard;
     }
+
+    /**
+     * 计算拖动时间气泡的左上角 X 坐标，保证气泡始终在可视区内。
+     *
+     * <p>气泡要跟随手指，但不能被屏幕边缘裁掉——拖到最左/最右时
+     * 气泡应该「贴边停住」而不是「一半在屏幕外」。</p>
+     *
+     * @param fingerX      手指/圆点的中心 X（相对父容器）
+     * @param bubbleWidth  气泡宽度
+     * @param containerW   父容器宽度
+     * @param margin       气泡距两侧的最小留白
+     * @return 气泡左上角 X
+     */
+    public static float clampBubbleX(float fingerX, float bubbleWidth,
+                                     float containerW, float margin) {
+        if (containerW <= 0) return 0f;
+        // 气泡中心对准手指 → 左上角 = fingerX - bubbleWidth/2
+        float left = fingerX - bubbleWidth / 2f;
+        float maxLeft = containerW - bubbleWidth - margin;
+        // 气泡比容器还宽时（极窄屏 / 长文本）直接贴左边，否则 maxLeft < margin
+        if (maxLeft < margin) return margin;
+        return Math.max(margin, Math.min(maxLeft, left));
+    }
 }
