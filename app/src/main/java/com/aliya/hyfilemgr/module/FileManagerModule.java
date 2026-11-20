@@ -4922,21 +4922,15 @@ public class FileManagerModule extends HyVqModule {
                 cur.autoHide, v -> {
                     boolean now = !cur.autoHide;
                     com.aliya.hyfilemgr.player.PlayerSettings.saveAutoHide(ctx, now);
-                    hideSettingsDialog();
-                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                    rebuildSettingsContent(this::buildPlayerSettings);
                     UiKit.toast(ctx, now ? "控制条将自动隐藏" : "控制条将常驻显示");
                 });
 
-        TextView hideTip = new TextView(ctx);
+        TextView hideTip = settingsTipText();
         hideTip.setText("关闭后控制条一直显示，不会自动收起。\n"
                 + "适合「经常要调进度」的场景，代价是遮挡部分画面。\n"
                 + "暂停播放时始终不自动隐藏（保留给需要操作的时刻）。");
-        hideTip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        hideTip.setTextColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurfaceVariant));
-        hideTip.setLineSpacing(dp(2), 1f);
-        hideTip.setPadding(dp(14), dp(2), dp(14), dp(10));
-        box.addView(hideTip);
+        addTipToGroup(hideTip);
 
         // 隐藏延迟：仅在开启自动隐藏时才有意义
         if (cur.autoHide) {
@@ -4945,8 +4939,7 @@ public class FileManagerModule extends HyVqModule {
                     true, v -> {
                         int next = nextIntOption(HIDE_DELAY_OPTIONS, cur.hideDelayMs);
                         com.aliya.hyfilemgr.player.PlayerSettings.saveHideDelay(ctx, next);
-                        hideSettingsDialog();
-                        showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                        rebuildSettingsContent(this::buildPlayerSettings);
                         UiKit.toast(ctx, "自动隐藏延迟：" + fmtSeconds(next));
                     });
         }
@@ -4956,8 +4949,7 @@ public class FileManagerModule extends HyVqModule {
                 cur.tapToggle, v -> {
                     boolean now = !cur.tapToggle;
                     com.aliya.hyfilemgr.player.PlayerSettings.saveTapToggle(ctx, now);
-                    hideSettingsDialog();
-                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                    rebuildSettingsContent(this::buildPlayerSettings);
                     UiKit.toast(ctx, now ? "单击切换已开启" : "单击切换已关闭");
                 });
 
@@ -4969,8 +4961,7 @@ public class FileManagerModule extends HyVqModule {
                 true, v -> {
                     float next = nextFloatOption(LONG_PRESS_OPTIONS, cur.longPressSpeed);
                     com.aliya.hyfilemgr.player.PlayerSettings.saveLongPressSpeed(ctx, next);
-                    hideSettingsDialog();
-                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                    rebuildSettingsContent(this::buildPlayerSettings);
                     UiKit.toast(ctx, "长按加速：" + fmtSpeed(next));
                 });
 
@@ -4979,8 +4970,7 @@ public class FileManagerModule extends HyVqModule {
                 true, v -> {
                     int next = nextIntOption(DOUBLE_TAP_OPTIONS, cur.doubleTapSeekMs);
                     com.aliya.hyfilemgr.player.PlayerSettings.saveDoubleTapSeek(ctx, next);
-                    hideSettingsDialog();
-                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                    rebuildSettingsContent(this::buildPlayerSettings);
                     UiKit.toast(ctx, "双击跳转：" + fmtSeconds(next));
                 });
 
@@ -4996,23 +4986,17 @@ public class FileManagerModule extends HyVqModule {
                     int nextIdx = (curIdx + 1) % opts.length;
                     com.aliya.hyfilemgr.player.PlayerSettings.saveSeekFullWidth(
                             ctx, opts[nextIdx]);
-                    hideSettingsDialog();
-                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                    rebuildSettingsContent(this::buildPlayerSettings);
                     UiKit.toast(ctx, "横向滑动：" + names[nextIdx]);
                 });
 
-        TextView gestureTip = new TextView(ctx);
+        TextView gestureTip = settingsTipText();
         gestureTip.setText("手势说明：\n"
                 + "· 双击左三分之一：后退　双击右三分之一：前进　双击中间：暂停\n"
                 + "· 横向滑动：拖动进度（松手生效）\n"
                 + "· 左侧上下滑：亮度　右侧上下滑：音量\n"
                 + "· 长按：临时加速，松手恢复");
-        gestureTip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        gestureTip.setTextColor(UiKit.color(ctx,
-                com.google.android.material.R.attr.colorOnSurfaceVariant));
-        gestureTip.setLineSpacing(dp(3), 1f);
-        gestureTip.setPadding(dp(14), dp(2), dp(14), dp(10));
-        box.addView(gestureTip);
+        addTipToGroup(gestureTip);
 
         // ── 恢复默认 ──
         box.addView(sectionHeaderInCard("其他"));
@@ -5020,12 +5004,47 @@ public class FileManagerModule extends HyVqModule {
                 cur.isAllDefault() ? "当前已是默认配置" : "点击恢复全部默认值",
                 !cur.isAllDefault(), cur.isAllDefault() ? null : v -> {
                     com.aliya.hyfilemgr.player.PlayerSettings.resetAll(ctx);
-                    hideSettingsDialog();
-                    showInSettingsDialog("视频播放器", this::buildPlayerSettings);
+                    rebuildSettingsContent(this::buildPlayerSettings);
                     UiKit.toast(ctx, "已恢复默认设置");
                 });
 
         return box;
+    }
+
+    /**
+     * 造一个「说明文字」TextView（已套好字号/颜色/行距）。
+     *
+     * <p>配合 {@link #addTipToGroup(TextView)} 使用——后者负责塞进当前卡片。</p>
+     */
+    private TextView settingsTipText() {
+        TextView tv = new TextView(ctx);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        tv.setTextColor(UiKit.color(ctx,
+                com.google.android.material.R.attr.colorOnSurfaceVariant));
+        tv.setLineSpacing(dp(2), 1f);
+        tv.setPadding(dp(14), dp(2), dp(14), dp(12));
+        return tv;
+    }
+
+    /**
+     * 把说明文字加进<b>当前分组卡片内部</b>。
+     *
+     * <p><b>为什么不能直接 box.addView(tv)</b>：设置页的分组机制是
+     * {@code sectionHeaderInCard()} 建立一个卡片并把引用存到 {@code settingsGroup}，
+     * 后续的 {@code addInfoRow()} 都往那个卡片里塞。
+     * 直接加到 {@code box}（页面根容器）会绕过卡片，
+     * 表现为「一段孤立文字浮在卡片外面」——用户反馈的就是这个。</p>
+     */
+    private void addTipToGroup(TextView tv) {
+        if (settingsGroup == null) {
+            // 理论上不会走到：调用方前面一定先调了 sectionHeaderInCard()。
+            // 真进来了就跳过——宁可少一行说明，也不要出现不跟卡片对齐的孤儿文字。
+            android.util.Log.w("HYVQ_PLAYER", "addTipToGroup: 无分组，跳过说明文字");
+            return;
+        }
+        settingsGroup.addView(tv, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     /** 毫秒 → "3 秒" / "1.5 秒" / "2 分钟" */
@@ -7274,6 +7293,55 @@ public class FileManagerModule extends HyVqModule {
 
         // 统一互斥切换（会隐藏终端、切顶栏、管底栏与 FAB）
         setContentMode(ContentMode.SETTINGS);
+    }
+
+    /**
+     * 原地重建当前设置子页的内容，不重建整个设置容器。
+     *
+     * <p><b>为什么需要这个方法</b>：设置项点击后要刷新状态文案，
+     * 旧写法是 {@code hideSettingsDialog(); showInSettingsDialog(...)}——
+     * 那会走完整的建容器 + 淡入流程，表现为整页闪白重建，
+     * 用户每点一下开关就看到一次全屏刷新。</p>
+     *
+     * <p>这里只替换 {@code settingsEmbedContent} 的子 View，
+     * 容器、滚动位置、顶栏标题全部保留。滚动位置会手动恢复，
+     * 否则改下方项目时页面会跳回顶部。</p>
+     */
+    private void rebuildSettingsContent(java.util.function.Supplier<View> contentSupplier) {
+        if (settingsEmbedContent == null) return;
+        // 记住滚动位置：改页面下方的开关时不该跳回顶部
+        int scrollY = 0;
+        android.view.ViewParent parent = settingsEmbedContent.getParent();
+        if (parent instanceof android.view.View
+                && ((android.view.View) parent).getParent() instanceof android.widget.ScrollView) {
+            scrollY = ((android.widget.ScrollView)
+                    ((android.view.View) parent).getParent()).getScrollY();
+        } else if (parent instanceof android.widget.ScrollView) {
+            scrollY = ((android.widget.ScrollView) parent).getScrollY();
+        }
+
+        settingsGroup = null;
+        View v = contentSupplier.get();
+        if (v == null) return;
+        settingsGroup = null;
+
+        settingsEmbedContent.removeAllViews();
+        settingsEmbedContent.addView(v, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        // 恢复滚动位置（放在 layout 之后，否则 ScrollView 还没测量完）
+        final int targetY = scrollY;
+        settingsEmbedContent.post(() -> {
+            android.view.ViewParent p2 = settingsEmbedContent.getParent();
+            android.widget.ScrollView sv = null;
+            if (p2 instanceof android.widget.ScrollView) {
+                sv = (android.widget.ScrollView) p2;
+            } else if (p2 instanceof android.view.View
+                    && ((android.view.View) p2).getParent() instanceof android.widget.ScrollView) {
+                sv = (android.widget.ScrollView) ((android.view.View) p2).getParent();
+            }
+            if (sv != null) sv.scrollTo(0, targetY);
+        });
     }
 
     /** 顶栏切到设置模式：「设置 | 页名」+ 返回 */
