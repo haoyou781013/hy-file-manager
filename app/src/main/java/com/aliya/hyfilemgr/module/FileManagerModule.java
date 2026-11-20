@@ -1720,6 +1720,8 @@ public class FileManagerModule extends HyVqModule {
         p.adapter = new FileListAdapter(ctx, p.entries, p.selected, makeListener(p));
         p.adapter.setThumbsEnabled(thumbsEnabled);
         p.adapter.setAppBadgeEnabled(appBadgeEnabled);
+        // 圆角策略依赖视图模式：列表 = 整个列表共用外圆角，网格 = 每格独立
+        p.adapter.setGridMode(gridMode);
         p.adapter.setDensity(fmActiveDensity());
         p.adapter.setRowAlpha(fmActiveRowAlpha());
         rv.setAdapter(p.adapter);
@@ -4877,6 +4879,18 @@ public class FileManagerModule extends HyVqModule {
      */
     // ══════════ 视频播放器设置 ══════════
 
+    /**
+     * 当前播放器设置页里「自动隐藏延迟」那一行的引用。
+     *
+     * <p>存在的唯一目的：让「自动隐藏控制条」开关点击时能对这一行做
+     * 展开/收起动画，而不是重建整页让它瞬间出现。</p>
+     *
+     * <p>生命周期：{@code buildPlayerSettings()} 每次构建时赋值；
+     * 离开设置页后仍持有引用不会泄漏——它是设置页内容树的一部分，
+     * 整棵树被替换时这个引用指向的 View 也随之不可达。</p>
+     */
+    private View playerDelayRow;
+
     /** 自动隐藏延迟的可选档位（毫秒） */
     private static final int[] HIDE_DELAY_OPTIONS = {1500, 3000, 5000, 10000};
     private static final String[] HIDE_DELAY_LABELS = {
@@ -4922,7 +4936,14 @@ public class FileManagerModule extends HyVqModule {
                 cur.autoHide, v -> {
                     boolean now = !cur.autoHide;
                     com.aliya.hyfilemgr.player.PlayerSettings.saveAutoHide(ctx, now);
-                    rebuildSettingsContent(this::buildPlayerSettings);
+                    // 不重建整页：只对这一行做高度动画。
+                    // 重建会让新行直接以最终状态出现，动画没有落脚点。
+                    animateRowExpand(playerDelayRow, now);
+                    // 状态点与控制条文案要跟着变 → 这一处仍需刷新，
+                    // 但用 rebuild 会把动画打断，所以只更新受影响的两个文本。
+                    if (v instanceof LinearLayout) {
+                        refreshAutoHideRowText((LinearLayout) v, now);
+                    }
                     UiKit.toast(ctx, now ? "控制条将自动隐藏" : "控制条将常驻显示");
                 });
 
@@ -4932,17 +4953,20 @@ public class FileManagerModule extends HyVqModule {
                 + "暂停播放时始终不自动隐藏（保留给需要操作的时刻）。");
         addTipToGroup(hideTip);
 
-        // 隐藏延迟：仅在开启自动隐藏时才有意义
-        if (cur.autoHide) {
-            addInfoRow(box, "自动隐藏延迟",
-                    "当前 " + fmtSeconds(cur.hideDelayMs) + " · 点击切换",
-                    true, v -> {
-                        int next = nextIntOption(HIDE_DELAY_OPTIONS, cur.hideDelayMs);
-                        com.aliya.hyfilemgr.player.PlayerSettings.saveHideDelay(ctx, next);
-                        rebuildSettingsContent(this::buildPlayerSettings);
-                        UiKit.toast(ctx, "自动隐藏延迟：" + fmtSeconds(next));
-                    });
-        }
+        // 隐藏延迟：始终创建，但关闭自动隐藏时收起（GONE）。
+        // 不用 `if (cur.autoHide)` 条件创建——那样切换开关后整页重建，
+        // 这一行是瞬间出现/消失的，没有任何过渡动画（用户反馈的问题）。
+        // 改为始终存在 + 高度动画，见 autoHide 开关的 onClick。
+        final View delayRow = addInfoRow(box, "自动隐藏延迟",
+                "当前 " + fmtSeconds(cur.hideDelayMs) + " · 点击切换",
+                true, v -> {
+                    int next = nextIntOption(HIDE_DELAY_OPTIONS, cur.hideDelayMs);
+                    com.aliya.hyfilemgr.player.PlayerSettings.saveHideDelay(ctx, next);
+                    rebuildSettingsContent(this::buildPlayerSettings);
+                    UiKit.toast(ctx, "自动隐藏延迟：" + fmtSeconds(next));
+                });
+        delayRow.setVisibility(cur.autoHide ? View.VISIBLE : View.GONE);
+        playerDelayRow = delayRow;
 
         addInfoRow(box, "单击画面切换控制条",
                 cur.tapToggle ? "已开启 · 点一下显示/隐藏" : "已关闭",
@@ -5045,6 +5069,127 @@ public class FileManagerModule extends HyVqModule {
         settingsGroup.addView(tv, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
+
+    /**
+     * 原地刷新「自动隐藏控制条」这一行的副标题与状态点。
+     *
+     * <p>为什么要单独写这个方法：开关点击后若调 {@code rebuildSettingsContent()}
+     * 会重建整个内容树，正在跑的展开动画立刻被打断（View 被换掉）。
+     * 所以改成只更新这一行里受影响的两个子元素。</p>
+     *
+     * <p>行结构由 {@code addInfoRow} 固定为
+     * {@code row[ texts[标题, 副标题], dot ]}，这里按这个结构取。</p>
+     *
+     * @param row 该行的根 View（即 addInfoRow 的返回值）
+     * @param on  开关的新状态
+     */
+    private void refreshAutoHideRowText(LinearLayout row, boolean on) {
+        if (row == null || row.getChildCount() < 2) return;
+        View texts = row.getChildAt(0);
+        if (texts instanceof LinearLayout
+                && ((LinearLayout) texts).getChildCount() >= 2) {
+            View subV = ((LinearLayout) texts).getChildAt(1);
+            if (subV instanceof TextView) {
+                TextView sub = (TextView) subV;
+                com.aliya.hyfilemgr.player.PlayerSettings now =
+                        com.aliya.hyfilemgr.player.PlayerSettings.load(ctx);
+                sub.setText(on
+                        ? "已开启 · 播放时 " + fmtSeconds(now.hideDelayMs) + "后自动隐藏"
+                        : "已关闭 · 控制条常驻显示");
+                sub.setTextColor(UiKit.color(ctx, on
+                        ? com.google.android.material.R.attr.colorPrimary
+                        : com.google.android.material.R.attr.colorOnSurfaceVariant));
+                sub.setAlpha(on ? 1f : 0.75f);
+            }
+        }
+        // 状态点颜色
+        View dot = row.getChildAt(1);
+        android.graphics.drawable.GradientDrawable g =
+                new android.graphics.drawable.GradientDrawable();
+        g.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        g.setColor(UiKit.color(ctx, on
+                ? com.google.android.material.R.attr.colorPrimary
+                : com.google.android.material.R.attr.colorOutline));
+        dot.setBackground(g);
+    }
+
+    /**
+     * 对一行做「展开 / 收起」动画。
+     *
+     * <p><b>为什么需要</b>：「自动隐藏延迟」这一行只在自动隐藏开启时才有意义，
+     * 此前用 {@code if (cur.autoHide) { addInfoRow(...) }} 控制——切换开关后
+     * 整页重建，那一行是<b>瞬间出现/消失</b>的，没有任何过渡。</p>
+     *
+     * <p>这里改为：行始终存在，用高度动画从 0 展开到实测高度（或反向）。
+     * 动画结束把 layoutParams.height 复位为 WRAP_CONTENT，避免后续内容变化
+     * （例如文案变长换行）时高度被钉死。</p>
+     *
+     * <p>收起时先量高度再动画到 0，动画结束置 GONE——这样它不占位、
+     * 也不接收点击。</p>
+     *
+     * @param v      目标行
+     * @param expand true = 展开，false = 收起
+     */
+    private void animateRowExpand(final View v, final boolean expand) {
+        if (v == null) return;
+        final int duration = 200;   // Material 3 short4 区间，展开/收起对称
+
+        if (expand) {
+            v.setVisibility(View.VISIBLE);
+            v.measure(View.MeasureSpec.makeMeasureSpec(
+                            ((View) v.getParent()).getWidth(), View.MeasureSpec.AT_MOST),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+            final int target = v.getMeasuredHeight();
+            LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) v.getLayoutParams();
+            lp.height = 0;
+            v.setLayoutParams(lp);
+            v.setAlpha(0f);
+            v.animate().alpha(1f).setDuration(duration).start();
+            v.post(() -> {
+                android.animation.ValueAnimator anim = android.animation.ValueAnimator
+                        .ofInt(0, target);
+                anim.setDuration(duration);
+                anim.addUpdateListener(a -> {
+                    LinearLayout.LayoutParams p2 =
+                            (LinearLayout.LayoutParams) v.getLayoutParams();
+                    p2.height = (int) a.getAnimatedValue();
+                    v.setLayoutParams(p2);
+                });
+                anim.addListener(new android.animation.AnimatorListenerAdapter() {
+                    @Override public void onAnimationEnd(android.animation.Animator a) {
+                        // 复位为自适应：否则文案换行时高度被钉死
+                        LinearLayout.LayoutParams p3 =
+                                (LinearLayout.LayoutParams) v.getLayoutParams();
+                        p3.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+                        v.setLayoutParams(p3);
+                    }
+                });
+                anim.start();
+            });
+        } else {
+            final int start = v.getHeight();
+            android.animation.ValueAnimator anim = android.animation.ValueAnimator
+                    .ofInt(start, 0);
+            anim.setDuration(duration);
+            anim.addUpdateListener(a -> {
+                LinearLayout.LayoutParams p2 =
+                        (LinearLayout.LayoutParams) v.getLayoutParams();
+                p2.height = (int) a.getAnimatedValue();
+                v.setLayoutParams(p2);
+            });
+            anim.addListener(new android.animation.AnimatorListenerAdapter() {
+                @Override public void onAnimationEnd(android.animation.Animator a) {
+                    v.setVisibility(View.GONE);
+                    LinearLayout.LayoutParams p3 =
+                            (LinearLayout.LayoutParams) v.getLayoutParams();
+                    p3.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+                    v.setLayoutParams(p3);
+                }
+            });
+            v.animate().alpha(0f).setDuration(duration).start();
+            anim.start();
+        }
     }
 
     /** 毫秒 → "3 秒" / "1.5 秒" / "2 分钟" */
@@ -9620,7 +9765,14 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 状态行：图标 + 标题 + 状态描述 + 勾选标记 */
-    private void addInfoRow(LinearLayout parent, String title, String status,
+    /**
+     * 加一行「标题 + 副标题 + 状态点」的可点击行。
+     *
+     * <p>返回该行的根 View，便于调用方做展开/收起动画
+     * （例如播放器设置里「自动隐藏延迟」只在自动隐藏开启时显示）。
+     * 不需要返回值的老调用点可以直接忽略。</p>
+     */
+    private View addInfoRow(LinearLayout parent, String title, String status,
                             boolean ok, View.OnClickListener onClick) {
         // 有分组时改投到分组卡片（见 addSettingsRow 的说明）
         final LinearLayout host = settingsGroup != null ? settingsGroup : parent;
@@ -9677,6 +9829,8 @@ public class FileManagerModule extends HyVqModule {
         LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(8), dp(8));
         dotLp.leftMargin = dp(8);
         row.addView(dot, dotLp);
+
+        return row;
     }
 
     /**

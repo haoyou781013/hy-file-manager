@@ -38,6 +38,25 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
     /** 缩略图开关（内存/CPU 敏感时可关闭；默认开启） */
     private boolean thumbsEnabled = true;
 
+    /**
+     * 是否网格模式。
+     *
+     * <p>影响行背景的圆角策略：列表模式下整个列表共用外圆角
+     * （首行上圆、末行下圆、中间直角），网格模式下每格独立圆角。
+     * 由 {@code buildPane()} 在切换视图时同步。</p>
+     */
+    private boolean gridMode = false;
+
+    public void setGridMode(boolean on) {
+        if (this.gridMode == on) return;
+        this.gridMode = on;
+        notifyDataSetChanged();   // 圆角策略变了，需要重绘所有行
+    }
+
+    public boolean isGridMode() {
+        return gridMode;
+    }
+
     /** 设置缩略图开关并刷新列表 */
     public void setThumbsEnabled(boolean on) {
         this.thumbsEnabled = on;
@@ -287,7 +306,7 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         int surface = checked
                 ? UiKit.color(context, com.google.android.material.R.attr.colorPrimaryContainer)
                 : UiKit.color(context, com.google.android.material.R.attr.colorSurfaceContainerLow);
-        h.itemView.setBackground(makeBg(surface, checked));
+        h.itemView.setBackground(makeBg(surface, checked, position));
         h.itemView.setScaleX(checked ? 0.985f : 1f);
         h.itemView.setScaleY(checked ? 0.985f : 1f);
         if (h.check != null) h.check.setChecked(checked);
@@ -302,7 +321,7 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
         int surface = checked
                 ? UiKit.color(context, com.google.android.material.R.attr.colorPrimaryContainer)
                 : UiKit.color(context, com.google.android.material.R.attr.colorSurfaceContainerLow);
-        h.itemView.setBackground(makeBg(surface, checked));
+        h.itemView.setBackground(makeBg(surface, checked, position));
         // 选中态轻微内缩 + 放大反馈，配合蓝色边框形成「被拿起」的观感
         h.itemView.setScaleX(checked ? 0.985f : 1f);
         h.itemView.setScaleY(checked ? 0.985f : 1f);
@@ -559,9 +578,46 @@ public class FileListAdapter extends RecyclerView.Adapter<FileListAdapter.VH> {
      * <p>选中态 = 主色淡填充 + 2dp 主色边框（替代原有的勾选框，
      * 用「整行被蓝色框住」表达选中）。未选中态只有圆角填充、无边框。</p>
      */
-    private GradientDrawable makeBg(int fill, boolean checked) {
+    /**
+     * 行背景。
+     *
+     * <p><b>圆角规则改为「整组只在外围收圆角」</b>：此前每一行都
+     * {@code setCornerRadius(dp(14))}，视觉上是一串独立小卡片。
+     * 用户反馈希望「只有四周用圆角，中间拼接的文件不用每个都圆角」——
+     * 也就是整个文件列表像一张大卡片，行与行之间是连续的分隔。</p>
+     *
+     * <p>做法（列表模式下）：</p>
+     * <ul>
+     *   <li>第一行：上圆角</li>
+     *   <li>最后一行：下圆角</li>
+     *   <li>中间行：直角</li>
+     *   <li>只有一个条目时：四角全圆</li>
+     * </ul>
+     *
+     * <p>网格模式不改：网格中每个格子本就是独立单元，共用圆角会连成一片，
+     * 反而看不出边界。</p>
+     *
+     * @param position 条目位置，用于判断首尾
+     */
+    private GradientDrawable makeBg(int fill, boolean checked, int position) {
         GradientDrawable gd = new GradientDrawable();
-        gd.setCornerRadius(dp(14));
+        float r = dp(14);
+        if (gridMode) {
+            // 网格：保持每格独立圆角
+            gd.setCornerRadius(r);
+        } else {
+            int count = entries.size();
+            boolean isFirst = position <= 0;
+            boolean isLast = position >= count - 1;
+            boolean single = count <= 1;
+            // 四个角分别控制：左上、右上、右下、左下
+            gd.setCornerRadii(new float[]{
+                    (isFirst || single) ? r : 0f, (isFirst || single) ? r : 0f,   // 左上
+                    (isFirst || single) ? r : 0f, (isFirst || single) ? r : 0f,   // 右上
+                    (isLast || single) ? r : 0f, (isLast || single) ? r : 0f,     // 右下
+                    (isLast || single) ? r : 0f, (isLast || single) ? r : 0f      // 左下
+            });
+        }
         // 按 rowAlpha 压不透明度：fill 原本是实心色（alpha=FF），
         // 直接用它会把背景图完全挡住，文件行就成了一块块实心板。
         int a = Math.round(255f * rowAlpha / 100f);
