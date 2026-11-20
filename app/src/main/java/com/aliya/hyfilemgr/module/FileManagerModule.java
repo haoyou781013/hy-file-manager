@@ -4934,13 +4934,18 @@ public class FileManagerModule extends HyVqModule {
                         ? "已开启 · 播放时 " + fmtSeconds(cur.hideDelayMs) + "后自动隐藏"
                         : "已关闭 · 控制条常驻显示",
                 cur.autoHide, v -> {
-                    boolean now = !cur.autoHide;
+                    // ⚠ 必须现读，不能用闭包里的 cur ——
+                    // cur 是 buildPlayerSettings() 执行时的快照，本次页面不重建
+                    // 就永远是旧值。旧写法 boolean now = !cur.autoHide 会导致
+                    // 每次点击都算出同一个结果（用户反馈「点开启后再点又弹开启」）。
+                    boolean now = !com.aliya.hyfilemgr.player.PlayerSettings
+                            .load(ctx).autoHide;
                     com.aliya.hyfilemgr.player.PlayerSettings.saveAutoHide(ctx, now);
                     // 不重建整页：只对这一行做高度动画。
                     // 重建会让新行直接以最终状态出现，动画没有落脚点。
                     animateRowExpand(playerDelayRow, now);
-                    // 状态点与控制条文案要跟着变 → 这一处仍需刷新，
-                    // 但用 rebuild 会把动画打断，所以只更新受影响的两个文本。
+                    // 状态点与副标题要跟着变 → 只更新受影响的两个子元素，
+                    // 避免 rebuild 打断正在跑的动画。
                     if (v instanceof LinearLayout) {
                         refreshAutoHideRowText((LinearLayout) v, now);
                     }
@@ -4960,7 +4965,9 @@ public class FileManagerModule extends HyVqModule {
         final View delayRow = addInfoRow(box, "自动隐藏延迟",
                 "当前 " + fmtSeconds(cur.hideDelayMs) + " · 点击切换",
                 true, v -> {
-                    int next = nextIntOption(HIDE_DELAY_OPTIONS, cur.hideDelayMs);
+                    int curDelay = com.aliya.hyfilemgr.player.PlayerSettings
+                            .load(ctx).hideDelayMs;
+                    int next = nextIntOption(HIDE_DELAY_OPTIONS, curDelay);
                     com.aliya.hyfilemgr.player.PlayerSettings.saveHideDelay(ctx, next);
                     rebuildSettingsContent(this::buildPlayerSettings);
                     UiKit.toast(ctx, "自动隐藏延迟：" + fmtSeconds(next));
@@ -4971,7 +4978,9 @@ public class FileManagerModule extends HyVqModule {
         addInfoRow(box, "单击画面切换控制条",
                 cur.tapToggle ? "已开启 · 点一下显示/隐藏" : "已关闭",
                 cur.tapToggle, v -> {
-                    boolean now = !cur.tapToggle;
+                    // 同 autoHide：必须现读，闭包里的 cur 是构建时快照
+                    boolean now = !com.aliya.hyfilemgr.player.PlayerSettings
+                            .load(ctx).tapToggle;
                     com.aliya.hyfilemgr.player.PlayerSettings.saveTapToggle(ctx, now);
                     rebuildSettingsContent(this::buildPlayerSettings);
                     UiKit.toast(ctx, now ? "单击切换已开启" : "单击切换已关闭");
@@ -4983,7 +4992,9 @@ public class FileManagerModule extends HyVqModule {
         addInfoRow(box, "长按加速倍速",
                 "当前 " + fmtSpeed(cur.longPressSpeed) + " · 点击切换",
                 true, v -> {
-                    float next = nextFloatOption(LONG_PRESS_OPTIONS, cur.longPressSpeed);
+                    float curSp = com.aliya.hyfilemgr.player.PlayerSettings
+                            .load(ctx).longPressSpeed;
+                    float next = nextFloatOption(LONG_PRESS_OPTIONS, curSp);
                     com.aliya.hyfilemgr.player.PlayerSettings.saveLongPressSpeed(ctx, next);
                     rebuildSettingsContent(this::buildPlayerSettings);
                     UiKit.toast(ctx, "长按加速：" + fmtSpeed(next));
@@ -4992,7 +5003,9 @@ public class FileManagerModule extends HyVqModule {
         addInfoRow(box, "双击跳转时长",
                 "当前 " + fmtSeconds(cur.doubleTapSeekMs) + " · 左半屏后退 / 右半屏前进",
                 true, v -> {
-                    int next = nextIntOption(DOUBLE_TAP_OPTIONS, cur.doubleTapSeekMs);
+                    int curTap = com.aliya.hyfilemgr.player.PlayerSettings
+                            .load(ctx).doubleTapSeekMs;
+                    int next = nextIntOption(DOUBLE_TAP_OPTIONS, curTap);
                     com.aliya.hyfilemgr.player.PlayerSettings.saveDoubleTapSeek(ctx, next);
                     rebuildSettingsContent(this::buildPlayerSettings);
                     UiKit.toast(ctx, "双击跳转：" + fmtSeconds(next));
@@ -5003,9 +5016,11 @@ public class FileManagerModule extends HyVqModule {
                 true, v -> {
                     int[] opts = {60_000, 120_000, 180_000, 300_000};
                     String[] names = {"1 分钟（灵敏）", "2 分钟（默认）", "3 分钟", "5 分钟（精细）"};
+                    int curW = com.aliya.hyfilemgr.player.PlayerSettings
+                            .load(ctx).seekFullWidthMs;
                     int curIdx = 1;
                     for (int i = 0; i < opts.length; i++) {
-                        if (opts[i] == cur.seekFullWidthMs) { curIdx = i; break; }
+                        if (opts[i] == curW) { curIdx = i; break; }
                     }
                     int nextIdx = (curIdx + 1) % opts.length;
                     com.aliya.hyfilemgr.player.PlayerSettings.saveSeekFullWidth(
