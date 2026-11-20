@@ -1,7 +1,22 @@
 # 视频播放器重做 · 完整方案（v2 · 架构重做）
 
-**日期**：2026-11-19
+**日期**：2026-11-19（2026-11-20 更新进度）
 **取代**：`PLAYER-REDESIGN.md`（v1，增量修补思路，方向错误）
+
+## 进度快照
+
+| 阶段 | 状态 | 提交 |
+|---|---|---|
+| 0 基线 | ✅ | `4319ecb` |
+| 1 状态机骨架 | ✅ | `b080b27` |
+| 2 手势控制器 | ✅ | `c80401a` + `814e446` |
+| 3 PlaybackService | ⏳ 未开始 | — |
+| 4 画中画 | ⏳ 未开始 | — |
+| 5 字幕 / A-B / 缩放 | ⏳ 未开始 | — |
+| 6 视觉收尾 | ⏳ 未开始 | — |
+
+计划外但已完成：Media3 最佳实践对齐（`b75c84e`）、
+底部控制条重叠修复（`fda8e32`）、进度条重做 + 设置页（`e38a03c` + `a72ddeb`）。
 
 ---
 
@@ -237,7 +252,7 @@ public interface GestureSink {
 
 `PLAYER-BASELINE.md`：20 条必须保留行为 + 8 项缺失 + 6 个视觉问题。
 
-### 阶段 1 · 状态机骨架（**先做，不碰 UI**）
+### 阶段 1 · 状态机骨架（**✅ 已完成**，`b080b27`）
 
 **目标**：引入 `PlayerUiState` + `reduce` + `render`，但**保持现有 UI 完全不变**。
 
@@ -262,7 +277,7 @@ public interface GestureSink {
 
 **为什么先做这个**：后面每个功能（PiP / 后台播放 / 锁定 / 字幕）都要往状态里加字段，先有骨架再加字段，比反过来便宜得多。
 
-### 阶段 2 · 拆手势控制器
+### 阶段 2 · 拆手势控制器（**✅ 已完成**，`c80401a` + `814e446`）
 
 **目标**：`GestureController` 从 Activity 抽出，通过 `GestureSink` 发事件。
 
@@ -275,7 +290,7 @@ public interface GestureSink {
 
 **验收**：手势可单测（`GestureController` + mock `GestureSink`）。
 
-### 阶段 3 · PlaybackService + MediaSession
+### 阶段 3 · PlaybackService + MediaSession（⏳ 未开始）
 
 **目标**：把 Player 从 Activity 搬到 Service。
 

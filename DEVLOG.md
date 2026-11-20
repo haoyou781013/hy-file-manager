@@ -360,7 +360,13 @@ Android 6.x/7.x 进任何目录必崩（`NoClassDefFoundError`）。
 
 ---
 
-### 新增：本地 HLS（m3u8）/ DASH（mpd）播放（2026-11-19，待发布）
+### 新增：本地 HLS（m3u8）播放（2026-11-19，待发布）
+
+> ⚠ **标题原为「HLS（m3u8）/ DASH（mpd）」，2026-11-20 修正**：
+> `.mpd` 分支虽然给 MediaItem 设了 `APPLICATION_MPD`，但
+> `build.gradle.kts` **没有引入 `media3-exoplayer-dash` 依赖**，
+> ExoPlayer 找不到 `DashMediaSource.Factory`，实际会报「不支持的格式」。
+> 即 mpd 是**静默失效**，不是可用功能。要么补依赖，要么删掉该分支。
 
 用户提供的测试样本：`/storage/emulated/0/DCIM/测试/492481_DM84/1/`
 —— `playlist.m3u8` + **862 个 `seg_*.ts`**、共 1.8 GB、**2.39 小时**。
@@ -402,6 +408,143 @@ Android 6.x/7.x 进任何目录必崩（`NoClassDefFoundError`）。
 
 ---
 
+### 新增：视频播放器架构重做（2026-11-20，待发布）
+
+用户先要求「播放器重做，从网上完整调研，整体整体方案」，随后逐步确认
+走 **Service 持有 + 状态机骨架优先** 的路线。已完成阶段 1、2 与进度条重做。
+
+**方案先纠正了一个方向错误**：初版方案（`docs/PLAYER-REDESIGN.md`）把
+「代码拆分」放在最后阶段——那是增量修补思路，结果是每加一功能单类就更臃肿，
+最后要一次拆 2000+ 行。v2（`docs/PLAYER-REDESIGN-V2.md`）改为**先定架构再填功能**，
+把状态机骨架提到第一位。
+
+#### 阶段 1 · 状态机骨架（`b080b27`）
+
+新增三个纯逻辑类（UI 零变化）：
+
+| 类 | 行数 | 职责 |
+|---|---|---|
+| `PlayerUiState` | 236 | 17 字段不可变状态，替代原先散落的 30+ 可变字段 |
+| `PlayerEvent` | 106 | 15 种语义事件 |
+| `PlayerReducer` | 156 | 纯函数 `reduce(state, event)` |
+
+**为什么 `Reducer` 不接收 `Player`**：接收就变成依赖 Android 框架，
+单测要起 Robolectric 或 mock 一堆接口。保持纯函数后，
+「点暂停后 UI 该显示什么」是一行断言。
+
+**测试抓到的真实缺陷**：`surfaceTap_ignoredWhenLocked` 首次失败——
+Reducer 假设「`locked` ⇒ `controlsVisible=false`」，但这只在经过
+`LockToggled` 事件时成立。外部直接置 `locked=true` 时不变式就破了。
+修法是 `locked` 时强制保持隐藏，而不是简单 `return state`。
+
+#### 阶段 2 · 手势控制器（`c80401a` + `814e446`）
+
+抽出 `GestureSink`（接口）+ `GestureController`（223 行，只识别不执行）。
+删除 113 行内联手势与 4 个散落字段（`downX/downY/horizontalMode/verticalMode`）。
+
+**行为变化**：双击分区对齐主流（左 1/3 后退、中 1/3 暂停、右 1/3 前进），
+新增边缘 16dp 保护区让位给系统返回手势。
+
+**参数传「比例」而非「绝对值」**：`onSeekPreview(deltaRatio)` —— 手势层
+不知道「2 分钟」这种业务参数，改成 30 秒一跳只改 Activity 一行。
+
+**测试抓到的浮点边界 bug**：
+```
+600/900 = 0.6666667f
+1f - 1f/3f = 0.6666666f
+→ 0.6666667 > 0.6666666 成立 → 边界点被判成 RIGHT
+```
+改用整数比较（`x*3 < width` / `x*3 > width*2`）消除精度损失。
+
+#### 修 Media3 最佳实践违背（`b75c84e`）
+
+调研 `developer.android.com/media/media3/ui/customization` 发现两处真 bug：
+
+1. **播完后再点播放键无反应**：旧实现 `if (isPlaying()) pause(); else play();`，
+   而 ExoPlayer 播完处于 `STATE_ENDED`，此时 `play()` 是 no-op。
+   改用官方 `Util.handlePlayPauseButtonAction(player)`（内部会先
+   `seekToDefaultPosition` 再 `play`）。
+2. **图标状态不准**：`isPlaying()` 在 ENDED / BUFFERING / 被音频焦点抑制时
+   都为 false。改用 `Util.shouldShowPlayButton(player)`。
+
+**一条判断被推翻**：原计划用 `isCommandAvailable(COMMAND_SEEK_TO_NEXT)`
+禁用单文件的「下一个」按钮。实施时发现 `step()` 是循环语义
+（`n >= length → 0`），单文件点「下一个」会重播自己，按钮本就该可点。
+已移除该改动，文档里标「已推翻」并记教训：**调研时把外部经验当通用规律，
+却没核对本项目代码的实际语义**。
+
+#### 修布局重叠与可读性（`fda8e32`）
+
+用户实测反馈「底部控制栏有 UI 重叠」「中间提示应为白色」。
+
+- **重叠根因**：`FrameLayout` 里塞三组元素各自 `layout_gravity` 定位，
+  中间组 190dp + 左 44dp + 右约 120dp = 354dp，窄屏必然叠。
+  改成 `LinearLayout` 三段式 + `weight`，空间不足时挤压而非覆盖。
+- **提示发灰**：HUD 文字本来就是 `#FFFFFFFF`，问题是对比度——
+  背景 72% 黑叠深色画面，白字失去衬托。背景提到 88% + 加黑色阴影。
+- **弹幕可读性**：先描黑边（`STROKE`，宽度字号 8%）再填本色，
+  解决白字压在雪景/白墙上看不清。
+
+#### 进度条重做（`e38a03c`）
+
+143 分钟视频实测：轨道约 900px，**每像素 ≈ 9.5 秒**，
+手指动 1px 就是 9.5 秒误差，「定位到第 42 分钟」做不到。
+
+| 项 | 改动 | 理由 |
+|---|---|---|
+| 触摸区 | `wrap_content`(~24dp) → **固定 40dp** | 圆点放大时不触发重测量 |
+| 轨道内边距 | `paddingHorizontal=0dp` | 默认预留半个 thumb，轨道变短精度再降 |
+| 三层高度 | 底 3dp / 缓冲 4dp / 已播 **6dp** | 「已播更饱满」，播放头易识别 |
+| 已播段 | 纯色 → 渐变 | 纯色在低对比画面会与背景混 |
+| 圆点 | 恒定 16dp → 按下 **24dp** | 变色会被指腹遮住，放大才能露出边缘 |
+
+**新增拖动时间气泡**：`seek_bubble` 放 root 层（放控制条内会挤占布局），
+跟随拇指水平移动、垂直固定上方 40dp，位置经 `clampBubbleX()` 计算防裁切。
+
+#### 播放器设置页（`e38a03c` + `a72ddeb`）
+
+此前所有行为参数硬编码（`CONTROLS_AUTO_HIDE_MS = 3000L` 等），
+用户反馈「控制条 3 秒就没了我来不及点」却无处可改。
+
+新增 `PlayerSettings`（165 行）+ 设置页（设置 → 工具 → 视频播放器）：
+
+| 设置项 | 落点 |
+|---|---|
+| 自动隐藏控制条 | `controlsAutoHideMs` 置 0，`scheduleControlsAutoHide` early return |
+| 自动隐藏延迟 | `handler.postDelayed(runnable, controlsAutoHideMs)` |
+| 单击切换控制条 | `onSurfaceTap`：关闭后只「叫出」不「隐藏」 |
+| 长按加速倍速 | `player.setPlaybackSpeed(settings.longPressSpeed)` |
+| 双击跳转时长 | `seekBy(±settings.doubleTapSeekMs)` + HUD 文案 |
+| 横向滑动灵敏度 | `delta = deltaRatio * settings.seekFullWidthMs` |
+
+**用户反馈两个问题后修复**（`a72ddeb`）：
+1. **点击整页刷新**：每个开关都走 `hideSettingsDialog()` +
+   `showInSettingsDialog()`，那是完整建容器 + 淡入流程。
+   改为 `rebuildSettingsContent()`，只换内容 View、保留容器与滚动位置。
+2. **说明文字没被卡片包裹**：设置页分组机制靠 `settingsGroup` 引用，
+   `addInfoRow` 会塞进卡片，而我直接 `box.addView(tip)` 绕过了它。
+   新增 `settingsTipText()` + `addTipToGroup()`。
+
+#### 测试
+
+| 测试类 | 用例 |
+|---|---|
+| `PlayerReducerTest` | 24 |
+| `GestureControllerTest` | 19 |
+| `PlayerSettingsTest` | 4 |
+| `FileNamesTest` | 24 |
+| **合计** | **71**（此前 24） |
+
+#### 未完成
+
+- 阶段 3 `PlaybackService` + `MediaSession`（后台播放 / 锁屏控制 / 车机）——最大改动，未开始
+- 阶段 4 画中画
+- 阶段 5 外挂字幕 / A-B 循环 / 双指缩放
+- **DASH（mpd）静默失效**：`PlayerCore` 设了 `APPLICATION_MPD`，
+  但 `build.gradle.kts` 没引 `media3-exoplayer-dash` 依赖
+
+---
+
 ### 6. 验证记录
 
 | 提交 | 验证方式 | 结果 |
@@ -413,6 +556,12 @@ Android 6.x/7.x 进任何目录必崩（`NoClassDefFoundError`）。
 | `a26245b` | assembleRelease + 后缀表差集 + 20011 值对比 | 全部零差异 |
 | `a6ef42d` | **截图确认**同步按钮已与其他按钮等高 | 通过 |
 | `6f842e2` | `testReleaseUnitTest` + assembleRelease | 24/24 通过 |
+| `b080b27` | `testReleaseUnitTest` + assembleRelease | 48/48（骨架零 UI 变化） |
+| `c80401a` | `testReleaseUnitTest` + assembleRelease | 62/62 |
+| `814e446` | 同上 + 装机启动截图 | 62/62，UI 正常 |
+| `fda8e32` | 同上 + 装机截图确认控制条布局 | 完全分离无重叠 |
+| `e38a03c` | 同上 + 装机确认设置入口出现 | 71/71 |
+| `a72ddeb` | `testReleaseUnitTest` + assembleRelease | 71/71（⚠ 点击行为待用户实测） |
 
 **统一验证口径**：每次改动后 `assembleRelease` 必须通过；装机启动后
 崩溃 0 / FATAL 0；`logcat` 无 `CalledFromWrongThreadException`；
@@ -424,7 +573,10 @@ Android 6.x/7.x 进任何目录必崩（`NoClassDefFoundError`）。
 
 - 文本编辑器重构（预览/编辑双模式、语法高亮、快捷输入栏、编码切换、
   查找替换增强、Markdown/HTML/JSON·XML 预览、HTML 可切工作目录）
-- 视频播放器 UI 重构
+- 视频播放器阶段 3：`PlaybackService` + `MediaSession`（后台播放 / 锁屏 / 车机）
+- 视频播放器阶段 4：画中画
+- 视频播放器阶段 5：外挂字幕 / A-B 循环 / 双指缩放
+- DASH 支持：补 `media3-exoplayer-dash` 依赖，或移除 `PlayerCore` 里的 mpd 分支
 - 图片隐藏式压缩包（合体制作 + 检测提取）
 
 ---
