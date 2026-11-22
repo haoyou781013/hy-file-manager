@@ -113,6 +113,32 @@ boolean allFiles = Build.VERSION.SDK_INT >= 30
 （例如 `SettingsCardFactory`、`StorageStats`），降低文件行数但不改变结构。
 风险小得多。
 
+### 已执行：纯逻辑抽取（2026-11-22）
+
+用脚本扫出模块里 58 个 `static` 方法，逐个检查方法体内是否引用实例状态
+（`ctx` / `dp()` / `fmPrefs()` / `handler` / `UiKit` 等），结果 **57 个无实例依赖**。
+
+按职责抽成三个类：
+
+| 新类 | 行数 | 内容 |
+|---|---|---|
+| `SettingsFormat` | 141 | `fmtSeconds` / `fmtSpeed` / `nextIntOption` / `nextFloatOption` / `fmtPublishDate` / `formatDownloadProgress` / `stripMarkdown` / `displayNameOf` |
+| `FileTypes` | 159 | `mimeOf`（104 行查表）/ `guessExt` / `extOf` / `isImageName` |
+| `ArchivePaths` | 118 | `splitZipPath` / `normalizeEntryName` / `containsGarbled` / `isSingleStreamExt` / `tarInnerExt` / `PREFIX_ZIP` |
+
+主类 **17776 → 17547 行（减 229，1.3%）**。
+
+**诚实的结论：这条路的天花板很低。**
+
+- 抽干净的纯逻辑已经抽完了（58 个 static 里可抽的都抽了）
+- 剩下 17547 行里约 80% 是 UI 构建代码，紧贴 `ctx` / `dp()` / `fmPrefs()`
+  等实例状态，无法整体移动
+- 真要降体量必须改架构（引入 ViewModel / 拆成多个 Panel 类），
+  那是数百处调用的连锁改动，需要专门窗口期与完整回归测试
+
+**但抽取本身仍有价值**：这些函数从「必须起整个模块才能测」
+变成「一行断言可测」，新增 **45 个用例**（26 + 19）。
+
 ---
 
 ## P2 · 功能与文档不一致（3 处）

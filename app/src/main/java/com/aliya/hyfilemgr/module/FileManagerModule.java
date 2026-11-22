@@ -106,7 +106,6 @@ public class FileManagerModule extends HyVqModule {
     private static final String PREFIX_TRASH = "trash://";
     /** ZIP 内部浏览虚拟路径：zip://<zip绝对路径>/<包内相对路径>。
      *  只读 ZIP 中央目录，不解压任何数据到磁盘。 */
-    private static final String PREFIX_ZIP = "zip://";
     /** 分类定义：id / 标题 / 扩展名白名单（空格分隔，小写）——2026-08-16 全面扩充格式支持 */
     private static final String[][] CATEGORIES = {
             {"images", "图片", ".jpg .jpeg .png .gif .webp .bmp .heic .heif .svg .ico .tif .tiff .raw .cr2 .nef .arw .dng .psd .ai .avif .jfif .jxl .wdp .jxr"},
@@ -1792,8 +1791,8 @@ public class FileManagerModule extends HyVqModule {
                 // 刷新等于没刷。典型场景：文件被外部程序改写后，用户下拉想看到新大小。
                 if (p.dirCache != null) p.dirCache.clear();
                 // 压缩包内：丢掉条目缓存，强制重新读中央目录
-                if (p.path != null && p.path.startsWith(PREFIX_ZIP)) {
-                    String[] zp = splitZipPath(p.path);
+                if (p.path != null && p.path.startsWith(ArchivePaths.PREFIX_ZIP)) {
+                    String[] zp = ArchivePaths.splitZipPath(p.path);
                     if (zp != null && zp.length > 0) {
                         archiveItemsCache.remove(zp[0]);
                     }
@@ -2508,7 +2507,7 @@ public class FileManagerModule extends HyVqModule {
                     case VIRTUAL_FILE:
                         if (e.path.startsWith("content://")) {
                             openSafFile(e); // SAF 授权文件：uri + provider mime 直发系统
-                        } else if (e.path.startsWith(PREFIX_ZIP)) {
+                        } else if (e.path.startsWith(ArchivePaths.PREFIX_ZIP)) {
                             // 嵌套压缩包：先把内层 zip 解出到缓存，再进入其内部浏览
                             if (e.name != null
                                     && e.name.toLowerCase(java.util.Locale.ROOT).endsWith(".zip")) {
@@ -2573,8 +2572,8 @@ public class FileManagerModule extends HyVqModule {
 
     /** 路径栏显示：zip://<绝对路径> 变换为「包名.zip/包内路径/」，与 MT 的 zip 内浏览观感一致 */
     private static String displayPath(String path) {
-        if (path == null || !path.startsWith(PREFIX_ZIP)) return path;
-        String[] parts = splitZipPath(path);
+        if (path == null || !path.startsWith(ArchivePaths.PREFIX_ZIP)) return path;
+        String[] parts = ArchivePaths.splitZipPath(path);
         String zipName = parts[0];
         int i = zipName.lastIndexOf('/');
         if (i >= 0) zipName = zipName.substring(i + 1);
@@ -2651,8 +2650,8 @@ public class FileManagerModule extends HyVqModule {
             return;
         }
         // zip 内：退到包内上一级，或退出 zip
-        if (cur.startsWith(PREFIX_ZIP)) {
-            String[] parts = splitZipPath(cur);
+        if (cur.startsWith(ArchivePaths.PREFIX_ZIP)) {
+            String[] parts = ArchivePaths.splitZipPath(cur);
             String inner = parts[1];
             if (inner == null || inner.isEmpty()) {
                 String zipPath = parts[0];
@@ -2664,7 +2663,7 @@ public class FileManagerModule extends HyVqModule {
                         ? inner.substring(0, inner.length() - 1) : inner;
                 int i = trimmed.lastIndexOf('/');
                 String parentInner = i >= 0 ? trimmed.substring(0, i + 1) : "";
-                navigateTo(p, PREFIX_ZIP + parts[0] + "/" + parentInner);
+                navigateTo(p, ArchivePaths.PREFIX_ZIP + parts[0] + "/" + parentInner);
             }
             return;
         }
@@ -2786,7 +2785,7 @@ public class FileManagerModule extends HyVqModule {
             return;
         }
         // 压缩包内：退到包内上一级；已在包根 → 退出预览回到 zip 所在文件夹
-        if (active.path.startsWith(PREFIX_ZIP)) {
+        if (active.path.startsWith(ArchivePaths.PREFIX_ZIP)) {
             navUp(active);
             return;
         }
@@ -2911,8 +2910,8 @@ public class FileManagerModule extends HyVqModule {
         // 5. 虚拟路径（压缩包内 / 回收站）→ 逐级返回
         if (active != null && active.path != null) {
             String cur = active.path;
-            if (cur.startsWith(PREFIX_ZIP)) {
-                String[] parts = splitZipPath(cur);
+            if (cur.startsWith(ArchivePaths.PREFIX_ZIP)) {
+                String[] parts = ArchivePaths.splitZipPath(cur);
                 String inner = parts[1];
                 if (inner != null && !inner.isEmpty()) {
                     // 包内子目录 → 上一级
@@ -2922,7 +2921,7 @@ public class FileManagerModule extends HyVqModule {
                     }
                     int cut = trimmed.lastIndexOf('/');
                     String up = cut < 0 ? "" : trimmed.substring(0, cut + 1);
-                    active.path = PREFIX_ZIP + parts[0] + "/" + up;
+                    active.path = ArchivePaths.PREFIX_ZIP + parts[0] + "/" + up;
                     reload(active);
                     return true;
                 }
@@ -3021,7 +3020,7 @@ public class FileManagerModule extends HyVqModule {
         if (p != null && p == active && p.path != null
                 && !p.path.startsWith("content://")
                 && !p.path.startsWith(PREFIX_TRASH)
-                && !p.path.startsWith(PREFIX_ZIP)
+                && !p.path.startsWith(ArchivePaths.PREFIX_ZIP)
                 && !p.path.startsWith("cat://")) {
             lastRealPath = p.path;
         }
@@ -3053,7 +3052,7 @@ public class FileManagerModule extends HyVqModule {
         // 虚拟视图路由：回收站（不经过 AccessRouter 四源路由，路径不落盘）
         if (p.path.startsWith(PREFIX_TRASH)) {
             loadTrash(p);
-        } else if (p.path.startsWith(PREFIX_ZIP)) {
+        } else if (p.path.startsWith(ArchivePaths.PREFIX_ZIP)) {
             loadZip(p);
         } else {
             // ⭐ 目录缓存（仿 ZhuFiler DirCache）：真实路径 + 非 SAF → 目录指纹未变则复用
@@ -4946,7 +4945,7 @@ public class FileManagerModule extends HyVqModule {
 
         addInfoRow(box, "自动隐藏控制条",
                 cur.autoHide
-                        ? "已开启 · 播放时 " + fmtSeconds(cur.hideDelayMs) + "后自动隐藏"
+                        ? "已开启 · 播放时 " + SettingsFormat.fmtSeconds(cur.hideDelayMs) + "后自动隐藏"
                         : "已关闭 · 控制条常驻显示",
                 cur.autoHide, v -> {
                     // ⚠ 必须现读，不能用闭包里的 cur ——
@@ -4978,14 +4977,14 @@ public class FileManagerModule extends HyVqModule {
         // 这一行是瞬间出现/消失的，没有任何过渡动画（用户反馈的问题）。
         // 改为始终存在 + 高度动画，见 autoHide 开关的 onClick。
         final View delayRow = addInfoRow(box, "自动隐藏延迟",
-                "当前 " + fmtSeconds(cur.hideDelayMs) + " · 点击切换",
+                "当前 " + SettingsFormat.fmtSeconds(cur.hideDelayMs) + " · 点击切换",
                 true, v -> {
                     int curDelay = com.aliya.hyfilemgr.player.PlayerSettings
                             .load(ctx).hideDelayMs;
-                    int next = nextIntOption(HIDE_DELAY_OPTIONS, curDelay);
+                    int next = SettingsFormat.nextIntOption(HIDE_DELAY_OPTIONS, curDelay);
                     com.aliya.hyfilemgr.player.PlayerSettings.saveHideDelay(ctx, next);
                     rebuildSettingsContent(this::buildPlayerSettings);
-                    UiKit.toast(ctx, "自动隐藏延迟：" + fmtSeconds(next));
+                    UiKit.toast(ctx, "自动隐藏延迟：" + SettingsFormat.fmtSeconds(next));
                 });
         delayRow.setVisibility(cur.autoHide ? View.VISIBLE : View.GONE);
         playerDelayRow = delayRow;
@@ -5005,29 +5004,29 @@ public class FileManagerModule extends HyVqModule {
         box.addView(sectionHeaderInCard("手势"));
 
         addInfoRow(box, "长按加速倍速",
-                "当前 " + fmtSpeed(cur.longPressSpeed) + " · 点击切换",
+                "当前 " + SettingsFormat.fmtSpeed(cur.longPressSpeed) + " · 点击切换",
                 true, v -> {
                     float curSp = com.aliya.hyfilemgr.player.PlayerSettings
                             .load(ctx).longPressSpeed;
-                    float next = nextFloatOption(LONG_PRESS_OPTIONS, curSp);
+                    float next = SettingsFormat.nextFloatOption(LONG_PRESS_OPTIONS, curSp);
                     com.aliya.hyfilemgr.player.PlayerSettings.saveLongPressSpeed(ctx, next);
                     rebuildSettingsContent(this::buildPlayerSettings);
-                    UiKit.toast(ctx, "长按加速：" + fmtSpeed(next));
+                    UiKit.toast(ctx, "长按加速：" + SettingsFormat.fmtSpeed(next));
                 });
 
         addInfoRow(box, "双击跳转时长",
-                "当前 " + fmtSeconds(cur.doubleTapSeekMs) + " · 左半屏后退 / 右半屏前进",
+                "当前 " + SettingsFormat.fmtSeconds(cur.doubleTapSeekMs) + " · 左半屏后退 / 右半屏前进",
                 true, v -> {
                     int curTap = com.aliya.hyfilemgr.player.PlayerSettings
                             .load(ctx).doubleTapSeekMs;
-                    int next = nextIntOption(DOUBLE_TAP_OPTIONS, curTap);
+                    int next = SettingsFormat.nextIntOption(DOUBLE_TAP_OPTIONS, curTap);
                     com.aliya.hyfilemgr.player.PlayerSettings.saveDoubleTapSeek(ctx, next);
                     rebuildSettingsContent(this::buildPlayerSettings);
-                    UiKit.toast(ctx, "双击跳转：" + fmtSeconds(next));
+                    UiKit.toast(ctx, "双击跳转：" + SettingsFormat.fmtSeconds(next));
                 });
 
         addInfoRow(box, "横向滑动灵敏度",
-                "整屏宽 = " + fmtSeconds(cur.seekFullWidthMs) + "（越小越灵敏）",
+                "整屏宽 = " + SettingsFormat.fmtSeconds(cur.seekFullWidthMs) + "（越小越灵敏）",
                 true, v -> {
                     int[] opts = {60_000, 120_000, 180_000, 300_000};
                     String[] names = {"1 分钟（灵敏）", "2 分钟（默认）", "3 分钟", "5 分钟（精细）"};
@@ -5125,7 +5124,7 @@ public class FileManagerModule extends HyVqModule {
                 com.aliya.hyfilemgr.player.PlayerSettings now =
                         com.aliya.hyfilemgr.player.PlayerSettings.load(ctx);
                 sub.setText(on
-                        ? "已开启 · 播放时 " + fmtSeconds(now.hideDelayMs) + "后自动隐藏"
+                        ? "已开启 · 播放时 " + SettingsFormat.fmtSeconds(now.hideDelayMs) + "后自动隐藏"
                         : "已关闭 · 控制条常驻显示");
                 sub.setTextColor(UiKit.color(ctx, on
                         ? com.google.android.material.R.attr.colorPrimary
@@ -5223,33 +5222,8 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 毫秒 → "3 秒" / "1.5 秒" / "2 分钟" */
-    private static String fmtSeconds(int ms) {
-        if (ms >= 60_000 && ms % 60_000 == 0) return (ms / 60_000) + " 分钟";
-        if (ms % 1000 == 0) return (ms / 1000) + " 秒";
-        return String.format(java.util.Locale.US, "%.1f 秒", ms / 1000f);
-    }
-
     /** 倍速文案：2.0 → "2×" */
-    private static String fmtSpeed(float sp) {
-        if (sp == Math.round(sp)) return ((int) sp) + "×";
-        return sp + "×";
-    }
-
     /** 在当前值的下一个档位循环 */
-    private static int nextIntOption(int[] options, int cur) {
-        for (int i = 0; i < options.length; i++) {
-            if (options[i] == cur) return options[(i + 1) % options.length];
-        }
-        return options[0];
-    }
-
-    private static float nextFloatOption(float[] options, float cur) {
-        for (int i = 0; i < options.length; i++) {
-            if (Float.compare(options[i], cur) == 0) return options[(i + 1) % options.length];
-        }
-        return options[0];
-    }
-
     private View buildGallerySettings() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -5546,7 +5520,7 @@ public class FileManagerModule extends HyVqModule {
                 return;
             }
             StringBuilder names = new StringBuilder();
-            for (String k : selected) names.append("· ").append(displayNameOf(k)).append('\n');
+            for (String k : selected) names.append("· ").append(SettingsFormat.displayNameOf(k)).append('\n');
             confirmThen("清理所选 " + selected.size() + " 项",
                     names.toString().trim() + "\n\n回收站与草稿清空后不可恢复。", () -> {
                         for (String k : new java.util.ArrayList<>(selected)) {
@@ -5637,18 +5611,6 @@ public class FileManagerModule extends HyVqModule {
         host.addView(row, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         return tvSize;
-    }
-
-    private static String displayNameOf(String key) {
-        switch (key) {
-            case "thumbs": return "缩略图缓存";
-            case "zip": return "ZIP 浏览缓存";
-            case "update": return "更新包缓存";
-            case "draft": return "编辑器草稿";
-            case "bg": return "背景图（旧图）";
-            case "trash": return "回收站";
-            default: return key;
-        }
     }
 
     /**
@@ -6387,7 +6349,7 @@ public class FileManagerModule extends HyVqModule {
         head.addView(sp, new LinearLayout.LayoutParams(0, 1, 1f));
 
         TextView date = new TextView(ctx);
-        date.setText(fmtPublishDate(info.date));
+        date.setText(SettingsFormat.fmtPublishDate(info.date));
         date.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         date.setTextColor(UiKit.color(ctx,
                 com.google.android.material.R.attr.colorOnSurfaceVariant));
@@ -6544,10 +6506,6 @@ public class FileManagerModule extends HyVqModule {
      * 都能拿到真正最新的那个」。</p>
      */
     /** 发布日期显示用的空值兜底：清单缺 publishedAt（旧版手工编辑遗漏）时不再出现裸冒号 */
-    private static String fmtPublishDate(String date) {
-        return (date == null || date.isEmpty()) ? "未知" : date;
-    }
-
     private UpdateInfo fetchLatestUpdate() {
         for (String url : UPDATE_MANIFEST_URLS) {
             java.io.InputStream in = null;
@@ -6841,7 +6799,7 @@ public class FileManagerModule extends HyVqModule {
                             if (detached) return;
                             int pct = total > 0 ? (int) (fGot * 100 / total) : 0;
                             bar.setProgress(pct);
-                            progressText.setText(formatDownloadProgress(fGot, total, elapsed));
+                            progressText.setText(SettingsFormat.formatDownloadProgress(fGot, total, elapsed));
                         });
                     }
                 }
@@ -6857,29 +6815,6 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 进度文本：已下/总量 · 速度 · 剩余时间 */
-    private static String formatDownloadProgress(long got, long total, long elapsedMs) {
-        String now = FileOps.formatSize(got);
-        if (total <= 0) {
-            return now + " · 速度未知（服务器未给总大小）";
-        }
-        String all = FileOps.formatSize(total);
-        long speed = elapsedMs > 0 ? got * 1000L / elapsedMs : 0;
-        StringBuilder sb = new StringBuilder();
-        sb.append(now).append(" / ").append(all)
-          .append("（").append(got * 100 / total).append("%）");
-        if (speed > 0) {
-            sb.append("\n").append(FileOps.formatSize(speed)).append("/s");
-            long remain = total - got;
-            long secs = remain * 1000L / speed;
-            if (secs > 0 && secs < 3600) {
-                sb.append(" · 剩余 ").append(secs >= 60
-                        ? (secs / 60) + " 分 " + (secs % 60) + " 秒"
-                        : secs + " 秒");
-            }
-        }
-        return sb.toString();
-    }
-
     /**
      * 下载并安装（兼容旧调用点：权限授权回来后自动续上）。
      *
@@ -6912,31 +6847,6 @@ public class FileManagerModule extends HyVqModule {
      * <p>不做完整 Markdown 解析：更新说明的格式是我们自己写的，
      * 只用到这几种标记，完整解析器是过度设计。</p>
      */
-    private static String stripMarkdown(String md) {
-        if (md == null || md.isEmpty()) return "";
-        StringBuilder out = new StringBuilder(md.length());
-        for (String raw : md.split("\n", -1)) {
-            String line = raw;
-            if (line.trim().matches("^-{3,}$")) {
-                out.append('\n');
-                continue;
-            }
-            int hash = 0;
-            while (hash < line.length() && line.charAt(hash) == '#') hash++;
-            if (hash > 0 && hash < line.length() && line.charAt(hash) == ' ') {
-                out.append('\n').append(line.substring(hash + 1).trim()).append('\n');
-                continue;
-            }
-            String t = line.trim();
-            if (t.startsWith("- ") || t.startsWith("* ")) {
-                line = "·  " + t.substring(2);
-            }
-            line = line.replace("**", "").replace("__", "").replace("`", "");
-            out.append(line).append('\n');
-        }
-        return out.toString().replaceAll("\n{3,}", "\n\n").trim();
-    }
-
     private void showUpdateDetailDialog(UpdateInfo info) {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -6945,9 +6855,9 @@ public class FileManagerModule extends HyVqModule {
         TextView tv = new TextView(ctx);
         StringBuilder sb = new StringBuilder();
         sb.append("版本：").append(info.ver).append('\n');
-        sb.append("发布于：").append(fmtPublishDate(info.date)).append('\n');
+        sb.append("发布于：").append(SettingsFormat.fmtPublishDate(info.date)).append('\n');
         if (!info.body.isEmpty()) {
-            sb.append('\n').append(stripMarkdown(info.body));
+            sb.append('\n').append(SettingsFormat.stripMarkdown(info.body));
         }
         tv.setText(sb.toString());
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
@@ -8195,7 +8105,7 @@ public class FileManagerModule extends HyVqModule {
 
                 final File dst = new File(dir,
                         (pickForFmTheme ? "fmbg_" : "bg_") + System.currentTimeMillis()
-                        + (guessExt(o) ));
+                        + (FileTypes.guessExt(o) ));
                 if (!tmp.renameTo(dst)) throw new java.io.IOException("保存失败");
 
                 final boolean forFm = pickForFmTheme;
@@ -8231,16 +8141,6 @@ public class FileManagerModule extends HyVqModule {
                 try { if (in != null) in.close(); } catch (Throwable ignored) { }
             }
         }, "HyBgSet").start();
-    }
-
-    private static String guessExt(android.graphics.BitmapFactory.Options o) {
-        String m = o.outMimeType;
-        if (m == null) return ".img";
-        if (m.contains("jpeg")) return ".jpg";
-        if (m.contains("png")) return ".png";
-        if (m.contains("webp")) return ".webp";
-        if (m.contains("gif")) return ".gif";
-        return ".img";
     }
 
     /** 清除背景图 */
@@ -8866,7 +8766,7 @@ public class FileManagerModule extends HyVqModule {
                             if (e.name.startsWith(".")) continue;
                             if (e.isDir()) {
                                 items.add(new String[]{ e.name, e.path, "d" });
-                            } else if (isImageName(e.name)) {
+                            } else if (FileTypes.isImageName(e.name)) {
                                 items.add(new String[]{ e.name, e.path, "f" });
                             }
                         }
@@ -8913,14 +8813,6 @@ public class FileManagerModule extends HyVqModule {
         };
         reload[0].run();
         d.show();
-    }
-
-    private static boolean isImageName(String name) {
-        // 已统一到 util/Exts（19 种图片扩展名）。
-        // 旧实现手写 endsWith×6（jpg/jpeg/png/webp/bmp/gif）——
-        // 背景图浏览器会把 heic/heif/svg/tiff/raw 等全滤掉，
-        // 用户相机拍的 HEIC 照片在自建浏览器里根本看不到。
-        return Exts.isImage(Exts.extOf(name));
     }
 
     /** 一行「标题 + 可选副标题」，可点 */
@@ -11356,111 +11248,6 @@ public class FileManagerModule extends HyVqModule {
     /** 扩展名 → MIME 自定义映射（2026-08-16 全面格式支持）：
      *  优先查自定义表补齐系统 MimeTypeMap 缺失的常见格式（md/epub/heic/mkv/flac/7z 等），
      *  未命中回落系统表；都查不到返回 null（调用方回落星号斜杠通配） */
-    private static String mimeOf(String ext) {
-        if (ext == null || ext.isEmpty()) return null;
-        switch (ext) {
-            case "md": return "text/markdown";
-            case "epub": return "application/epub+zip";
-            case "mobi": return "application/x-mobipocket-ebook";
-            case "azw3": return "application/vnd.amazon.ebook";
-            case "chm": return "application/vnd.ms-htmlhelp";
-            case "tex": return "application/x-tex";
-            case "heic": return "image/heic";
-            case "heif": return "image/heif";
-            case "webp": return "image/webp";
-            case "svg": return "image/svg+xml";
-            case "psd": return "image/vnd.adobe.photoshop";
-            case "ico": return "image/x-icon";
-            case "mkv": return "video/x-matroska";
-            case "m2ts": return "video/mp2t";
-            case "mts": return "video/mp2t";
-            case "ts": return "video/mp2t";
-            case "m4v": return "video/x-m4v";
-            case "wmv": return "video/x-ms-wmv";
-            case "flv": return "video/x-flv";
-            case "3gp": return "video/3gpp";
-            case "ogv": return "video/ogg";
-            case "flac": return "audio/flac";
-            case "opus": return "audio/opus";
-            case "amr": return "audio/amr";
-            case "wma": return "audio/x-ms-wma";
-            case "ape": return "audio/ape";
-            case "aiff": return "audio/aiff";
-            case "mid": return "audio/midi";
-            case "midi": return "audio/midi";
-            case "ac3": return "audio/ac3";
-            case "7z": return "application/x-7z-compressed";
-            case "rar": return "application/x-rar-compressed";
-            case "tar": return "application/x-tar";
-            case "gz": return "application/gzip";
-            case "tgz": return "application/gzip";
-            case "bz2": return "application/x-bzip2";
-            case "xz": return "application/x-xz";
-            case "iso": return "application/x-iso9660-image";
-            case "apk": return "application/vnd.android.package-archive";
-            case "jar": return "application/java-archive";
-            case "xml": return "text/xml";
-            case "json": return "application/json";
-            case "yaml": return "text/yaml";
-            case "yml": return "text/yaml";
-            case "csv": return "text/csv";
-            case "log": return "text/plain";
-            case "sql": return "application/sql";
-            case "torrent": return "application/x-bittorrent";
-            case "sh": return "application/x-sh";
-            case "bash": return "application/x-sh";
-            case "bat": return "application/x-msdos-program";
-            case "ps1": return "application/x-powershell";
-            case "java": return "text/x-java-source";
-            case "kt": return "text/x-kotlin";
-            case "c": return "text/x-c";
-            case "h": return "text/x-c";
-            case "cpp": return "text/x-c++";
-            case "hpp": return "text/x-c++";
-            case "cs": return "text/x-csharp";
-            case "py": return "text/x-python";
-            case "js": return "application/javascript";
-            case "mjs": return "application/javascript";
-            case "jsx": return "text/jsx";
-            case "tsx": return "text/tsx";
-            case "vue": return "text/vue";
-            case "css": return "text/css";
-            case "scss": return "text/x-scss";
-            case "less": return "text/x-less";
-            case "php": return "text/x-php";
-            case "rb": return "text/x-ruby";
-            case "go": return "text/x-go";
-            case "rs": return "text/x-rust";
-            case "swift": return "text/x-swift";
-            case "lua": return "text/x-lua";
-            case "pl": return "text/x-perl";
-            case "r": return "text/x-r";
-            case "dart": return "text/x-dart";
-            case "groovy": return "text/x-groovy";
-            case "gradle": return "text/x-gradle";
-            case "properties": return "text/x-java-properties";
-            case "ini": return "text/plain";
-            case "cfg": return "text/plain";
-            case "conf": return "text/plain";
-            case "ipynb": return "application/x-ipynb+json";
-            case "fb2": return "application/x-fictionbook+xml";
-            case "djvu": return "image/vnd.djvu";
-            case "cbr": return "application/vnd.comicbook-rar";
-            case "cbz": return "application/vnd.comicbook+zip";
-            case "mht": return "message/rfc822";
-            case "zst": return "application/zstd";
-            case "lz4": return "application/x-lz4";
-            case "cab": return "application/vnd.ms-cab-compressed";
-            case "deb": return "application/vnd.debian.binary-package";
-            case "rpm": return "application/x-rpm";
-            case "dmg": return "application/x-apple-diskimage";
-            case "aab": return "application/x-authorware-bin";
-            case "xapk": return "application/vnd.android.package-archive";
-            case "svgz": return "image/svg+xml";
-            default: return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
-        }
-    }
-
     // ── 内置文本编辑器（2026-08-16 参考 ZeroTermux 文本编辑页：等宽字体 + 大编辑区 + 保存） ──
 
     /** 文本/代码文件白名单：点击直接进内置编辑器（与 docs 分类扩充同源） */
@@ -11554,7 +11341,7 @@ public class FileManagerModule extends HyVqModule {
                 start = 3; // 剥离 UTF-8 BOM
             }
             String content = new String(bytes, start, bytes.length - start, "UTF-8");
-            if (containsGarbled(content)) { // 乱码 → GBK 重读
+            if (ArchivePaths.containsGarbled(content)) { // 乱码 → GBK 重读
                 content = new String(bytes, start, bytes.length - start, "GBK");
                 return new String[]{content, "GBK"};
             }
@@ -13381,7 +13168,7 @@ public class FileManagerModule extends HyVqModule {
         // 若按普通视频收集，列表会变成 862 项（1 个清单 + 861 个分片），
         // 用户点 m3u8 播放时左右滑会滑到某个单独的 ts 分片（只有 10 秒），
         // 而且分片本身不该被当作「另一部视频」。
-        String curExt = curPath == null ? "" : extOf(curPath);
+        String curExt = curPath == null ? "" : FileTypes.extOf(curPath);
         if ("m3u8".equals(curExt) || "mpd".equals(curExt)) {
             out.add(curPath);
             return out;
@@ -13391,7 +13178,7 @@ public class FileManagerModule extends HyVqModule {
         if (p != null && p.entries != null) {
             for (FileEntry e : p.entries) {
                 if (e == null || e.isDir() || e.name == null) continue;
-                String ex = extOf(e.name);
+                String ex = FileTypes.extOf(e.name);
                 boolean ok = audioOnly ? Exts.isAudio(ex) : Exts.isVideo(ex);
                 if (ok && e.path != null && !e.path.isEmpty()) out.add(e.path);
             }
@@ -13403,8 +13190,8 @@ public class FileManagerModule extends HyVqModule {
         //
         // 判据：当前窗格**已经在压缩包内**（path 以 zip:// 开头）且入参是真实路径
         // → 说明列表里的虚拟路径与当前项不是同一个东西，直接用单项列表。
-        boolean inArchive = p != null && p.path != null && p.path.startsWith(PREFIX_ZIP);
-        boolean curIsReal = curPath != null && !curPath.startsWith(PREFIX_ZIP)
+        boolean inArchive = p != null && p.path != null && p.path.startsWith(ArchivePaths.PREFIX_ZIP);
+        boolean curIsReal = curPath != null && !curPath.startsWith(ArchivePaths.PREFIX_ZIP)
                 && !curPath.startsWith("content://");
         if (inArchive && curIsReal) {
             out.clear();
@@ -13445,12 +13232,8 @@ public class FileManagerModule extends HyVqModule {
      * {@code e.name}（虚拟条目可能为 null）的地方 → 潜在 NPE。
      * 委托后顺带修掉。</p>
      */
-    private static String extOf(String name) {
-        return Exts.extOf(name);
-    }
-
     private void openFile(File f) {
-        final String ext = extOf(f.getName());
+        final String ext = FileTypes.extOf(f.getName());
         final String path = f.getAbsolutePath();
         final String name = f.getName();
         // ⭐ v2.8.0 root 文件：App 无权读 → 先中转（root → App 缓存，含 restorecon）再打开
@@ -13490,7 +13273,7 @@ public class FileManagerModule extends HyVqModule {
     /** 打开方式弹窗：默认展示**内置**打开方式；左下角可切换到**系统**打开方式。
      *  系统页列出系统已注册的应用（点击直接由该应用打开），**不拉起系统选择器**。 */
     private void showOpenWithDialog(final String pathOrUri, final String name, final boolean isUri) {
-        final String ext = extOf(name);
+        final String ext = FileTypes.extOf(name);
         final boolean isImg = Exts.isImage(ext);
         final boolean isMedia = Exts.isMedia(ext);
         final boolean isText = isTextFile(name);
@@ -13763,7 +13546,7 @@ public class FileManagerModule extends HyVqModule {
         File f = AccessRouter.fileOf(pathOrUri);
         if (!f.exists()) return "文件不存在或无法访问";
         if (!f.canRead()) return "没有读取该文件的权限";
-        String ext = extOf(name);
+        String ext = FileTypes.extOf(name);
         if (!com.aliya.hyfilemgr.archive.ArchiveExtractor.canExtract(name)) {
             return "不支持的压缩格式：." + ext;
         }
@@ -13806,8 +13589,8 @@ public class FileManagerModule extends HyVqModule {
 
     /** 尝试安装 APK。 */
     private String tryInstallApk(String pathOrUri, String name, boolean isUri) {
-        if (!"apk".equals(extOf(name))) {
-            return "这不是 APK 安装包（扩展名 ." + extOf(name) + "）";
+        if (!"apk".equals(FileTypes.extOf(name))) {
+            return "这不是 APK 安装包（扩展名 ." + FileTypes.extOf(name) + "）";
         }
         if (!isUri) {
             File f = AccessRouter.fileOf(pathOrUri);
@@ -13832,7 +13615,7 @@ public class FileManagerModule extends HyVqModule {
 
     /** 尝试用字体预览打开。支持 ttf / otf / ttc / woff。 */
     private String tryOpenFontPreview(String pathOrUri, String name, boolean isUri) {
-        String ext = extOf(name);
+        String ext = FileTypes.extOf(name);
         boolean isFont = "ttf".equals(ext) || "otf".equals(ext)
                 || "ttc".equals(ext) || "woff".equals(ext);
         if (!isFont) {
@@ -13940,7 +13723,7 @@ public class FileManagerModule extends HyVqModule {
             final Uri uri = isUri ? Uri.parse(pathOrUri)
                     : FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider",
                     AccessRouter.fileOf(pathOrUri));
-            final String mime = mimeOf(extOf(name));
+            final String mime = FileTypes.mimeOf(FileTypes.extOf(name));
             // ── 列出设备上**所有已安装应用**（不限系统/第三方、不限 MIME）──
             // 每个应用标注是否能处理此文件类型：
             //   ① 先统计声明了本 MIME（或 */*）的应用 → 可打开，排在前面
@@ -14711,15 +14494,15 @@ public class FileManagerModule extends HyVqModule {
         if (p != null && p.entries != null) {
             for (FileEntry e : p.entries) {
                 if (e == null || e.isDir() || e.name == null) continue;
-                if (Exts.isImage(extOf(e.name))
+                if (Exts.isImage(FileTypes.extOf(e.name))
                         && e.path != null && !e.path.isEmpty()) out.add(e.path);
             }
         }
         // 与 collectPlayable 同款兑底：压缩包内条目被解出为真实路径后打开时，
         // 窗格里是 zip:// 虚拟路径列表，与当前真实路径不是同一个东西，
         // 不能把它们拼成一个图集（会出现「同一张图算两项」与无法解码的项）。
-        boolean inArchive = p != null && p.path != null && p.path.startsWith(PREFIX_ZIP);
-        boolean curIsReal = curPath != null && !curPath.startsWith(PREFIX_ZIP);
+        boolean inArchive = p != null && p.path != null && p.path.startsWith(ArchivePaths.PREFIX_ZIP);
+        boolean curIsReal = curPath != null && !curPath.startsWith(ArchivePaths.PREFIX_ZIP);
         if (inArchive && curIsReal) {
             out.clear();
             out.add(curPath);
@@ -15053,10 +14836,10 @@ public class FileManagerModule extends HyVqModule {
             } catch (Throwable ignored) {
             }
             if (mime == null || mime.isEmpty()) {
-                mime = mimeOf(extOf(e.name));
+                mime = FileTypes.mimeOf(FileTypes.extOf(e.name));
             }
             // 格式明确且内置功能支持 → 直接调用（SAF 文本编辑暂不支持，故文本走弹窗）
-            String safExt = extOf(e.name);
+            String safExt = FileTypes.extOf(e.name);
             if (Exts.isImage(safExt)) {
                 openImageViewer(e.path, e.name, true);
                 return;
@@ -15726,7 +15509,7 @@ public class FileManagerModule extends HyVqModule {
                 // TAR 家族 / 单流压缩 / 7Z 走 commons-compress
                 // （zip4j 只能写 ZIP；RAR 因许可证限制不支持创建）
                 if ("tar".equals(ext) || ext.startsWith("tar.")
-                        || isSingleStreamExt(ext) || "7z".equals(ext)) {
+                        || ArchivePaths.isSingleStreamExt(ext) || "7z".equals(ext)) {
                     final boolean tarOk;
                     try {
                         tarOk = compressWithCommons(src, out, ext, single, password);
@@ -15848,10 +15631,10 @@ public class FileManagerModule extends HyVqModule {
         // ── 单文件流压缩：gz / bz2 / xz / zst ──
         // 源是目录时不能裸压单流（会生成无压缩器的裸 tar 却叫 .gz），
         // 但也不能报错——调用方已按 ext 拼好文件名，这里降级为 tar.xxx 保持一致。
-        if (src.isDirectory() && isSingleStreamExt(ext)) {
+        if (src.isDirectory() && ArchivePaths.isSingleStreamExt(ext)) {
             // 走到下面的 tar 分支，但需要真实压缩器：对 tarInnerExt 特判
             // （见下方 inner 的取值处）
-        } else if (!src.isDirectory() && isSingleStreamExt(ext)) {
+        } else if (!src.isDirectory() && ArchivePaths.isSingleStreamExt(ext)) {
             try (java.io.InputStream in = new java.io.BufferedInputStream(
                         new java.io.FileInputStream(src));
                  java.io.OutputStream os = new java.io.BufferedOutputStream(
@@ -15870,8 +15653,8 @@ public class FileManagerModule extends HyVqModule {
         try {
             // "tar.gz" → "gz"；"tar" → null（不套压缩器）
             // 单流格式（gz/bz2/xz/zst）直接当压缩器用——这是「源是目录」时的降级路径，
-            // 否则 tarInnerExt("gz") 会返回 null，生成裸 tar 却挂 .gz 后缀
-            String inner = isSingleStreamExt(ext) ? ext : tarInnerExt(ext);
+            // 否则 ArchivePaths.tarInnerExt("gz") 会返回 null，生成裸 tar 却挂 .gz 后缀
+            String inner = ArchivePaths.isSingleStreamExt(ext) ? ext : ArchivePaths.tarInnerExt(ext);
             java.io.OutputStream chain = inner == null ? base : wrapCompressor(base, inner);
             org.apache.commons.compress.archivers.tar.TarArchiveOutputStream tar =
                     new org.apache.commons.compress.archivers.tar.TarArchiveOutputStream(chain);
@@ -15893,17 +15676,7 @@ public class FileManagerModule extends HyVqModule {
     }
 
     /** 单文件流压缩格式（解压后是一个文件，不是归档） */
-    private static boolean isSingleStreamExt(String ext) {
-        return "gz".equals(ext) || "bz2".equals(ext) || "xz".equals(ext) || "zst".equals(ext);
-    }
-
     /** "tar.gz" → "gz"；"tar" → null（不套压缩器） */
-    private static String tarInnerExt(String ext) {
-        if ("tar".equals(ext)) return null;
-        int dot = ext.indexOf('.');
-        return dot < 0 ? null : ext.substring(dot + 1);
-    }
-
     /**
      * 按扩展名创建压缩流。xz / zst 的等级走预设值。
      *
@@ -16088,21 +15861,6 @@ public class FileManagerModule extends HyVqModule {
         }));
     }
 
-    private static boolean containsGarbled(String s) {
-        if (s == null || s.isEmpty()) return false;
-        // UTF-8 解 GBK 字节时产生 U+FFFD。旧判据只看 c < 0x20 且跳过 \0，
-        // 真实乱码是 U+FFFD 与高位字符 → 全部漏检，GBK 中文被当 UTF-8
-        // 打开成一片替换符。
-        int bad = 0;
-        int total = Math.min(s.length(), 4096);
-        for (int i = 0; i < total; i++) {
-            char c = s.charAt(i);
-            if (c == '\uFFFD') bad++;
-            else if (c < 0x20 && c != '\n' && c != '\r' && c != '\t') bad++;
-        }
-        return total > 0 && bad * 200 > total;   // 超过 0.5%
-    }
-
     /** 递归扫描：深度≤10、结果≤3000（防卡死）；跳过隐藏目录（含回收站）与 Android 大目录 */
     private void scanDir(File dir, Set<String> extSet, List<FileEntry> out, int depth) {
         if (depth > 10 || out.size() >= 3000) return;
@@ -16133,50 +15891,6 @@ public class FileManagerModule extends HyVqModule {
     // ══════════════════════════════════════════════════════════════
 
     /** 把 FileEntry 的 zip 路径拆成 [zip 文件绝对路径, 包内相对路径] */
-    private static String[] splitZipPath(String virt) {
-        String rest = virt.substring(PREFIX_ZIP.length());
-        // 后缀表来自 ArchiveExtractor.NAME_SUFFIXES（全项目唯一来源）。
-        // 曾因这里内联维护了一份、且漏了 .tbz/.tbz2/.txz/.tzst，
-        // 导致这些包切分失败、点解压时越界崩溃。
-        final String[] SUP = com.aliya.hyfilemgr.archive.ArchiveExtractor.NAME_SUFFIXES;
-        // zip 路径自身可能含 "/"，逐个尝试已知后缀作为切分点
-        int best = -1;
-        for (int i = rest.length(); i > 0; i--) {
-            char c = rest.charAt(i - 1);
-            if (c != '/' && c != '\\') continue;
-            String head = rest.substring(0, i - 1);
-            String low = head.toLowerCase(java.util.Locale.ROOT);
-            // 支持所有可浏览格式的切分：
-            // 此前只认 zip/jar/apk，7z/tar/rar 会切分失败 →
-            // zipPath 变成整个 "zip:///sdcard/x/test.7z/" → isFile()=false →
-            // loadZip 提前 return "压缩包不存在"，表现为「打开后空白、连 .. 都没有」
-            boolean hit = false;
-            for (String s : SUP) {
-                if (low.endsWith(s)) { hit = true; break; }
-            }
-            if (hit) {
-                best = i - 1;
-                break;
-            }
-        }
-        if (best < 0) {
-            // 防御：路径末尾没有 '/'（如 "zip:///sdcard/x/test.tbz"）。
-            // 当前所有构造点都是 `PREFIX_ZIP + zipPath + "/"`（带尾斜杠），
-            // 所以走不到这里；但旧的回退「第一个 '/'」会把 zipPath 切成空串，
-            // 下游 substring 直接越界。这里先把整体当压缩包名试一次。
-            String lowAll = rest.toLowerCase(java.util.Locale.ROOT);
-            for (String s : SUP) {
-                if (lowAll.endsWith(s)) return new String[]{rest, ""};
-            }
-            int sl = rest.indexOf('/');
-            best = sl < 0 ? rest.length() : sl;
-        }
-        String zip = rest.substring(0, best);
-        String inner = rest.substring(Math.min(best + 1, rest.length()));
-        while (inner.startsWith("/")) inner = inner.substring(1);
-        return new String[]{zip, inner};
-    }
-
     /** 进入某个 ZIP 的根：切换活跃窗格到 zip:// 虚拟路径 */
 
     /**
@@ -16239,7 +15953,7 @@ public class FileManagerModule extends HyVqModule {
     }
 
     private void enterZip(String zipPath) {
-        active.path = PREFIX_ZIP + zipPath + "/";
+        active.path = ArchivePaths.PREFIX_ZIP + zipPath + "/";
         reload(active);
     }
 
@@ -16256,7 +15970,7 @@ public class FileManagerModule extends HyVqModule {
             this(name, size, time, false);
         }
         ArchiveItem(String name, long size, long time, boolean isDir) {
-            this.name = normalizeEntryName(name);
+            this.name = ArchivePaths.normalizeEntryName(name);
             this.size = size; this.time = time; this.isDir = isDir;
         }
     }
@@ -16270,18 +15984,6 @@ public class FileManagerModule extends HyVqModule {
      *
      * <p>同时去掉前导 / 与重复斜杠，防止拼出 {@code //} 或绝对路径。</p>
      */
-    private static String normalizeEntryName(String raw) {
-        if (raw == null) return "";
-        String n = raw.replace('\\', '/');
-        while (n.startsWith("./")) n = n.substring(2);
-        while (n.startsWith("/")) n = n.substring(1);
-        while (n.contains("//")) n = n.replace("//", "/");
-        // 目录条目常以 / 结尾（tar 的 "./sub/"）：去掉尾部斜杠，
-        // 否则 "sub/" 在按 / 切分时 dirName 会取成 "sub" 但 rel 为空导致条目丢失
-        while (n.endsWith("/")) n = n.substring(0, n.length() - 1);
-        return n;
-    }
-
     /**
      * 列出压缩包内所有条目，与格式无关。
      *
@@ -16404,7 +16106,7 @@ public class FileManagerModule extends HyVqModule {
 
     private void loadZip(Pane p) {
         p.entries.clear();
-        String[] parts = splitZipPath(p.path);
+        String[] parts = ArchivePaths.splitZipPath(p.path);
         String zipPath = parts[0];
         String inner = parts[1];
         File zip = new File(zipPath);
@@ -16506,7 +16208,7 @@ public class FileManagerModule extends HyVqModule {
         if (!inner.isEmpty()) {
             int cut = inner.lastIndexOf('/');
             String up = cut < 0 ? "" : inner.substring(0, cut + 1);
-            p.entries.add(FileEntry.parent(PREFIX_ZIP + zipPath + "/" + up));
+            p.entries.add(FileEntry.parent(ArchivePaths.PREFIX_ZIP + zipPath + "/" + up));
         } else {
             String zipDir = new File(zipPath).getParent();
             p.entries.add(FileEntry.parent(zipDir == null
@@ -16538,13 +16240,13 @@ public class FileManagerModule extends HyVqModule {
         }
         final Pane other = (panes.get(0) == active) ? panes.get(1) : panes.get(0);
         if (other == null || other.path == null
-                || other.path.startsWith(PREFIX_ZIP)
+                || other.path.startsWith(ArchivePaths.PREFIX_ZIP)
                 || other.path.startsWith(PREFIX_TRASH)) {
             UiKit.toast(ctx, "另一窗格不在可写入的目录");
             return;
         }
         final String destDir = other.path;
-        String[] parts = splitZipPath(e.path);
+        String[] parts = ArchivePaths.splitZipPath(e.path);
         final String archivePath = parts[0];
         final String inner = parts[1];
         if (inner == null || inner.isEmpty()) {
@@ -16586,7 +16288,7 @@ public class FileManagerModule extends HyVqModule {
 
         /** 进入嵌套压缩包：先把内层 zip 解到缓存，再以它为根进入内部浏览 */
     private void enterNestedZip(final FileEntry e) {
-        String[] parts = splitZipPath(e.path);
+        String[] parts = ArchivePaths.splitZipPath(e.path);
         final String outerZip = parts[0];
         final String inner = parts[1];
         UiKit.toast(ctx, "展开嵌套压缩包…");
@@ -16619,7 +16321,7 @@ public class FileManagerModule extends HyVqModule {
                 if (fErr != null) {
                     UiKit.alert(ctx, "展开失败：" + fErr);
                 } else {
-                    active.path = PREFIX_ZIP + fPath + "/";
+                    active.path = ArchivePaths.PREFIX_ZIP + fPath + "/";
                     reload(active);
                 }
             });
@@ -16701,7 +16403,7 @@ public class FileManagerModule extends HyVqModule {
     }
 
     private void openZipEntry(final FileEntry e) {
-        String[] parts = splitZipPath(e.path);
+        String[] parts = ArchivePaths.splitZipPath(e.path);
         final String zipPath = parts[0];
         final String inner = parts[1];
         if (inner.isEmpty()) return;
@@ -16746,13 +16448,13 @@ public class FileManagerModule extends HyVqModule {
                     UiKit.toast(ctx, "该条目不是文件");
                 } else if (isTextFile(fOut.getName())) {
                     openTextEditor(fOut);
-                } else if (Exts.isImage(extOf(fOut.getName()))) {
+                } else if (Exts.isImage(FileTypes.extOf(fOut.getName()))) {
                     // 图片：不走 openFile（那只会开单图），
                     // 而是传「同包内所有图片」的 zip:// 列表给查看器，
                     // 才能像普通目录一样左右滑看下一张。
                     openZipImageGallery(zipPath, inner, e.name);
-                } else if (Exts.isVideo(extOf(fOut.getName()))
-                        || Exts.isAudio(extOf(fOut.getName()))) {
+                } else if (Exts.isVideo(FileTypes.extOf(fOut.getName()))
+                        || Exts.isAudio(FileTypes.extOf(fOut.getName()))) {
                     // 音视频：同样传 zip:// 虚拟路径图集，而不是刚解出的临时文件。
                     // 否则播放器会显示「1/2」——列表里是窗格虚拟路径 + 当前临时文件两项
                     // （实际同包同级只有一个媒体文件）。
@@ -16788,12 +16490,12 @@ public class FileManagerModule extends HyVqModule {
                         ? currentInner.substring(0, currentInner.lastIndexOf('/') + 1) : "";
                 if (!nm.startsWith(dir)) continue;
                 if (nm.substring(dir.length()).contains("/")) continue;   // 排除更深层
-                if (!Exts.isImage(extOf(nm))) continue;
-                list.add(PREFIX_ZIP + zipPath + "/" + nm);
+                if (!Exts.isImage(FileTypes.extOf(nm))) continue;
+                list.add(ArchivePaths.PREFIX_ZIP + zipPath + "/" + nm);
             }
         } catch (Throwable ignored) { }
 
-        String cur = PREFIX_ZIP + zipPath + "/" + currentInner;
+        String cur = ArchivePaths.PREFIX_ZIP + zipPath + "/" + currentInner;
         if (!list.contains(cur)) list.add(0, cur);
 
         try {
@@ -16828,7 +16530,7 @@ public class FileManagerModule extends HyVqModule {
      * <p>做法与图片一致：全部传 zip:// 虚拟路径，播放器按需解出。</p>
      */
     private void openZipMediaGallery(String zipPath, String currentInner, String name) {
-        boolean isAudio = Exts.isAudio(extOf(currentInner));
+        boolean isAudio = Exts.isAudio(FileTypes.extOf(currentInner));
 
         java.util.ArrayList<String> list = new java.util.ArrayList<>();
         String dir = currentInner.contains("/")
@@ -16841,13 +16543,13 @@ public class FileManagerModule extends HyVqModule {
                 String nm = ze.getName();
                 if (!nm.startsWith(dir)) continue;
                 if (nm.substring(dir.length()).contains("/")) continue;   // 排除更深层
-                String nmExt = extOf(nm);
+                String nmExt = FileTypes.extOf(nm);
                 if (isAudio ? !Exts.isAudio(nmExt) : !Exts.isVideo(nmExt)) continue;
-                list.add(PREFIX_ZIP + zipPath + "/" + nm);
+                list.add(ArchivePaths.PREFIX_ZIP + zipPath + "/" + nm);
             }
         } catch (Throwable ignored) { }
 
-        String cur = PREFIX_ZIP + zipPath + "/" + currentInner;
+        String cur = ArchivePaths.PREFIX_ZIP + zipPath + "/" + currentInner;
         if (!list.contains(cur)) list.add(0, cur);
         int idx = Math.max(0, list.indexOf(cur));
 
