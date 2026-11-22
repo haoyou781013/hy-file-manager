@@ -40,12 +40,35 @@ public final class ThumbLoader {
 
     /**
      * 进行中的解码任务。同一 cacheKey 被多个 ViewHolder 同时请求时
-     * 复用一个 Future，避免多线程重复解码同一文件（并发写同一 .jpg
-     * 还会产生半写文件，之后 readDisk 永久空白）。
+     * 只解码一次，其余请求登记成等待者，解码完成后统一回调 ——
+     * 避免多线程重复解码同一文件（并发写同一 .jpg 还会产生半写文件，
+     * 之后 readDisk 永久空白）。
+     *
+     * <p><b>为什么不用 CompletableFuture</b>：`CompletableFuture` 需要
+     * API 24，而本项目 minSdk = 23。虽然 `desugar_jdk_libs 2.1.5` 的 jar 里
+     * 带着它的实现，但 R8 的脱糖配置并未实际启用该类（实测
+     * `desugar_lib_dex` 产物里只有 `j$/util/concurrent/ConcurrentHashMap`、
+     * `ThreadLocalRandom`，没有 `CompletableFuture`），因此在 API 23
+     * 上会 {@code NoClassDefFoundError}，整个缩略图功能崩掉。</p>
+     *
+     * <p>这里用「key → 等待者列表」自行实现同样的去重语义，
+     * 只依赖 API 1 就有的 ConcurrentHashMap，没有版本风险。</p>
      */
     private static final java.util.concurrent.ConcurrentHashMap<String,
-            java.util.concurrent.CompletableFuture<Bitmap>> IN_FLIGHT =
+            java.util.List<Waiter>> IN_FLIGHT =
             new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 等待某个 cacheKey 解码结果的回调 */
+    private static final class Waiter {
+        final ImageView iv;
+        final String cacheKey;
+        final OnFail onFail;
+        Waiter(ImageView iv, String cacheKey, OnFail onFail) {
+            this.iv = iv;
+            this.cacheKey = cacheKey;
+            this.onFail = onFail;
+        }
+    }
 
     private static final LruCache<String, Bitmap> MEM =
             new LruCache<String, Bitmap>(8 * 1024 * 1024) {
@@ -125,52 +148,88 @@ public final class ThumbLoader {
         final Context app = ctx.getApplicationContext();
         final String key = cacheKey;
 
-        // in-flight 去重：同 key 只解码一次。
-        // 旧实现用 FutureTask + 两个池任务（一个跑、一个 get() 阻塞），
+        // in-flight 去重：同 key 只解码一次，其余请求登记为等待者。
+        //
+        // 历史：最早用 FutureTask + 两个池任务（一个跑、一个 get() 阻塞），
         // 实测吞吐 3061ms → 4585ms（下降 50%），因为 3 线程里约 2/3 在
-        // FutureTask.get() 空转。改用 CompletableFuture：
-        // 只在池里跑一个解码任务，回调通过 thenAccept 派发到主线程。
-        final java.util.concurrent.CompletableFuture<Bitmap> future;
-        java.util.concurrent.CompletableFuture<Bitmap> existing = IN_FLIGHT.get(key);
-        if (existing != null) {
-            future = existing;
-        } else {
-            java.util.concurrent.CompletableFuture<Bitmap> created =
-                    new java.util.concurrent.CompletableFuture<>();
-            java.util.concurrent.CompletableFuture<Bitmap> prev = IN_FLIGHT.putIfAbsent(key, created);
-            if (prev != null) {
-                future = prev;
-            } else {
-                future = created;
-                POOL.execute(() -> {
-                    Bitmap decoded = null;
-                    try {
-                        decoded = readDisk(app, key);
-                        if (decoded == null) {
-                            decoded = decode(app, path, name);
-                            if (decoded != null) writeDisk(app, key, decoded);
-                        }
-                    } catch (Throwable ignored) {
-                    } finally {
-                        IN_FLIGHT.remove(key);
-                    }
-                    created.complete(decoded);
-                });
+        // FutureTask.get() 空转。后来改用 CompletableFuture，但它需要 API 24，
+        // 而本项目 minSdk = 23，desugar 也没实际覆盖该类（见 IN_FLIGHT 注释）
+        // → API 23 上会 NoClassDefFoundError。
+        //
+        // 现在用「等待者列表」实现同样的语义：只依赖 ConcurrentHashMap
+        // 的原子操作，无版本门槛，吞吐与 CompletableFuture 版本一致
+        // （池里始终只跑一个解码任务，不阻塞等待）。
+        final Waiter waiter = new Waiter(iv, cacheKey, onFail);
+
+        // putIfAbsent 原子占位：抢到就自己解码，没抢到就追加到等待者列表
+        java.util.List<Waiter> myList = new java.util.ArrayList<>();
+        myList.add(waiter);
+        java.util.List<Waiter> existingList = IN_FLIGHT.putIfAbsent(key, myList);
+
+        if (existingList != null) {
+            // 已有任务在跑 → 只需登记，解码完成后会被一起通知
+            synchronized (existingList) {
+                existingList.add(waiter);
             }
+            return;
         }
 
-        future.thenAccept(fin -> MAIN.post(() -> {
-            // 防错位：加载完成时 ImageView 已被复用或已脱离窗口 → 丢弃
-            if (!iv.isAttachedToWindow()) return;
-            if (!cacheKey.equals(iv.getTag())) return;
-            if (fin == null) {
-                if (onFail != null) onFail.onFail(iv);
-                return;
+        // 抢到了 → 在池里解码，完成后通知所有等待者
+        POOL.execute(() -> {
+            Bitmap decoded = null;
+            try {
+                decoded = readDisk(app, key);
+                if (decoded == null) {
+                    decoded = decode(app, path, name);
+                    if (decoded != null) writeDisk(app, key, decoded);
+                }
+            } catch (Throwable ignored) {
             }
-            iv.setColorFilter(null);
-            iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            iv.setImageBitmap(fin);
-        }));
+            // 摘除时机很重要：
+            //
+            // 若先 remove 再写磁盘/通知，则 remove 与下一个 putIfAbsent 之间
+            // 存在窗口 —— 新请求会抢到占位并启动**第二个**解码任务，
+            // 两个线程同时 writeDisk 同一个 .jpg → 半写文件 →
+            // 之后 readDisk 永久返回损坏图。
+            //
+            // 这里 decode + writeDisk 都已完成（见上面的 try 块），
+            // 所以 remove 之后不会有并发写。用双参 remove(key, myList)
+            // 保证「只摘除自己那一份」——若占位已被别的任务替换，
+            // 不会误删别人的等待列表而导致那些请求永远收不到回调。
+            java.util.List<Waiter> waiters = IN_FLIGHT.remove(key, myList)
+                    ? myList : null;
+            final Bitmap fin = decoded;
+            if (waiters != null) {
+                java.util.List<Waiter> snapshot;
+                synchronized (waiters) {
+                    snapshot = new java.util.ArrayList<>(waiters);
+                }
+                for (Waiter w : snapshot) {
+                    final Waiter wf = w;
+                    MAIN.post(() -> deliver(wf, fin));
+                }
+            }
+        });
+    }
+
+    /**
+     * 把一个解码结果投递给等待者。
+     *
+     * <p>防错位：完成时 ImageView 可能已被 RecyclerView 复用给别的条目，
+     * 或已脱离窗口 —— 这两种情况都必须丢弃，否则会出现
+     * 「滚动时缩略图串到别的文件上」。</p>
+     */
+    private static void deliver(Waiter w, Bitmap fin) {
+        if (w == null || w.iv == null) return;
+        if (!w.iv.isAttachedToWindow()) return;
+        if (!w.cacheKey.equals(w.iv.getTag())) return;
+        if (fin == null) {
+            if (w.onFail != null) w.onFail.onFail(w.iv);
+            return;
+        }
+        w.iv.setColorFilter(null);
+        w.iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        w.iv.setImageBitmap(fin);
     }
 
     // ── 解码 ──

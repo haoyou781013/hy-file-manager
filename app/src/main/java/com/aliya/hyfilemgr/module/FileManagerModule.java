@@ -4715,13 +4715,13 @@ public class FileManagerModule extends HyVqModule {
                         if (sub != null) {
                             java.util.Arrays.sort(sub, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
                             for (File s : sub) {
-                                if (s.isFile() && com.aliya.hyfilemgr.filemgr.ThumbLoader.isImage(s.getName().toLowerCase())) {
+                                if (s.isFile() && com.aliya.hyfilemgr.filemgr.ThumbLoader.isImage(s.getName().toLowerCase(java.util.Locale.ROOT))) {
                                     subImgs.add(s);
                                 }
                             }
                         }
                         if (!subImgs.isEmpty()) groups.put(f.getName(), subImgs);
-                    } else if (com.aliya.hyfilemgr.filemgr.ThumbLoader.isImage(f.getName().toLowerCase())) {
+                    } else if (com.aliya.hyfilemgr.filemgr.ThumbLoader.isImage(f.getName().toLowerCase(java.util.Locale.ROOT))) {
                         own.add(f);
                     }
                 }
@@ -4807,7 +4807,7 @@ public class FileManagerModule extends HyVqModule {
             cellLp.setMargins(leftMargin, 0, 0, 0);
 
             // GIF 角标：网格只播首帧，用角标告知是可动图
-            if (f.getName().toLowerCase().endsWith(".gif")) {
+            if (f.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".gif")) {
                 android.widget.FrameLayout cell = new android.widget.FrameLayout(ctx);
                 cell.addView(iv, new android.widget.FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -6776,7 +6776,16 @@ public class FileManagerModule extends HyVqModule {
             activeConn.set(conn);
             int code = conn.getResponseCode();
             if (code != 200) throw new java.io.IOException("HTTP " + code);
-            final long total = conn.getContentLengthLong();
+            // getContentLengthLong() 需 API 24；getContentLength() 返回 int，
+            // 大于 2GB 的 APK/压缩包会溢出成负数。改读 header 自己解析，
+            // 语义与 getContentLengthLong 相同且 API 1 起就有。
+            long totalTmp = -1L;
+            try {
+                String cl = conn.getHeaderField("Content-Length");
+                if (cl != null) totalTmp = Long.parseLong(cl.trim());
+            } catch (Throwable ignored) {
+            }
+            final long total = totalTmp;
             in = conn.getInputStream();
             long got = 0;
             long lastPost = 0;
@@ -7641,7 +7650,15 @@ public class FileManagerModule extends HyVqModule {
         box.addView(sectionHeaderInCard("权限管理"));
 
         // ① 所有文件访问
-        boolean allFiles = Environment.isExternalStorageManager();
+        //
+        // ⚠ Environment.isExternalStorageManager() 需要 API 30。
+        // 本项目 minSdk = 23（实测 aapt2 dump badging → sdkVersion:'23'），
+        // 无守卫直接调用会让以下设备进这个页面就崩：
+        //   · Android 6.0 ~ 10（API 23~29）—— NoSuchMethodError
+        // 此前该风险被 MediaPlayerActivity 里一条错误注释
+        //（「本项目 minSdk 28」）掩盖了很久。
+        boolean allFiles = Build.VERSION.SDK_INT >= 30
+                && Environment.isExternalStorageManager();
         addInfoRow(box, "所有文件访问",
                 allFiles ? "已授权 · 可读写整个存储" : "未授权 · 读写受限，点此授权",
                 allFiles, v -> {
@@ -7669,10 +7686,19 @@ public class FileManagerModule extends HyVqModule {
                 });
 
         // ③ 安装未知应用（安装 APK 必需）
+        //
+        // ⚠ canRequestPackageInstalls() 需 API 26。
+        // 原写法只靠 try-catch 兜底是无效的：API 23~25 上抛的是
+        // NoSuchMethodError（属于 Error 而非 Exception），
+        // 虽然 catch (Throwable) 能捕获，但那是拿异常做流程控制，
+        // 且 lint 无法识别 → 容易在别处复制这个模式而漏掉。
+        // 显式版本判断，语义也更清楚：低版本没有这个权限概念。
         boolean canInstall = false;
-        try {
-            canInstall = ctx.getPackageManager().canRequestPackageInstalls();
-        } catch (Throwable ignored) {
+        if (Build.VERSION.SDK_INT >= 26) {
+            try {
+                canInstall = ctx.getPackageManager().canRequestPackageInstalls();
+            } catch (Throwable ignored) {
+            }
         }
         final boolean installOk = canInstall;
         addInfoRow(box, "安装未知应用",
@@ -10821,7 +10847,8 @@ public class FileManagerModule extends HyVqModule {
                 Uri uri = up.getUri();
                 if (uri == null) continue;
                 String docId = null;
-                if (DocumentsContract.isTreeUri(uri)) {
+                // isTreeUri 需 API 24；低版本一律按普通 document uri 处理
+                if (Build.VERSION.SDK_INT >= 24 && DocumentsContract.isTreeUri(uri)) {
                     docId = DocumentsContract.getTreeDocumentId(uri);
                 } else if (DocumentsContract.isDocumentUri(ctx, uri)) {
                     docId = DocumentsContract.getDocumentId(uri);
@@ -10845,7 +10872,7 @@ public class FileManagerModule extends HyVqModule {
                     // 导致 provider 解析失败（Termux 显示名一直回退 "home" 的根因）。
                     // 正解：从原始 uri 字符串提取**编码态** treeId（%2F 原样）再拼接。
                     Uri docUri;
-                    if (DocumentsContract.isTreeUri(uri)) {
+                    if (Build.VERSION.SDK_INT >= 24 && DocumentsContract.isTreeUri(uri)) {
                         String auth = uri.getAuthority();
                         String us = uri.toString();
                         int ti = us.indexOf("/tree/");
@@ -12770,7 +12797,7 @@ public class FileManagerModule extends HyVqModule {
 
     private void showPreviewDialog() {
         if (currentEditTab == null) return;
-        final String ext = currentEditTab.file.getName().toLowerCase();
+        final String ext = currentEditTab.file.getName().toLowerCase(java.util.Locale.ROOT);
         final boolean isHtml = ext.endsWith(".html") || ext.endsWith(".htm")
                 || ext.endsWith(".xhtml") || ext.endsWith(".mht");
         final boolean isMd = ext.endsWith(".md") || ext.endsWith(".markdown")
@@ -13269,7 +13296,7 @@ public class FileManagerModule extends HyVqModule {
 
     /** 按扩展名分类映射格式图标（复用 CATEGORIES 分类清单） */
     private int iconForDrawerFile(String name) {
-        String n = name.toLowerCase();
+        String n = name.toLowerCase(java.util.Locale.ROOT);
         for (String[] c : CATEGORIES) {
             String[] exts = c[2].trim().split("\\s+");
             for (String ext : exts) {
@@ -15566,7 +15593,7 @@ public class FileManagerModule extends HyVqModule {
             // 若用户自己写了扩展名就不重复添加。
             // 注意 tar.gz 这种多段扩展名：用户可能只写了 .tar 或 .gz，
             // 都视为「没写全」，统一补成完整后缀。
-            String lower = name.toLowerCase();
+            String lower = name.toLowerCase(java.util.Locale.ROOT);
             String suffix = "." + ext;
             if (!lower.endsWith(suffix)) {
                 // 先剥掉用户误写的单段后缀，避免 foo.tar.tar.gz / foo.gz.tar.gz
@@ -17272,7 +17299,7 @@ public class FileManagerModule extends HyVqModule {
         try {
             String[] parts = s.split(" ");
             double v = Double.parseDouble(parts[0]);
-            String unit = parts.length > 1 ? parts[1].toUpperCase() : "B";
+            String unit = parts.length > 1 ? parts[1].toUpperCase(java.util.Locale.ROOT) : "B";
             switch (unit) {
                 case "KB": return (long)(v * 1024);
                 case "MB": return (long)(v * 1024 * 1024);

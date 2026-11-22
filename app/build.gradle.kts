@@ -67,8 +67,23 @@ android {
     }
 
     lint {
-        checkReleaseBuilds = false
-        abortOnError = false
+        // 2026-11-22：Error 已清零（原 21 个，含 9 处会导致 API 23/24 崩溃的
+        // NewApi），因此可以打开 abortOnError 防回归。
+        // 新增的 Error 会立即阻断构建，而不是像以前那样被静默忽略。
+        checkReleaseBuilds = true
+        abortOnError = true
+
+        // ── 已确认为噪音的规则，逐条关闭并说明原因 ──
+        //
+        // UnsafeOptInUsageError：media3 把部分 API 标为 @UnstableApi
+        //（表示小版本升级时可能改名，并非不可用）。整个播放器本来就在用
+        // 这些 API，逐个加 @OptIn 没有意义。运行期无影响。
+        disable += "UnsafeOptInUsageError"
+
+        // SetTextI18n / HardcodedText：本项目只做中文，不做 i18n。
+        // 每次跑 lint 都刷 130 条噪音，淹没真正的问题。
+        disable += "SetTextI18n"
+        disable += "HardcodedText"
     }
 }
 

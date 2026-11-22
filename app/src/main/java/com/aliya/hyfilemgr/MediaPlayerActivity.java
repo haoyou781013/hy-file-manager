@@ -4,14 +4,15 @@ import android.app.Activity;
 import android.app.Dialog;
 import android.graphics.Bitmap;
 import android.media.AudioManager;
-import android.view.GestureDetector;
-import android.view.MotionEvent;
-import android.os.Environment;
-import android.view.PixelCopy;
-import android.view.SurfaceView;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.GestureDetector;
+import android.view.MotionEvent;
+import android.view.PixelCopy;
+import android.view.SurfaceView;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.ImageView;
@@ -28,18 +29,17 @@ import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
-import com.aliya.hyfilemgr.ui.UiKit;
-import com.aliya.hyfilemgr.player.PlayerCore;
-import com.aliya.hyfilemgr.player.GestureController;
-import com.aliya.hyfilemgr.player.GestureSink;
-import com.aliya.hyfilemgr.player.PlayerSettings;
-
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.aliya.hyfilemgr.player.GestureController;
+import com.aliya.hyfilemgr.player.GestureSink;
+import com.aliya.hyfilemgr.player.PlayerCore;
+import com.aliya.hyfilemgr.player.PlayerSettings;
+import com.aliya.hyfilemgr.ui.UiKit;
 /**
  * 内置播放器（Media3 / ExoPlayer 统一内核）。
  *
@@ -604,7 +604,7 @@ public class MediaPlayerActivity extends Activity {
         if (h >= 0) name = name.substring(0, h);
         int dot = name.lastIndexOf('.');
         if (dot < 0) return true;
-        String ext = name.substring(dot + 1).toLowerCase();
+        String ext = name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
         // 流媒体后缀也按视频处理
         if ("m3u8".equals(ext) || "mpd".equals(ext)) return true;
         return com.aliya.hyfilemgr.util.Exts.isVideo(ext);
@@ -1342,12 +1342,24 @@ public class MediaPlayerActivity extends Activity {
 
     /**
      * 截图当前画面，存到 /sdcard/Pictures/HY_VQ/。
-     * 用 PixelCopy 从 Surface 取帧（API 24+，本项目 minSdk 28）；
-     * 写外部存储依赖清单里的 MANAGE_EXTERNAL_STORAGE。
+     *
+     * <p>用 {@link android.view.PixelCopy} 从 Surface 取帧，该 API 需要
+     * <b>API 24</b>。本项目 minSdk 是 <b>23</b>（`aapt2 dump badging` 实测
+     * `sdkVersion:'23'`）——此处原注释写「本项目 minSdk 28」，是错的，
+     * 正是它让这个越界调用一直没被发现。已加版本守卫。</p>
+     *
+     * <p>写外部存储依赖清单里的 MANAGE_EXTERNAL_STORAGE。</p>
      */
     private void captureFrame() {
         try {
             if (playerView == null) return;
+            // PixelCopy 需 API 24；低版本没有等价的可靠方案
+            // （getDrawingCache 对 SurfaceView 无效——Surface 的内容不在
+            //  View 的绘制缓存里）。直接提示不支持，不静默失败。
+            if (Build.VERSION.SDK_INT < 24) {
+                UiKit.toast(this, "系统版本过低（需 Android 7.0+）不支持截图");
+                return;
+            }
             android.view.View surfaceView = playerView.getVideoSurfaceView();
             if (!(surfaceView instanceof SurfaceView)) {
                 UiKit.toast(this, "当前画面不支持截图");

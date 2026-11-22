@@ -29,7 +29,11 @@ public final class StorageStrategy {
         List<FileEntry> out = new ArrayList<>();
         try {
             StorageManager sm = ctx.getSystemService(StorageManager.class);
-            if (sm != null) {
+            // getStorageVolumes() 需 API 24；StorageVolume#getDescription /
+            // #isPrimary 也需要 24。低版本直接跳过这段，靠下面的兜底
+            // 补上主卷 emulated —— 否则会抛 NoSuchMethodError 被 catch 吞掉，
+            // 表现为「存储列表什么都没有」（静默丢功能，比崩溃更难查）。
+            if (sm != null && android.os.Build.VERSION.SDK_INT >= 24) {
                 for (StorageVolume vol : sm.getStorageVolumes()) {
                     File dir = android.os.Build.VERSION.SDK_INT >= 30
                             ? vol.getDirectory() : null;

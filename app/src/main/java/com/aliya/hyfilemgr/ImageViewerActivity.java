@@ -202,7 +202,7 @@ public class ImageViewerActivity extends Activity {
             int cut = rest.lastIndexOf('/');
             // 去掉最后一段包内条目后的剩余，取条目名本身
             String inner = rest;
-            String lower = rest.toLowerCase();
+            String lower = rest.toLowerCase(java.util.Locale.ROOT);
             for (int i = rest.length() - 1; i >= 0; i--) {
                 if (rest.charAt(i) != '/') continue;
                 String before = lower.substring(0, i);
@@ -238,7 +238,7 @@ public class ImageViewerActivity extends Activity {
         TextView counter = findViewById(com.aliya.hyfilemgr.R.id.tv_iv_counter);
         if (gallery != null && gallery.length > 1) {
             counter.setVisibility(View.VISIBLE);
-            counter.setText(String.format("%02d/%02d", galleryIndex + 1, gallery.length));
+            counter.setText(String.format(java.util.Locale.US, "%02d/%02d", galleryIndex + 1, gallery.length));
         } else {
             counter.setVisibility(View.GONE);
         }
@@ -384,21 +384,34 @@ public class ImageViewerActivity extends Activity {
             resetZoomMatrix();
 
             // GIF（API 28+）：AnimatedImageDrawable 直接播动图
+            //
+            // ⚠ decodeDrawable 必须放在工作线程：完整解码一张动图
+            // （可能几十帧、每帧上千万像素）耗时可达数百毫秒，
+            // 在 UI 线程会造成明显卡顿甚至 ANR。lint 报的 WrongThread 即此处。
+            //
+            // 结构：不阻塞 UI —— GIF 线程自己决定两条分支：
+            //   ① 解出动图 → post 到主线程显示
+            //   ② 解不出（不是动图/失败）→ post 到主线程，再启动静态解码
             if (android.os.Build.VERSION.SDK_INT >= 28
-                    && path.toLowerCase().endsWith(".gif")) {
-                try {
-                    android.graphics.ImageDecoder.Source src =
-                            android.graphics.ImageDecoder.createSource(new File(path));
-                    android.graphics.drawable.Drawable d =
-                            android.graphics.ImageDecoder.decodeDrawable(src, (decoder, info, s) -> {
-                                android.util.Size sz = info.getSize();
-                                int reqW = getResources().getDisplayMetrics().widthPixels;
-                                int reqH = getResources().getDisplayMetrics().heightPixels;
-                                if (sz.getWidth() > reqW * 2 || sz.getHeight() > reqH * 2) {
-                                    decoder.setTargetSampleSize(2);
-                                }
-                            });
-                    if (d instanceof android.graphics.drawable.AnimatedImageDrawable) {
+                    && path.toLowerCase(java.util.Locale.ROOT).endsWith(".gif")) {
+                final int reqW = getResources().getDisplayMetrics().widthPixels;
+                final int reqH = getResources().getDisplayMetrics().heightPixels;
+                new Thread(() -> {
+                    android.graphics.drawable.Drawable decoded = null;
+                    try {
+                        android.graphics.ImageDecoder.Source src =
+                                android.graphics.ImageDecoder.createSource(new File(path));
+                        decoded = android.graphics.ImageDecoder.decodeDrawable(src,
+                                (decoder, info, src2) -> {
+                                    android.util.Size sz = info.getSize();
+                                    if (sz.getWidth() > reqW * 2 || sz.getHeight() > reqH * 2) {
+                                        decoder.setTargetSampleSize(2);
+                                    }
+                                });
+                    } catch (Throwable ignored) {
+                    }
+                    if (decoded instanceof android.graphics.drawable.AnimatedImageDrawable) {
+                        final android.graphics.drawable.Drawable d = decoded;
                         post(() -> {
                             if (mySeq != seq) return;
                             decoding = false;
@@ -407,13 +420,23 @@ public class ImageViewerActivity extends Activity {
                             resetZoomMatrix();
                             ((android.graphics.drawable.AnimatedImageDrawable) d).start();
                         });
-                        return;
+                    } else {
+                        // 不是动图 → 回到主线程走既有的静态解码路径
+                        post(() -> bindStatic(mySeq, path));
                     }
-                } catch (Throwable ignored) {
-                    // 落到静态解码
-                }
+                }, "HyGifDecode").start();
+                return;
             }
+            bindStatic(mySeq, path);
+        }
 
+        /**
+         * 静态解码（位图路径）。
+         *
+         * <p>从 {@code bind()} 抽出，因为 GIF 分支现在完全异步：
+         * 解不出动图时需要回到这条路径，内联写法无法复用。</p>
+         */
+        private void bindStatic(final int mySeq, final String path) {
             new Thread(() -> {
                 Bitmap bmp = null;
                 try {
@@ -881,7 +904,7 @@ public class ImageViewerActivity extends Activity {
     private String getMimeType(String name) {
         String ext = "";
         int i = name.lastIndexOf('.');
-        if (i >= 0) ext = name.substring(i + 1).toLowerCase();
+        if (i >= 0) ext = name.substring(i + 1).toLowerCase(java.util.Locale.ROOT);
         switch (ext) {
             case "png": return "image/png";
             case "jpg": case "jpeg": return "image/jpeg";

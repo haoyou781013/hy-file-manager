@@ -110,7 +110,10 @@ public final class SafStrategy {
         String s = uri.toString();
         String auth = uri.getAuthority();
         if (auth == null) return null;
-        if (DocumentsContract.isTreeUri(uri)) {
+        // isTreeUri 需 API 24。低于 24 时一律按 document uri 处理
+        // （API 23 的 SAF 只有 document 形式，没有 tree 授权）
+        if (android.os.Build.VERSION.SDK_INT >= 24
+                && DocumentsContract.isTreeUri(uri)) {
             // tree uri：tree/<encTreeId>（无 /document/），根子文档 = 自身
             String enc = encLast(s);
             if (enc == null || enc.isEmpty()) return null;
@@ -559,7 +562,7 @@ public final class SafStrategy {
     private static String mimeForName(String name) {
         String ext = "";
         int dot = name.lastIndexOf('.');
-        if (dot >= 0) ext = name.substring(dot + 1).toLowerCase();
+        if (dot >= 0) ext = name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
         String mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
         return mime == null ? "application/octet-stream" : mime;
     }

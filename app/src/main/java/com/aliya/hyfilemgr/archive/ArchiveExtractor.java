@@ -995,7 +995,7 @@ public final class ArchiveExtractor {
 
     private static String ext(String name) {
         if (name == null) return "";
-        String lower = name.toLowerCase();
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
         // 复合扩展名优先
         for (String multi : new String[]{"tar.gz", "tar.bz2", "tar.xz", "tar.zst"}) {
             if (lower.endsWith("." + multi)) {

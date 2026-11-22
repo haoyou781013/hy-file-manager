@@ -1,5 +1,8 @@
 # 系统可优化项审查报告
 
+> **2026-11-22 更新：P0/P3/P4 已修完。** lint 问题 236 → 71，Error 21 → 0。
+> 详见文末「修复记录」。
+
 **日期**：2026-11-20
 **范围**：HY文件管理 全项目（50 个 Java 文件 / 31116 行）
 **方法**：lint 全量扫描 + 代码结构度量 + 功能与文档一致性核对
@@ -290,3 +293,118 @@ androidx.media3.common.util.UnstableApi.class)`，或者在 `lint { disable "Uns
 里关掉（因为整个播放器本来就在用 media3 的 unstable API，逐个加标注没意义）。
 
 **建议**：后者。这不是缺陷，是噪音。
+
+
+---
+
+# 修复记录（2026-11-22）
+
+## 结果
+
+| 指标 | 修前 | 修后 |
+|---|---|---|
+| lint 总问题 | 236 | **71** |
+| lint Error | 21 | **0** |
+| `NewApi`（真崩） | 9 | **0** |
+| `DefaultLocale` | 14 | **0** |
+| `WrongThread` | 1 | **0** |
+| 单测 | 73 | 73（全通过） |
+
+## P0 · 9 处版本守卫（全部修复）
+
+| 文件:行 | API | 修法 |
+|---|---|---|
+| `FileManagerModule.java:7644` | 30 | `SDK_INT >= 30 && Environment.isExternalStorageManager()` |
+| `FileManagerModule.java:10824` | 24 | `SDK_INT >= 24 && DocumentsContract.isTreeUri()` |
+| `FileManagerModule.java:10848` | 24 | 同上 |
+| `SafStrategy.java:113` | 24 | 同上（低版本 API 23 的 SAF 只有 document 形式，无 tree） |
+| `StorageStrategy.java:33` | 24 | 整个 `getStorageVolumes()` 循环包进 `SDK_INT >= 24`，低版本靠兜底补主卷 |
+| `MediaPlayerActivity.java:1362` | 24 | `PixelCopy` 前加判断，低版本提示「需 Android 7.0+」，并**修正了那条错误注释** |
+| `FileManagerModule.java:7682` | 26 | `canRequestPackageInstalls` 加显式判断（原做法只靠 try-catch，语义不清且 lint 无法识别） |
+
+## 更深的问题：`CompletableFuture` 其实没被脱糖
+
+审查时发现 `ThumbLoader` 用 `CompletableFuture`（API 24）做缩略图去重。
+
+**先误判为「desugar 已覆盖」**，因为 `desugar_jdk_libs-2.1.5.jar` 里确实
+带着 `java/util/concurrent/CompletableFuture.class`。
+
+但检查实际构建产物 `desugar_lib_dex/release/classes1000.dex`：
+
+```
+j$/util/concurrent/ConcurrentHashMap     ← 有
+j$/util/concurrent/ThreadLocalRandom     ← 有
+j$/util/concurrent/atomic/DesugarAtomicInteger ← 有
+CompletableFuture                        ← 没有
+```
+
+而官方 CHANGELOG 的覆盖清单也只提到 `ConcurrentHashMap` / `Flow` /
+`java.time` / `java.util.function`，**没提 `CompletableFuture`**。
+
+**结论：R8 的脱糖配置没有实际启用该类。API 23 上会 `NoClassDefFoundError`，
+整个缩略图功能崩掉。**
+
+**修法**：不依赖 desugar，改用 `ConcurrentHashMap<String, List<Waiter>>`
+自行实现「同 key 只解码一次、多请求共享结果」的语义：
+
+```java
+// 抢占占位：抢到就自己解码，没抢到就登记为等待者
+List<Waiter> myList = new ArrayList<>();
+myList.add(waiter);
+List<Waiter> existing = IN_FLIGHT.putIfAbsent(key, myList);
+if (existing != null) {
+    synchronized (existing) { existing.add(waiter); }
+    return;
+}
+POOL.execute(() -> { /* decode + writeDisk */ ... });
+```
+
+**两个细节**：
+1. 摘除用双参 `remove(key, myList)`，保证「只摘自己那一份」，
+   避免误删别人的等待列表导致那些请求收不到回调
+2. `decode + writeDisk` 全部完成**之后**才 remove，否则与下一个
+   `putIfAbsent` 之间存在窗口，两个线程会同时写同一个 `.jpg`
+   → 半写文件 → 之后 `readDisk` 永久返回损坏图
+
+## P3 · DefaultLocale 14 处
+
+土耳其语环境下 `"IMAGE.JPG".toLowerCase()` 会得到 `"ımage.jpg"`
+（大写 I → 无点 ı），导致所有后缀判断失效、缩略图与格式识别全错。
+
+批量改为 `toLowerCase(Locale.ROOT)` / `String.format(Locale.US, ...)`：
+`ArchiveExtractor` 1、`FileManagerModule` 7、`ImageViewerActivity` 4、
+`MediaPlayerActivity` 1、`SafStrategy` 1。
+
+## P4 · WrongThread（ImageViewer GIF 解码）
+
+`ImageDecoder.decodeDrawable` 原在 UI 线程，解码多帧动图可达数百毫秒 → ANR 风险。
+
+改为 GIF 线程内决策两条分支：
+- 解出 `AnimatedImageDrawable` → post 到主线程显示
+- 解不出 → post 回主线程走既有静态解码
+
+**中途踩的坑**：第一版用了 `gifThread.join(3000)` 等结果再判断，
+这会让 UI 线程阻塞最多 3 秒 —— 比原问题更糟。已改为完全异步。
+
+## P5 · lint 配置
+
+关闭三类确认为噪音的规则，并写明原因：
+
+```kotlin
+disable += "UnsafeOptInUsageError"   // media3 @UnstableApi，非运行时问题
+disable += "SetTextI18n"             // 只做中文，不做 i18n
+disable += "HardcodedText"           // 同上
+```
+
+问题数 236 → 85（修完 DefaultLocale 后 71），剩下的都是有意义的告警。
+
+## 剩余可做项
+
+| 项 | 数量 | 说明 |
+|---|---|---|
+| `ClickableViewAccessibility` | 12 | TalkBack 支持，需逐个实现 `performClick` |
+| `ApplySharedPref` | 9 | 多数是有意的（关键设置要立刻落盘） |
+| `NotifyDataSetChanged` | 8 | 文件列表整表刷新合理 |
+| `DrawAllocation` | 3 | onDraw 里分配对象，值得修 |
+| God Class 拆分 | 1 个 17776 行文件 | 需专门窗口期 |
+| `abortOnError = true` | — | 现在 Error 已归零，可以打开了 |
