@@ -1642,13 +1642,28 @@ public class FileManagerModule extends HyVqModule {
         }, 400);
     }
 
+    /**
+     * 跳转「所有文件访问」授权页。
+     *
+     * <p>这两个 action 都是 <b>API 30</b> 引入的常量。低版本没有这个概念
+     * （Android 10 及以前靠 READ/WRITE_EXTERNAL_STORAGE 就够），
+     * 直接拉起会 ActivityNotFound 崩掉。这里显式判断并给出提示。</p>
+     */
     private void requestAllFilesAccess() {
+        if (Build.VERSION.SDK_INT < 30) {
+            UiKit.toast(ctx, "当前系统不支持「所有文件访问」，请授予存储权限");
+            return;
+        }
         try {
             Intent intent = new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                     Uri.parse("package:" + ctx.getPackageName()));
             ctx.startActivity(intent);
         } catch (Throwable t) {
-            ctx.startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+            try {
+                ctx.startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION));
+            } catch (Throwable t2) {
+                UiKit.toast(ctx, "无法打开权限设置页");
+            }
         }
     }
 
@@ -5657,27 +5672,41 @@ public class FileManagerModule extends HyVqModule {
             invalidate();
         }
 
+        /**
+         * 复用的绘制对象。
+         *
+         * <p><b>为什么预分配</b>：onDraw 在滚动/动画时每秒可调用数十次，
+         * 若每次都 new Paint / new RectF 就是持续的对象分配 —— 分配速率一高
+         * 就会频繁触发 GC，表现为容量条那一屏滚动时掉帧
+         * （lint 的 DrawAllocation 警告说的就是这个）。</p>
+         *
+         * <p>Paint 与 RectF 都是可变的，改完属性直接复用即可，
+         * 没有跨帧状态需要保留（每次都从 0 重新设值）。</p>
+         */
+        private final android.graphics.Paint drawPaint =
+                new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.RectF drawRect = new android.graphics.RectF();
+
         @Override protected void onDraw(android.graphics.Canvas canvas) {
             super.onDraw(canvas);
             int w = getWidth(), h = getHeight();
             if (w <= 0 || h <= 0) return;
             int r = h / 2;
+
             // 底槽（未使用部分）
-            android.graphics.Paint p = new android.graphics.Paint(
-                    android.graphics.Paint.ANTI_ALIAS_FLAG);
-            p.setColor(UiKit.color(ctx,
+            drawPaint.setColor(UiKit.color(ctx,
                     com.google.android.material.R.attr.colorSurfaceContainerHighest));
-            android.graphics.RectF all = new android.graphics.RectF(0, 0, w, h);
-            canvas.drawRoundRect(all, r, r, p);
+            drawRect.set(0, 0, w, h);
+            canvas.drawRoundRect(drawRect, r, r, drawPaint);
 
             float x = 0;
             for (int i = 0; i < fractions.length && i < colors.length; i++) {
                 float segW = w * Math.max(0f, Math.min(1f, fractions[i]));
                 if (segW <= 0.5f) continue;
-                p.setColor(colors[i]);
-                android.graphics.RectF seg = new android.graphics.RectF(
-                        x, 0, Math.min(w, x + segW), h);
-                canvas.drawRoundRect(seg, Math.min(r, segW / 2), Math.min(r, segW / 2), p);
+                drawPaint.setColor(colors[i]);
+                drawRect.set(x, 0, Math.min(w, x + segW), h);
+                float radius = Math.min(r, segW / 2);
+                canvas.drawRoundRect(drawRect, radius, radius, drawPaint);
                 x += segW;
             }
         }
@@ -6152,7 +6181,13 @@ public class FileManagerModule extends HyVqModule {
         textCol.addView(sub);
         card.addView(textCol);
 
-        final android.widget.Switch sw = new android.widget.Switch(ctx);
+        // 用 SwitchMaterial 而非平台 android.widget.Switch：
+        //  · 平台 Switch 在部分 ROM（ColorOS/MIUI）上不跟随 AppCompat 主题，
+        //    轨道与滑块颜色会和界面其它开关不一致
+        //  · SwitchMaterial 还修了平台版「用代码 setChecked 时
+        //    不播动画、且 OnCheckedChangeListener 被误触发」的已知问题
+        final com.google.android.material.switchmaterial.SwitchMaterial sw =
+                new com.google.android.material.switchmaterial.SwitchMaterial(ctx);
         boolean on = fmPrefs().getBoolean(PREF_AUTO_CHECK_UPDATE, true);
         sw.setChecked(on);
         card.addView(sw);
@@ -14934,8 +14969,15 @@ public class FileManagerModule extends HyVqModule {
     /** 安装包信息弹窗：解析失败时直接安装，不拦路 */
     private void showApkInfoThenInstall(final File apk, String displayName) {
         android.content.pm.PackageManager pm = ctx.getPackageManager();
+        // GET_SIGNING_CERTIFICATES 需 API 28。低版本用会得到一个未定义的
+        // flag 值，getPackageArchiveInfo 直接返回 null → 静默走「解析失败
+        // 直接安装」分支，用户看不到 APK 信息（只会觉得弹窗没内容）。
+        // 低版本退回 GET_SIGNATURES（API 1 起就有，语义等价）。
+        int flag = Build.VERSION.SDK_INT >= 28
+                ? android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+                : android.content.pm.PackageManager.GET_SIGNATURES;
         android.content.pm.PackageInfo pi = pm.getPackageArchiveInfo(
-                apk.getAbsolutePath(), android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);
+                apk.getAbsolutePath(), flag);
         if (pi == null) {
             doInstall(apk.getAbsolutePath(), false);
             return;

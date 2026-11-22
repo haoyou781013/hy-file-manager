@@ -43,7 +43,12 @@ public final class PkgStrategy {
         Map<String, List<String>> fresh = new HashMap<>();
         try {
             PackageManager pm = ctx.getPackageManager();
-            List<PackageInfo> pkgs = pm.getInstalledPackages(PackageManager.MATCH_UNINSTALLED_PACKAGES);
+            // MATCH_UNINSTALLED_PACKAGES 是 API 24 才有的常量。
+            // 低版本用 GET_UNINSTALLED_PACKAGES（同值，API 1 起存在）。
+            int flags = android.os.Build.VERSION.SDK_INT >= 24
+                    ? PackageManager.MATCH_UNINSTALLED_PACKAGES
+                    : PackageManager.GET_UNINSTALLED_PACKAGES;
+            List<PackageInfo> pkgs = pm.getInstalledPackages(flags);
             for (PackageInfo pi : pkgs) {
                 ApplicationInfo ai = pi.applicationInfo;
                 if (ai == null) continue;

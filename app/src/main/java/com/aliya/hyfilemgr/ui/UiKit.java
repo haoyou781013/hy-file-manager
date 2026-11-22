@@ -289,13 +289,6 @@ public final class UiKit {
         return value;
     }
 
-    /** 按名称解析模块图标（如 "ic_chat"），找不到时用兜底图标 */
-    public static int iconRes(Context context, String iconName, int fallbackRes) {
-        if (iconName == null || iconName.isEmpty()) return fallbackRes;
-        int id = context.getResources().getIdentifier(iconName, "drawable", context.getPackageName());
-        return id == 0 ? fallbackRes : id;
-    }
-
     public static void toast(Context context, String msg) {
         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show();
     }

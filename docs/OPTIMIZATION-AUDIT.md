@@ -398,6 +398,40 @@ disable += "HardcodedText"           // 同上
 
 问题数 236 → 85（修完 DefaultLocale 后 71），剩下的都是有意义的告警。
 
+## 第二轮修复（2026-11-22 续）
+
+| 项 | 数量 | 处理 |
+|---|---|---|
+| `DrawAllocation` | 3 | `SegmentedBar.onDraw` 里的 `new Paint` / `new RectF` 改为字段预分配复用 |
+| `UnusedResources` | 5 | 删除 `ic_grid` / `ic_list` / `ic_sync_arrow_back` / `ic_sync_arrow_fwd` / `ic_thumbnail`（全项目零引用，含 `getIdentifier` 动态路径核查） |
+| `InlinedApi` | 4 | `GET_SIGNING_CERTIFICATES`(28) 低版本退 `GET_SIGNATURES`；`ACTION_MANAGE_*_ALL_FILES_ACCESS`(30) 加版本判断；`MATCH_UNINSTALLED_PACKAGES`(24) 低版本退 `GET_UNINSTALLED_PACKAGES` |
+| `UseSwitchCompatOrMaterialCode` | 1 | 平台 `Switch` → `SwitchMaterial`（ROM 主题一致性） |
+| 死代码 | 1 | 删除 `UiKit.iconRes()`（零调用） |
+
+lint 进一步 62 → **57**，Error 保持 0。
+
+### `ClickableViewAccessibility` 12 处：判定为误报，不改
+
+逐处核对后确认：这 8 个 `setOnTouchListener` 全部**返回 false 或不消费点击**，
+真正的点击由 `OnClickListener` / `GestureDetector` 处理，
+TalkBack 能正常识别控件语义。lint 的规则假设「设了 touch 监听就该处理点击」，
+但本项目这些监听只做按压缩放动画与手势识别，不吞事件。
+
+试图加 `performClick()` 转发时发现自己判断错了（`return false` 时系统仍会
+自行派发 onClick，补调用反而可能重复触发），已回滚。
+
+### 剩余 57 项的性质
+
+| 类型 | 数量 | 判断 |
+|---|---|---|
+| `ClickableViewAccessibility` | 12 | 误报，见上 |
+| `ApplySharedPref` | 9 | 多数有意（关键设置要立刻落盘防丢） |
+| `NotifyDataSetChanged` | 8 | 文件列表整表刷新合理 |
+| `IconLauncherShape` / `IconDipSize` / `IconDuplicatesConfig` | 7 | 图标资源规范，非功能问题 |
+| `StaticFieldLeak` | 3 | 存 Application context，误报 |
+| `InternalInsetResource` / `DiscouragedApi` / `Overdraw` | 6 | 低优先 |
+| 其余各 1 | 12 | 单点问题，收益低 |
+
 ## 剩余可做项
 
 | 项 | 数量 | 说明 |
