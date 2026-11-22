@@ -575,7 +575,10 @@ Reducer 假设「`locked` ⇒ `controlsVisible=false`」，但这只在经过
   查找替换增强、Markdown/HTML/JSON·XML 预览、HTML 可切工作目录）
 - 视频播放器阶段 3：`PlaybackService` + `MediaSession`（后台播放 / 锁屏 / 车机）
 - 视频播放器阶段 4：画中画
-- 视频播放器阶段 5：外挂字幕 / A-B 循环 / 双指缩放
+- 视频播放器阶段 5：A-B 循环 / 双指缩放
+  （**外挂字幕已完成**：`MediaPlayerActivity.findSubtitles()` 扫同目录同名
+   `.srt/.ass/.ssa/.vtt` 并挂到 `MediaItem.SubtitleConfiguration`，
+   此前误列为待办，2026-11-22 更正）
 - DASH 支持：补 `media3-exoplayer-dash` 依赖，或移除 `PlayerCore` 里的 mpd 分支
 - 图片隐藏式压缩包（合体制作 + 检测提取）
 
