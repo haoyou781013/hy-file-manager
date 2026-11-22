@@ -55,6 +55,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -6890,6 +6891,142 @@ public class FileManagerModule extends HyVqModule {
      * <p><b>为什么拆成清单</b>：旧版是一大段文本，用户看不清也没耐心读。
      * 拆开后每项都能扫读，且报 issue 时可直接报版本号/库版本。</p>
      */
+    // ══════════ 崩溃日志查看（仅调试模式）══════════
+
+    /**
+     * 崩溃日志页面：列出历史崩溃 / ANR 记录，可查看、分享、删除。
+     *
+     * <p>入口只在调试模式开启后出现（见关于页的版本号 7 次点击）。
+     * 普通用户看不到这一页 —— 崩溃日志对他们只是噪音。</p>
+     */
+    private View showCrashLogPage() {
+        LinearLayout box = new LinearLayout(ctx);
+        box.setOrientation(LinearLayout.VERTICAL);
+
+        final File dir = com.aliya.hyfilemgr.crash.CrashHandler.logDir(ctx);
+        box.addView(sectionHeaderInCard("崩溃日志"));
+
+        final LinearLayout list = new LinearLayout(ctx);
+        list.setOrientation(LinearLayout.VERTICAL);
+        box.addView(list);
+
+        // lambda 里要递归刷新 → 用数组容器绕开 final
+        final Runnable[] rebuild = new Runnable[1];
+        rebuild[0] = () -> {
+            list.removeAllViews();
+            File[] all = dir.listFiles((d, n) ->
+                    n.endsWith(".log") && (n.startsWith("crash_")
+                            || n.startsWith("anr_") || n.startsWith("exit_")));
+            if (all == null || all.length == 0) {
+                addInfoRow(list, "（无记录）",
+                        "崩溃或 ANR 发生后，报告会出现在这里", false, null);
+                return;
+            }
+            // 新的在前
+            java.util.Arrays.sort(all, (a, b) ->
+                    Long.compare(b.lastModified(), a.lastModified()));
+
+            java.text.SimpleDateFormat fmt =
+                    new java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US);
+            for (final File f : all) {
+                String name = f.getName();
+                String kind;
+                if (name.startsWith("anr_")) kind = "ANR";
+                else if (name.startsWith("exit_")) kind = "异常退出";
+                else kind = "崩溃";
+                String size = f.length() > 1024
+                        ? (f.length() / 1024) + " KB" : f.length() + " B";
+                addInfoRow(list, kind + " · " + fmt.format(new Date(f.lastModified())),
+                        size + " · 点击查看", true, v -> showCrashDetail(f));
+            }
+        };
+        rebuild[0].run();
+
+        // 顶部操作
+        box.addView(sectionHeaderInCard("操作"));
+        addInfoRow(box, "全部删除",
+                "清空所有崩溃与 ANR 记录（不可恢复）", true, v -> {
+                    File[] all = dir.listFiles((d, n) -> n.endsWith(".log"));
+                    int n = 0;
+                    if (all != null) {
+                        for (File f : all) {
+                            if (f.delete()) n++;
+                        }
+                    }
+                    UiKit.toast(ctx, "已删除 " + n + " 个文件");
+                    rebuild[0].run();
+                });
+        addInfoRow(box, "日志目录", dir.getAbsolutePath(), true, v -> {
+            UiKit.toast(ctx, "可用文件管理器直接访问该目录");
+        });
+
+        return box;
+    }
+
+    /** 查看单个崩溃报告全文 */
+    private void showCrashDetail(final File f) {
+        String content;
+        try {
+            content = com.aliya.hyfilemgr.crash.CrashHandler
+                    .readReport(ctx, f.getAbsolutePath());
+        } catch (Throwable t) {
+            content = "读取失败：" + t;
+        }
+        if (content == null) content = "";
+
+        // 用可滚动对话框展示 —— 崩溃报告通常几十行，普通 alert 会被截断
+        android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+        TextView tv = new TextView(ctx);
+        tv.setText(content);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        // 等宽字体：堆栈对齐才看得清层级
+        tv.setTypeface(android.graphics.Typeface.MONOSPACE);
+        tv.setTextIsSelectable(true);       // 允许用户手动选中片段复制
+        tv.setPadding(dp(14), dp(12), dp(14), dp(12));
+        sv.addView(tv);
+
+        final String finalContent = content;
+        new com.google.android.material.dialog.MaterialAlertDialogBuilder(ctx)
+                .setTitle(f.getName())
+                .setView(sv)
+                .setPositiveButton("复制全文", (d, w) -> {
+                    android.content.ClipboardManager cm =
+                            (android.content.ClipboardManager) ctx.getSystemService(
+                                    android.content.Context.CLIPBOARD_SERVICE);
+                    if (cm != null) {
+                        cm.setPrimaryClip(android.content.ClipData
+                                .newPlainText("crash", finalContent));
+                        UiKit.toast(ctx, "已复制到剪贴板");
+                    }
+                })
+                .setNeutralButton("分享", (d, w) -> shareCrashFile(f))
+                .setNegativeButton("删除", (d, w) -> {
+                    if (f.delete()) {
+                        UiKit.toast(ctx, "已删除");
+                        rebuildSettingsContent(this::showCrashLogPage);
+                    } else {
+                        UiKit.toast(ctx, "删除失败");
+                    }
+                })
+                .show();
+    }
+
+    /** 通过系统分享面板发出崩溃日志文件 */
+    private void shareCrashFile(File f) {
+        try {
+            android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                    ctx, ctx.getPackageName() + ".fileprovider", f);
+            Intent i = new Intent(Intent.ACTION_SEND);
+            i.setType("text/plain");
+            i.putExtra(Intent.EXTRA_STREAM, uri);
+            i.putExtra(Intent.EXTRA_SUBJECT, "HY文件管理 崩溃报告");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            ctx.startActivity(Intent.createChooser(i, "分享崩溃报告"));
+        } catch (Throwable t) {
+            UiKit.toast(ctx, "分享失败：" + t.getMessage());
+        }
+    }
+
     private View showAboutPageBody() {
         LinearLayout box = new LinearLayout(ctx);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -6974,6 +7111,51 @@ public class FileManagerModule extends HyVqModule {
 
         // ══════ 应用信息 ══════
         box.addView(sectionHeaderInCard("应用信息"));
+
+        // ── 版本号（可点 7 次开关调试模式）──
+        //
+        // 为什么放在「应用信息」而不是头部那个版本胶囊：
+        // 胶囊是纯展示元素（无点击态），而这一行是 addInfoRow 生成的可点行，
+        // 有按压反馈，符合「这里能点」的视觉预期。
+        //
+        // 为什么是 7 次：对齐 Android 系统「点版本号进开发者选项」的既有心智，
+        // 用户不需要学习成本。
+        final boolean dmOn = com.aliya.hyfilemgr.crash.DebugMode.isEnabled(ctx);
+        final int[] tapCount = {0};
+        final long[] lastTap = {0L};
+        final View verRow = addInfoRow(box, "版本",
+                "v" + appVersionName() + "（vc" + appVersionCode() + "）"
+                        + (dmOn ? " · 调试模式已开启" : ""),
+                true, v -> {
+                    long now = android.os.SystemClock.elapsedRealtime();
+                    com.aliya.hyfilemgr.crash.DebugMode.TapResult r =
+                            com.aliya.hyfilemgr.crash.DebugMode.onTap(
+                                    tapCount[0], lastTap[0], now);
+                    tapCount[0] = r.count;
+                    lastTap[0] = r.lastTapMs;
+                    if (!r.completed) {
+                        // 只在还剩 <=3 次时提示，否则每次点击都弹 toast 太吵
+                        if (r.remaining <= 3) {
+                            UiKit.toast(ctx, "再点 " + r.remaining + " 次"
+                                    + (dmOn ? "关闭" : "开启") + "调试模式");
+                        }
+                        return;
+                    }
+                    boolean now1 = !com.aliya.hyfilemgr.crash.DebugMode.isEnabled(ctx);
+                    com.aliya.hyfilemgr.crash.DebugMode.setEnabled(ctx, now1);
+                    UiKit.toast(ctx, now1 ? "调试模式已开启" : "调试模式已关闭");
+                    // 刷新当前页，让「调试模式已开启」标注与下方入口同步出现/消失
+                    rebuildSettingsContent(this::showAboutPageBody);
+                });
+        box.addView(verRow);
+
+        // 调试模式开启后：暴露崩溃日志入口
+        if (dmOn) {
+            addInfoRow(box, "崩溃日志",
+                    "查看 / 分享 / 删除历史崩溃报告与 ANR 记录", true,
+                    v -> showCrashLogPage());
+        }
+
         addInfoRow(box, "包名", ctx.getPackageName(), true, null);
         addInfoRow(box, "最低系统", "Android 6.0（API 23）", true, null);
         addInfoRow(box, "编译 SDK", "Android 16（API 36）", true, null);

@@ -78,6 +78,45 @@ public class MainActivity extends AppCompatActivity {
 
         markBootOk();
         buildUi();
+
+        // 上次异常退出提示：崩溃页可能因进程被杀没来得及展示，
+        // 或者用户直接杀了崩溃页。这里补一次轻量提示，并提供日志入口。
+        maybeShowCrashRecovery();
+    }
+
+    /**
+     * 上次运行异常退出时，启动后提示用户。
+     *
+     * <p><b>为什么需要它</b>：{@code CrashHandler} 会拉起 {@code CrashActivity}，
+     * 但那条路径不保证走通 —— 进程可能被系统提前杀掉、用户可能直接划掉。
+     * 结果是「崩溃日志存在，用户却不知道」，下次遇到同样问题还是没法反馈。</p>
+     *
+     * <p><b>为什么不用全屏对话框</b>：启动即弹大弹窗对正常使用是打扰。
+     * 用 toast + 只在调试模式或用户主动进设置时才引导到详情页。</p>
+     */
+    private void maybeShowCrashRecovery() {
+        try {
+            if (!com.aliya.hyfilemgr.crash.CrashHandler.hasPendingCrash(this)) return;
+            String logName = com.aliya.hyfilemgr.crash.CrashHandler
+                    .pendingCrashLogName(this);
+
+            // 主线程延迟一点，避免和 buildUi 的布局动画抢时间
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                try {
+                    if (isFinishing() || isDestroyed()) return;
+                    String msg = "上次运行时发生异常"
+                            + (logName.isEmpty() ? "" : "（" + logName + "）")
+                            + "，报告已保存";
+                    com.aliya.hyfilemgr.ui.UiKit.toast(this, msg);
+
+                    // 清除标记：提示过就算已知情，避免每次启动都弹。
+                    // 报告文件本身保留，用户可在调试模式的崩溃日志页查看。
+                    com.aliya.hyfilemgr.crash.CrashHandler.clearPendingCrash(this);
+                } catch (Throwable ignored) {
+                }
+            }, 1200L);
+        } catch (Throwable ignored) {
+        }
     }
 
     /**

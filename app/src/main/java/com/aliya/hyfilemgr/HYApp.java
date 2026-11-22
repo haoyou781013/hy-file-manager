@@ -16,6 +16,18 @@ public class HYApp extends Application {
         super.onCreate();
         CrashHandler.install(this);
 
+        // ANR / 异常退出采集：读系统 ApplicationExitInfo（API 30+）。
+        //
+        // 放在 install 之后、且不阻塞：采集失败绝不影响启动（内部 try-catch
+        // 全包）。用后台线程是因为 getHistoricalProcessExitReasons() 需要
+        // 跨进程调用系统服务，主线程同步调可能在慢设备上拖慢冷启动。
+        new Thread(() -> {
+            try {
+                com.aliya.hyfilemgr.crash.AnrWatcher.captureIfNeeded(this);
+            } catch (Throwable ignored) {
+            }
+        }, "HyAnrCapture").start();
+
         // ── 调试：验证崩溃框架（仅 debug 包生效）──
         // adb shell am broadcast -a com.aliya.hyfilemgr.DEBUG_CRASH
         if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
@@ -41,8 +53,16 @@ public class HYApp extends Application {
             //   adb shell am broadcast --user 0 -a com.aliya.hyfilemgr.DEBUG_CRASH \
             //       -p com.aliya.hyfilemgr
             // 或直接在代码里断点触发。安全优先于调试便利。
+            // debug 包用 EXPORTED：让 `adb shell am broadcast` 能触发，
+            //   否则这条调试通路等于废掉（我就是这么发现它的）。
+            //   风险可控 —— debug 包本来就不发给用户。
+            // release 包用 NOT_EXPORTED：不能让任何应用远程搞崩本应用。
+            boolean isDebug = (getApplicationInfo().flags
+                    & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
             if (android.os.Build.VERSION.SDK_INT >= 33) {
-                registerReceiver(debugCrash, f, android.content.Context.RECEIVER_NOT_EXPORTED);
+                registerReceiver(debugCrash, f, isDebug
+                        ? android.content.Context.RECEIVER_EXPORTED
+                        : android.content.Context.RECEIVER_NOT_EXPORTED);
             } else {
                 registerLegacyReceiver(debugCrash, f);
             }

@@ -59,6 +59,11 @@ public final class CrashHandler implements Thread.UncaughtExceptionHandler {
             File f = save(detail);
             Log.e(TAG, "crash captured → " + (f == null ? "(save failed)" : f.getName()));
 
+            // 标记「上次异常退出」：供下次启动判断是否提示安全模式。
+            // 用独立文件而不是 SharedPreferences —— 崩溃时进程随时可能被
+            // kill，SharedPreferences 的 apply() 是异步落盘的，可能来不及。
+            markPendingCrash(f == null ? "" : f.getName());
+
             // 冷启动崩溃页（独立进程任务栈，避免受当前崩溃 Activity 影响）
             if (appCtx != null) {
                 Intent i = new Intent(appCtx, CrashActivity.class);
@@ -99,6 +104,11 @@ public final class CrashHandler implements Thread.UncaughtExceptionHandler {
         sb.append("时间: ").append(time).append('\n');
         sb.append("线程: ").append(thread == null ? "?" : thread.getName())
                 .append(" (id=").append(thread == null ? -1 : thread.getId()).append(")\n");
+        // 线程状态与「是否主线程」：判断崩溃影响面时最常用的两个信息。
+        // 主线程崩溃 = 用户可见闪退；后台线程崩溃 = 可能只是某个功能失效。
+        sb.append("线程状态: ").append(thread == null ? "?" : thread.getState()).append('\n');
+        sb.append("主线程崩溃: ").append(thread != null
+                && thread == android.os.Looper.getMainLooper().getThread()).append('\n');
         sb.append("进程: ").append(Build.VERSION.SDK_INT >= 28
                 ? android.app.Application.getProcessName() : "?").append('\n');
         sb.append('\n');
@@ -121,6 +131,11 @@ public final class CrashHandler implements Thread.UncaughtExceptionHandler {
                 sb.append("包名: ").append(pi.packageName).append('\n');
                 sb.append("版本: ").append(pi.versionName)
                         .append(" (").append(pi.versionCode).append(")\n");
+                // 是否 debug 包：用户报问题时最常需要确认的一项
+                boolean debuggable = (pi.applicationInfo != null
+                        && (pi.applicationInfo.flags
+                        & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0);
+                sb.append("构建类型: ").append(debuggable ? "debug" : "release").append('\n');
             } catch (Throwable ignored) {
                 sb.append("包名: ").append(appCtx.getPackageName()).append('\n');
             }
@@ -159,6 +174,65 @@ public final class CrashHandler implements Thread.UncaughtExceptionHandler {
         return d;
     }
 
+    private static final String PENDING_FLAG = "pending_crash.flag";
+
+    /**
+     * 标记「上次运行异常退出」。
+     *
+     * <p>崩溃处理末尾会 {@code killProcess}，所以这个写入必须是同步且
+     * 立即刷盘的 —— 用 `FileOutputStream` + `fd.sync()`，不用 SharedPreferences。</p>
+     */
+    private static void markPendingCrash(String logName) {
+        if (appCtx == null) return;
+        try {
+            File flag = new File(logDir(appCtx), PENDING_FLAG);
+            try (FileOutputStream out = new FileOutputStream(flag)) {
+                out.write((logName == null ? "" : logName).getBytes("UTF-8"));
+                out.flush();
+                out.getFD().sync();
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "mark pending crash failed", t);
+        }
+    }
+
+    /** 上次运行是否异常退出（未清理 pending 标记） */
+    public static boolean hasPendingCrash(Context ctx) {
+        if (ctx == null) return false;
+        try {
+            return new File(logDir(ctx), PENDING_FLAG).exists();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** 读取上次崩溃的日志文件名（可能为空） */
+    public static String pendingCrashLogName(Context ctx) {
+        if (ctx == null) return "";
+        try {
+            File flag = new File(logDir(ctx), PENDING_FLAG);
+            if (!flag.exists()) return "";
+            try (java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(
+                            new java.io.FileInputStream(flag), "UTF-8"))) {
+                String line = r.readLine();
+                return line == null ? "" : line.trim();
+            }
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    /** 清除 pending 标记（用户已查看过崩溃页 / 已进入安全模式） */
+    public static void clearPendingCrash(Context ctx) {
+        if (ctx == null) return;
+        try {
+            //noinspection ResultOfMethodCallIgnored
+            new File(logDir(ctx), PENDING_FLAG).delete();
+        } catch (Throwable ignored) {
+        }
+    }
+
     /** 保存报告，返回文件；失败返回 null */
     private static File save(String content) {
         if (appCtx == null) return null;
@@ -169,6 +243,14 @@ public final class CrashHandler implements Thread.UncaughtExceptionHandler {
         try (FileOutputStream out = new FileOutputStream(f)) {
             out.write(content.getBytes("UTF-8"));
             out.flush();
+            // ⚠ 必须 fd.sync()：只 flush 是把数据交给内核页缓存，
+            // 进程被 kill（崩溃处理末尾就会 killProcess）时可能没落盘。
+            // 实测有过「崩溃日志文件存在但内容为 0 字节」的情况。
+            try {
+                out.getFD().sync();
+            } catch (Throwable syncFail) {
+                Log.w(TAG, "fd.sync failed (log may be truncated)", syncFail);
+            }
         } catch (Throwable t) {
             Log.e(TAG, "save failed", t);
             return null;

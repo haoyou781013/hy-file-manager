@@ -58,6 +58,10 @@ public class CrashActivity extends Activity {
         }
         if (report.isEmpty()) report = "（未获取到崩溃信息）";
 
+        // 用户已经看到崩溃页 = 已知情，清除 pending 标记，
+        // 避免下次启动又被当成「未处理的异常退出」再提示一次。
+        CrashHandler.clearPendingCrash(this);
+
         setContentView(buildUi());
     }
 
