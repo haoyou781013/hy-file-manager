@@ -4,7 +4,7 @@ Android 双窗格文件管理器。支持 11 种压缩格式的创建与解压�
 媒体播放器（手势控制 · 弹幕 · HLS）、图片查看与 APK 解析。
 
 - **仓库**：[GitHub](https://github.com/haoyou781013/hy-file-manager) · [Gitee](https://gitee.com/haoyou781/hy-file-manager)
-- **当前版本**：1.0.6（versionCode 12）
+- **当前版本**：1.0.7（versionCode 13）
 - **包名**：`com.aliya.hyfilemgr`
 - **最低系统**：Android 6.0（API 23）
 
@@ -47,6 +47,7 @@ Android 双窗格文件管理器。支持 11 种压缩格式的创建与解压�
 - 本地文件与 HTTP(S) 网络流；HLS（m3u8）分片播放
 - 可随 Intent 传入请求头（Referer / Cookie 等），适配需要防盗链的源
 - 播放列表与选集（动漫模式下显示「番剧 · 线路 · 第N集」）
+- **外挂字幕**：自动扫同目录同名前缀的 `.srt` / `.ass` / `.ssa` / `.vtt`
 - 倍速 6 档（0.5× / 0.75× / 1.0× / 1.25× / 1.5× / 2.0×）、画面比例三档（适应 / 填充 / 裁剪）、当前帧截图（长按倍速按钮）
 - 观看历史：退出记录进度，下次进入自动续播
 

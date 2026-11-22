@@ -1,3 +1,152 @@
+## 1.0.7 — 2026-11-22（vc13）
+
+> 本轮以**视频播放器重构**为主线，同时做了全项目 lint 清算
+> （问题 236 → 57，Error 21 → 0）与一批老系统兼容性修复。
+> 测试由 24 个用例增至 118 个。
+
+### 视频播放器架构重做
+
+分三阶段完成，方案文档见 `docs/PLAYER-REDESIGN-V2.md`。
+
+**阶段 1 · 状态机骨架**（`b080b27`）
+
+新增 `PlayerUiState`（17 字段不可变状态）/ `PlayerEvent`（15 种语义事件）/
+`PlayerReducer`（纯函数 `reduce`）。替代原先散落在 Activity 里的 30+ 可变字段。
+
+Reducer 刻意不接 `Context` / `Player` / View，因此可在 JVM 上直接单测。
+测试抓到一处不变式缺陷：`locked ⇒ controlsVisible=false` 只在经过
+`LockToggled` 事件时成立，外部直接置 `locked=true` 时控制条仍可见。
+
+**阶段 2 · 手势控制器**（`c80401a` + `814e446`）
+
+抽出 `GestureSink`（语义出口）+ `GestureController`（223 行，只识别不执行）。
+删除 113 行内联手势与 4 个散落字段。
+
+行为变更：双击分区对齐 YouTube / B站（左 1/3 后退、中 1/3 暂停、右 1/3 前进）；
+新增边缘 16dp 保护区让位给系统返回手势。
+
+回调参数传「比例」而非绝对值（`onSeekPreview(deltaRatio)`），
+手势层不感知「2 分钟」这类业务参数。
+
+测试抓到浮点边界 bug：
+```
+600/900 = 0.6666667f,  1f - 1f/3f = 0.6666666f
+→ 0.6666667 > 0.6666666 成立 → 2/3 边界点被误判为 RIGHT
+```
+改用整数比较（`x*3 < width` / `x*3 > width*2`）。
+
+**Media3 最佳实践对齐**（`b75c84e`）
+
+- 播完无法重播：旧实现 `if (isPlaying()) pause(); else play()`，
+  而 `STATE_ENDED` 下 `play()` 是 no-op。改用
+  `Util.handlePlayPauseButtonAction(player)`。
+- 图标状态不准：改用 `Util.shouldShowPlayButton(player)`
+  （综合 `playWhenReady` + `playbackState` + `suppressionReason`）。
+
+**一条判断被推翻**：原计划用 `isCommandAvailable(COMMAND_SEEK_TO_NEXT)`
+禁用单文件的「下一个」按钮。实施时发现 `step()` 是循环语义
+（`n >= length → 0`），单文件点「下一个」会重播自己，按钮本就该可点。
+已移除并记录教训：调研时不该把外部经验当通用规律，须先核对本项目语义。
+
+### 进度条重做（`e38a03c`）
+
+量化依据：143 分钟视频 / 900px 轨道 ≈ **每像素 9.5 秒**。
+
+- 三层差异高度：底 3dp / 缓冲 4dp / 已播 6dp
+- `paddingHorizontal=0dp`（默认会预留半个 thumb，轨道变短精度再降）
+- `layout_height` 固定 40dp（触摸区 = 控件高度；且圆点放大不触发重测量）
+- 圆点 `selector`：常态 16dp / 按下 24dp（放大而非变色——变色会被指腹遮住）
+- 新增 `seek_bubble` 时间气泡，位置经 `clampBubbleX()` 计算防边缘裁切
+
+### 播放器设置页（`e38a03c` + `a72ddeb` + `c335e22`）
+
+`PlayerSettings`（165 行）+ 设置页 6 项。三处用户反馈的修复：
+
+1. **点击整页重建**：原写法走 `hideSettingsDialog()` + `showInSettingsDialog()`
+   （完整建容器 + 淡入）。改为 `rebuildSettingsContent()`，
+   只换内容 View 并恢复滚动位置。
+2. **说明文字未进卡片**：设置页分组靠 `settingsGroup` 引用，
+   `addInfoRow` 会塞进卡片，而 `box.addView(tip)` 绕过了它。
+   新增 `tipText()` + `addTipToGroup()`。
+3. **开关反复点同一个结果**（快照缺陷）：`boolean now = !cur.autoHide`
+   里的 `cur` 是构建时快照，页面不重建就永远是旧值。
+   改为 `PlayerSettings.load(ctx)` 现读。同一缺陷共 6 处
+   （2 个布尔开关 + 4 个档位循环），全部修正。
+
+### 全部修掉的 lint 问题（236 → 57，Error 21 → 0）
+
+| 类别 | 数量 | 处理 |
+|---|---|---|
+| `NewApi` | 9（真崩） | 加版本守卫：`isExternalStorageManager`(30)、`DocumentsContract.isTreeUri`(24)×3、`StorageManager.getStorageVolumes`(24)、`PixelCopy`(24)、`canRequestPackageInstalls`(26) |
+| `DefaultLocale` | 14 | `toLowerCase` / `format` 统一加 `Locale.ROOT` / `Locale.US` |
+| `WrongThread` | 1 | GIF 解码挪出 UI 线程 |
+| `DrawAllocation` | 3 | `onDraw` 里 `new Paint` / `new RectF` 改为字段预分配 |
+| `InlinedApi` | 4 | `GET_SIGNING_CERTIFICATES`(28)、`ACTION_MANAGE_ALL_FILES_ACCESS`(30)、`MATCH_UNINSTALLED_PACKAGES`(24) 加守卫 |
+| `UnusedResources` | 5 | 删除零引用 drawable |
+| `UseSwitchCompatOrMaterialCode` | 1 | 平台 `Switch` → `SwitchMaterial` |
+
+**一条错误注释掩盖了 P0**：`MediaPlayerActivity.java:1345` 写着
+「本项目 minSdk 28」，但 `aapt2 dump badging` 实测 `sdkVersion:'23'`。
+这条错误注释让所有读代码的人以为 API 24+ 调用是安全的，
+9 处 `NewApi` 很可能就是这样积累下来的。已改正。
+
+**`CompletableFuture` 其实没被脱糖**：`desugar_jdk_libs-2.1.5.jar` 里
+带着该类，但实际产物 `desugar_lib_dex/release/classes1000.dex` 中只有
+`ConcurrentHashMap` / `ThreadLocalRandom` / `atomic` 系列，没有
+`CompletableFuture`。官方 CHANGELOG 的覆盖清单也未提及它。
+已在 `ThumbLoader` 改用 `ConcurrentHashMap<String, List<Waiter>>` 自行实现去重
+（双参 `remove` 只摘自己那份；`decode + writeDisk` 完成后才 remove，
+避免与下一个 `putIfAbsent` 之间的并发写窗口产生半写文件）。
+
+**lint 配置收紧**：`abortOnError` 从 `false` 改为 `true`、
+`checkReleaseBuilds` 改 `true`（Error 已归零）。关闭三类已确认噪音：
+`UnsafeOptInUsageError`（media3 `@UnstableApi`，非运行时问题）、
+`SetTextI18n` / `HardcodedText`（项目不做 i18n）。
+
+### God Class 局部拆解（`0d186a4`）
+
+`FileManagerModule` 17776 行 / 455 方法。脚本扫出 58 个 `static` 方法，
+逐个检查方法体是否引用实例状态，**57 个无依赖**，抽成三个类：
+
+| 新类 | 行数 | 内容 |
+|---|---|---|
+| `SettingsFormat` | 141 | 时长/倍速/档位/进度/Markdown 格式化 |
+| `FileTypes` | 159 | `mimeOf`（104 行查表）/ `guessExt` / `extOf` / `isImageName` |
+| `ArchivePaths` | 118 | `splitZipPath` / `normalizeEntryName` / `containsGarbled` 等 |
+
+主类 17776 → 17547（**减 1.3%**）。诚实结论：能抽的纯逻辑已抽完，
+剩余约 80% 是 UI 构建代码，紧贴实例状态，真要降体量必须改架构。
+
+价值在于**可测试性**：这些函数以前必须起整个模块，现在一行断言。
+新增 45 个用例（`SettingsFormatTest` 26 + `ArchivePathsTest` 19），
+其中 `splitZipPath` 的 15 种后缀逐个验证——该函数曾因后缀表漏项
+导致点解压时 `StringIndexOutOfBounds` 崩溃。
+
+### 测试
+
+| 测试类 | 用例 |
+|---|---|
+| `FileNamesTest` | 24 |
+| `PlayerReducerTest` | 24 |
+| `GestureControllerTest` | 19 |
+| `ArchivePathsTest` | 19 |
+| `SettingsFormatTest` | 26 |
+| `PlayerSettingsTest` | 6 |
+| **合计** | **118**（1.0.6 时 24） |
+
+### 其他修复
+
+- 底部控制条重叠：`FrameLayout` 三组 `layout_gravity` 叠放改为
+  `LinearLayout` 三段式 + `weight`（空间不足时挤压而非覆盖）
+- HUD 对比度：背景 72% → 88% 黑 + 文字加阴影
+- 弹幕可读性：先描黑边（`STROKE`，宽度字号 8%）再填本色
+- 设置项展开动画：`if (cur.autoHide)` 条件创建改为始终创建 + 高度动画
+  （条件创建时切换是瞬间出现，无过渡）
+- 文件列表圆角：每行 `setCornerRadius` 改为按位置决定四角
+  （首行上圆 / 末行下圆 / 中间直角），网格模式保持每格独立
+- 删除死代码 `UiKit.iconRes()`
+
+---
 
 ## 1.0.6 — 2026-11-17（vc12，二次发布）
 
