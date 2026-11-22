@@ -97,7 +97,7 @@ export ANDROID_HOME=/path/to/android-sdk
 
 环境要求：
 - JDK 17
-- AGP 8.1.4 / Gradle 8.1.1
+- AGP 8.5.2 / Gradle 8.7
 - compileSdk 36 / minSdk 23 / targetSdk 34
 - **aarch64 设备需自建 aapt2**（官方 build-tools 的 aapt2 只有 x86-64）
 
@@ -112,7 +112,7 @@ export ANDROID_HOME=/path/to/android-sdk
 | 代码生成与重构 | DeepSeek 系列模型 |
 | 代码审查（8 角色并行，两轮共 16 路） | DeepSeek 系列模型 |
 | 文档整理与一致性核对 | DeepSeek 系列模型 |
-| 构建工具链 | Gradle 8.1.1 / AGP 8.1.4 / JDK 17 |
+| 构建工具链 | Gradle 8.7 / AGP 8.5.2 / JDK 17 |
 | aapt2 | 自行编译的 aarch64 版本 2.20-android-16.0.0_r4 |
 
 所有 AI 产出的代码均经过：
