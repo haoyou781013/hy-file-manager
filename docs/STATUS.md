@@ -1,7 +1,7 @@
 # 当前状态：更新内容与待办
 
 **日期**：2026-11-22
-**版本**：1.0.6（vc12）已发布 · 1.0.7（vc13）**待发布**
+**版本**：**1.0.7（vc13）已发布**（2026-11-22）
 **工作区**：干净，无未提交改动
 
 ---
@@ -111,18 +111,33 @@
 
 ---
 
-## 四、发布状态
+## 四、发布状态：✅ 已完成（2026-11-22）
 
 | 项 | 状态 |
 |---|---|
-| 代码 | ✅ 17 个提交已推 Gitee + GitHub（master & main） |
-| 版本号 | ⏸ 仍为 1.0.6 / vc12（**未动**） |
-| tag | ⏸ 仍为 `v1.0.6`（**未打新 tag**） |
-| `versions.json` | ⏸ 未更新 |
-| `CHANGELOG.md` | ⏸ 未更新 |
-| APK | ⏸ 未上传 Release |
+| 版本号 | ✅ `versionCode 13` / `versionName 1.0.7` |
+| tag | ✅ `v1.0.7`（annotated）已推 Gitee + GitHub |
+| `versions.json` | ✅ count 11 → 12，updatedAt 2026-11-22 |
+| `CHANGELOG.md` | ✅ 已插入 1.0.7 章节（开发者版） |
+| `README.md` | ✅ 版本行同步，补「外挂字幕」说明 |
+| APK（Gitee） | ✅ https://gitee.com/haoyou781/hy-file-manager/releases/download/v1.0.7/HYFileManager-1.0.7.apk |
+| APK（GitHub） | ✅ https://github.com/haoyou781013/hy-file-manager/releases/download/v1.0.7/HYFileManager-1.0.7.apk |
 
-**更新日志草稿已就绪**：`docs/RELEASE-1.0.7-DRAFT.md`
-用户版正文可直接填入 `versions.json` 的 `body`。
+**Release**：
+- Gitee id=1354426
+- GitHub id=454500391
 
-按项目发布红线，以上全部等用户明确说「发布」才执行。
+**校验记录**：
+
+| 项 | 结果 |
+|---|---|
+| `tools/preflight.sh` | ✅ 全部通过（版本号三处一致 / 无调试残留 / APK 存在已签名） |
+| `aapt2 dump badging` | ✅ `versionCode='13' versionName='1.0.7' sdkVersion:'23' targetSdk:'34'` |
+| 单测 | ✅ 118/118 |
+| APK 大小 | ✅ 7,153,296 bytes（两端一致） |
+| 更新检查 4 个源 | ✅ 全部返回 `1.0.7 (vc13)` |
+| Gitee APK 下载 | ✅ HTTP 200，Content-Length 一致 |
+| GitHub APK 状态 | ✅ `state=uploaded` |
+
+**未做**：装机冒烟验证（Shizuku 服务未运行）。
+构建、测试、preflight 均已通过，装机验证非发布前置条件。
