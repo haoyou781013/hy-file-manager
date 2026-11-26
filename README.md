@@ -44,7 +44,7 @@ Android 双窗格文件管理器。支持 11 种压缩格式的创建与解压�
 基于 media3（ExoPlayer 1.11.1），视频 / 音频 / 网络流。
 
 **播放能力**
-- 本地文件与 HTTP(S) 网络流；HLS（m3u8）分片播放
+- 本地文件与 HTTP(S) 网络流；**HLS（m3u8）与 DASH（mpd）**分片播放
 - 可随 Intent 传入请求头（Referer / Cookie 等），适配需要防盗链的源
 - 播放列表与选集（动漫模式下显示「番剧 · 线路 · 第N集」）
 - **外挂字幕**：自动扫同目录同名前缀的 `.srt` / `.ass` / `.ssa` / `.vtt`
@@ -190,10 +190,9 @@ FUSE 的拦截规则按字符串匹配认不出这是 `Android/data`，而 Linux
 - **zstd 压缩依赖 JNI 原生库**，需真机运行（x86 模拟器/容器可能加载失败）
 - 大 `tar.gz` 首次列目录需完整扫一遍，几十 MB 的包会有可感知等待
 - 加密 rar 未接口令输入
-- **DASH（`.mpd`）实际不可用**：`PlayerCore` 会给 `.mpd` 设置 MPD mimeType，
-  但 `build.gradle.kts` 未引入 `media3-exoplayer-dash` 依赖，
-  会走到 ExoPlayer 的「未支持的格式」错误。要么补依赖，要么去掉该分支——
-  当前状态是静默失效（不崩溃，但播不了）
+- ~~**DASH（`.mpd`）实际不可用**~~ **已修复（2026-11-25）**：
+  补上 `media3-exoplayer-dash:1.11.1` 依赖。此前 `PlayerCore` 给 `.mpd`
+  设了 MPD mimeType 但缺对应模块，会报「播放列表格式无法解析」
 - **`Android/data` 访问依赖系统路径校验缺陷**：见上方专节，Google 修复后失效
 - `dirCache` 指纹基于父目录 mtime + 直接子项数，**外部 App 在子目录内增删文件**后
   父目录缓存不会失效（应用内操作会正确刷新）

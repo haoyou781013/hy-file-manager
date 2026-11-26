@@ -113,6 +113,10 @@ dependencies {
     // HLS（m3u8）：解析播放列表 + 拉取 ts 分片。
     // 没有这个模块，播放器遇到 .m3u8 只会报「无法播放该格式」。
     implementation("androidx.media3:media3-exoplayer-hls:1.11.1")
+    // DASH（.mpd）——PlayerCore 早就给 .mpd 设了 APPLICATION_MPD mimeType，
+    // 但一直缺这个模块，导致 ExoPlayer 找不到 DashMediaSource.Factory，
+    // 表现为「播放列表格式无法解析」（README 已知限制里记过）。
+    implementation("androidx.media3:media3-exoplayer-dash:1.11.1")
 
     // 播放器网络数据源（PlayerCore 需要）
     implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
